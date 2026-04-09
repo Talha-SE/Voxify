@@ -1,0 +1,221 @@
+{% extends 'base.html' %}
+
+{% block title %}SONUS | Private Desktop Voice AI{% endblock %}
+{% block meta_description %}Affordable Gumroad membership and one-time plans for private desktop voice AI. Live mode, batch mode, mic capture, and meeting audio transcription.{% endblock %}
+{% block og_title %}SONUS | Gumroad Plans for Desktop Voice AI{% endblock %}
+{% block og_description %}Use SONUS anywhere on desktop with private, fast transcription in live and batch workflows.{% endblock %}
+
+{% block extra_head %}
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "SONUS",
+  "applicationCategory": "BusinessApplication",
+  "offers": [
+    {
+      "@type": "Offer",
+      "name": "Starter Membership",
+      "priceCurrency": "USD",
+      "price": "7",
+      "description": "Affordable monthly desktop voice AI plan"
+    },
+    {
+      "@type": "Offer",
+      "name": "Pro Membership",
+      "priceCurrency": "USD",
+      "price": "19",
+      "description": "Most popular monthly plan for frequent users"
+    },
+    {
+      "@type": "Offer",
+      "name": "One-Time Lifetime",
+      "priceCurrency": "USD",
+      "price": "39",
+      "description": "One-time desktop license for non-recurring use"
+    }
+  ]
+}
+</script>
+{% endblock %}
+
+{% block content %}
+<section class="hero reveal">
+  <div class="hero-copy">
+    <div class="eyebrow-wrapper">
+      <span class="eyebrow">Desktop Voice AI</span>
+      <span class="eyebrow-dot"></span>
+      <span class="eyebrow-sub">Private by Design</span>
+    </div>
+    <h1 class="text-gradient">Transcribe anywhere on desktop, <span class="accent-gradient">instantly.</span></h1>
+    <p>
+      SONUS bridges the gap between your voice and your workflow. 
+      Zero-latency microphone dictation, meeting audio capture, and rapid batch transcription 
+      wrapped in a private-first architecture. <strong>No signup required.</strong>
+    </p>
+    <div class="hero-actions">
+      <a class="btn btn-primary border-beam" href="#plans" data-magnetic>
+        <span>Explore Plans</span>
+      </a>
+      <a class="btn btn-outline" href="{{ membership_url }}" target="_blank" rel="noopener noreferrer" data-magnetic>
+        <span>Join via Gumroad</span>
+      </a>
+      <a class="btn btn-ghost" href="{{ url_for('privacy_policy') }}">
+        <span>Privacy Promise</span>
+      </a>
+    </div>
+    <p class="hero-note">Enterprise-grade encryption for local processing without permanent cloud storage.</p>
+  </div>
+  <div class="hero-visual" aria-hidden="true">
+    <div class="hero-chip-container">
+      <div class="chip-glow"></div>
+      <div class="hero-chip">
+        <div class="chip-inner-glow"></div>
+        <div class="chip-ring"></div>
+        <div class="chip-center">S</div>
+      </div>
+      <div class="chip-platform-tag">SONUS PLATFORM V1.0</div>
+    </div>
+  </div>
+</section>
+
+<section id="plans" class="plans-section reveal">
+  <div class="section-head">
+    <h2>Affordable pricing that beats bulky suites</h2>
+    <p>Checkout is handled with Gumroad. Buy once or subscribe monthly based on your usage.</p>
+  </div>
+
+  <div class="plans-grid">
+    {% for tier in membership_tiers %}
+      <article class="plan-card plan-membership">
+        <p class="plan-tag">{{ tier.tag }}</p>
+        <h3>{{ tier.name }}</h3>
+        <p class="price"><span>{{ tier.price }}</span> {{ tier.period }}</p>
+        <p class="plan-cap">{{ tier.characters }}</p>
+        <ul>
+          {% for item in tier.benefits %}
+            <li>{{ item }}</li>
+          {% endfor %}
+        </ul>
+        <a class="btn btn-primary" href="{{ membership_url }}" target="_blank" rel="noopener noreferrer">Start on Gumroad</a>
+      </article>
+    {% endfor %}
+
+    <article class="plan-card plan-onetime">
+      <p class="plan-tag plan-tag-alt">One-Time</p>
+      <h3>{{ one_time_offer.name }}</h3>
+      <p class="price"><span>{{ one_time_offer.price }}</span> {{ one_time_offer.period }}</p>
+      <p class="plan-cap">{{ one_time_offer.characters }}</p>
+      <ul>
+        {% for item in one_time_offer.benefits %}
+          <li>{{ item }}</li>
+        {% endfor %}
+      </ul>
+      <a class="btn btn-outline" href="{{ onetime_url }}" target="_blank" rel="noopener noreferrer">Buy One-Time on Gumroad</a>
+    </article>
+  </div>
+
+  <p class="plan-note">
+    After purchase, users receive a license key from Gumroad and enter it in the desktop app.
+    The app can validate active membership using your server endpoint.
+  </p>
+</section>
+
+<section class="features-bento reveal">
+  <div class="section-head">
+    <p class="eyebrow">Capabilities</p>
+    <h2 class="text-gradient">Engineered for <span class="accent-gradient">Performance.</span></h2>
+  </div>
+  
+  <div class="bento-grid">
+    <article class="bento-card bento-wide glass-strong">
+      <div class="bento-content">
+        <div class="bento-icon">🎙️</div>
+        <h4>Live Transcription</h4>
+        <p>Real-time speech-to-text with industry-leading accuracy. Use it for meetings, lectures, or instant dictation across any application.</p>
+      </div>
+      <div class="bento-visual">
+        <div class="waveform-animation">
+          <span></span><span></span><span></span><span></span><span></span>
+        </div>
+      </div>
+    </article>
+
+    <article class="bento-card glass">
+      <div class="bento-content">
+        <div class="bento-icon">🔒</div>
+        <h4>Private-First</h4>
+        <p>Your audio stays yours. Local processing with enterprise encryption ensures no data leaks.</p>
+      </div>
+    </article>
+
+    <article class="bento-card glass">
+      <div class="bento-content">
+        <div class="bento-icon">📦</div>
+        <h4>Batch Processing</h4>
+        <p>Drop audio files and get transcripts in seconds. Perfect for long-form content.</p>
+      </div>
+    </article>
+
+    <article class="bento-card bento-tall glass-strong">
+      <div class="bento-content">
+        <div class="bento-icon">⚡</div>
+        <h4>Zero Configuration</h4>
+        <p>No complex setup. Enter your key and start transcribing in under 60 seconds. Works natively on Windows with optimized resource usage.</p>
+      </div>
+      <div class="bento-badge">Optimized for Windows</div>
+    </article>
+
+    <article class="bento-card glass">
+      <div class="bento-content">
+        <div class="bento-icon">🎟️</div>
+        <h4>Smart Licensing</h4>
+        <p>Seamless Gumroad integration for easy access and automated updates.</p>
+      </div>
+    </article>
+  </div>
+</section>
+
+<section class="legal-page reveal">
+  <h2>How Billing Works</h2>
+  <p>
+    All payments are handled by Gumroad checkout. This website does not host card details.
+    Users purchase via Gumroad and use license keys inside the desktop app.
+  </p>
+  <p>
+    No public account signup flow exists here for end users. This keeps the experience simple and focused.
+  </p>
+</section>
+
+<section class="legal-page reveal">
+  <h2>Membership vs One-Time</h2>
+  <div class="compare-table-wrap">
+    <table class="compare-table" aria-label="Membership versus one-time comparison">
+      <thead>
+        <tr>
+          <th>Feature</th>
+          <th>One-Time Purchase</th>
+          <th>Membership</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Cashflow</td>
+          <td>Single payment upfront</td>
+          <td>Recurring monthly revenue</td>
+        </tr>
+        <tr>
+          <td>AI Usage Cost Control</td>
+          <td>Higher long-term risk</td>
+          <td>Safer, usage covered monthly</td>
+        </tr>
+        <tr>
+          <td>Updates and Growth</td>
+          <td>Best for light users</td>
+          <td>Best for power users and teams</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endblock %}

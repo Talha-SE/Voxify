@@ -1,0 +1,5 @@
+User-agent: *
+Allow: /
+Disallow: /admin-brevios-login
+Disallow: /admin-brevios-dashboard
+Sitemap: http://127.0.0.1:5050/sitemap.xml

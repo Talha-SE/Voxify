@@ -1,0 +1,137 @@
+{% extends 'base.html' %}
+
+{% block title %}Admin Dashboard | SONUS{% endblock %}
+{% block meta_description %}Secure SONUS admin dashboard and service configuration status.{% endblock %}
+{% block extra_head %}<meta name="robots" content="noindex,nofollow">{% endblock %}
+
+{% block content %}
+<section class="dashboard-wrap reveal">
+  <div class="dashboard-head">
+    <h1>Admin Dashboard</h1>
+    <a class="btn btn-ghost" href="{{ url_for('admin_logout') }}">Logout</a>
+  </div>
+
+  <p class="dashboard-sub">Welcome, {{ admin_user }}. Server-side configuration is shown below.</p>
+
+  {% if dashboard_message %}
+    <div class="ok-box">{{ dashboard_message }}</div>
+  {% endif %}
+  {% if dashboard_error %}
+    <div class="error-box">{{ dashboard_error }}</div>
+  {% endif %}
+
+  <div class="status-grid">
+    <article class="status-card">
+      <h2>API Status</h2>
+      <p class="status-value {{ 'ok' if api_configured else 'bad' }}">
+        {{ 'Configured' if api_configured else 'Missing' }}
+      </p>
+    </article>
+
+    <article class="status-card">
+      <h2>Model</h2>
+      <p class="status-value">{{ model_name }}</p>
+    </article>
+
+    <article class="status-card">
+      <h2>Masked API Key</h2>
+      <p class="status-value">{{ masked_key }}</p>
+    </article>
+  </div>
+
+  <div class="dashboard-grid">
+    <article class="status-card release-preview">
+      <h2>Current Release Metadata</h2>
+      <p class="status-kv"><span>Latest:</span> {{ release_info.latestVersion }}</p>
+      <p class="status-kv"><span>Channel:</span> {{ release_info.channel }}</p>
+      <p class="status-kv"><span>Platform:</span> {{ release_info.platform }}</p>
+      <p class="status-kv"><span>Mandatory:</span> {{ 'Yes' if release_info.mandatory else 'No' }}</p>
+      <p class="status-kv"><span>Published:</span> {{ release_info.publishedAt or 'Not published yet' }}</p>
+      <p class="status-kv"><span>Download:</span> {{ release_info.downloadUrl or 'Not set' }}</p>
+      <p class="status-notes">{{ release_info.notes or 'No release notes yet.' }}</p>
+    </article>
+
+    <form method="post" class="admin-card release-form" autocomplete="off">
+      <input type="hidden" name="form_type" value="release">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <h2>Publish App Update</h2>
+      <p class="dashboard-sub">This powers the in-app update notification and update button.</p>
+
+      <label for="latest_version">Latest Version</label>
+      <input id="latest_version" name="latest_version" type="text" value="{{ release_info.latestVersion }}" placeholder="e.g. 1.2.0" required>
+
+      <label for="download_url">Download URL</label>
+      <input id="download_url" name="download_url" type="url" value="{{ release_info.downloadUrl }}" placeholder="https://.../SONUS-setup.exe" required>
+
+      <div class="release-form-row">
+        <div>
+          <label for="channel">Channel</label>
+          <input id="channel" name="channel" type="text" value="{{ release_info.channel or 'stable' }}">
+        </div>
+        <div>
+          <label for="platform">Platform</label>
+          <input id="platform" name="platform" type="text" value="{{ release_info.platform or 'windows' }}">
+        </div>
+      </div>
+
+      <label for="release_notes">Release Notes</label>
+      <textarea id="release_notes" name="release_notes" rows="4" placeholder="What changed in this version?">{{ release_info.notes }}</textarea>
+
+      <label class="toggle-inline">
+        <input id="mandatory_update" name="mandatory_update" type="checkbox" {% if release_info.mandatory %}checked{% endif %}>
+        <span>Mark as mandatory update</span>
+      </label>
+
+      <button type="submit" class="btn btn-primary full">Publish Update Metadata</button>
+    </form>
+
+    <form method="post" class="admin-card release-form" autocomplete="off">
+      <input type="hidden" name="form_type" value="runtime">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <h2>Runtime Rollout & Flags</h2>
+      <p class="dashboard-sub">Control feature flags and reliability settings per channel.</p>
+
+      <label for="runtime_channel">Channel</label>
+      <select id="runtime_channel" name="runtime_channel">
+        <option value="stable" selected>stable</option>
+        <option value="beta">beta</option>
+      </select>
+
+      <label for="runtime_platform">Platform</label>
+      <input id="runtime_platform" name="runtime_platform" type="text" value="{{ runtime_config.channels.stable.platform }}">
+
+      <label for="rollout_percent">Rollout Percent</label>
+      <input id="rollout_percent" name="rollout_percent" type="number" min="0" max="100" value="{{ runtime_config.channels.stable.rolloutPercent }}">
+
+      <label for="live_retry_limit">Live Retry Limit</label>
+      <input id="live_retry_limit" name="live_retry_limit" type="number" min="0" max="10" value="{{ runtime_config.channels.stable.runtime.liveRetryLimit }}">
+
+      <label for="command_set_version">Command Set Version</label>
+      <input id="command_set_version" name="command_set_version" type="text" value="{{ runtime_config.channels.stable.runtime.commandSetVersion }}">
+
+      <label for="endpointing_mode">Endpointing Mode</label>
+      <select id="endpointing_mode" name="endpointing_mode">
+        <option value="adaptive" {% if runtime_config.channels.stable.runtime.endpointingMode == 'adaptive' %}selected{% endif %}>adaptive</option>
+        <option value="latency" {% if runtime_config.channels.stable.runtime.endpointingMode == 'latency' %}selected{% endif %}>latency</option>
+        <option value="accuracy" {% if runtime_config.channels.stable.runtime.endpointingMode == 'accuracy' %}selected{% endif %}>accuracy</option>
+      </select>
+
+      <label class="toggle-inline"><input name="silence_trim_enabled" type="checkbox" {% if runtime_config.channels.stable.runtime.silenceTrimEnabled %}checked{% endif %}><span>Silence trim enabled</span></label>
+      <label class="toggle-inline"><input name="flag_voice_commands" type="checkbox" {% if runtime_config.channels.stable.featureFlags.voiceCommands %}checked{% endif %}><span>Voice commands enabled</span></label>
+      <label class="toggle-inline"><input name="flag_auto_fallback" type="checkbox" {% if runtime_config.channels.stable.featureFlags.autoFallback %}checked{% endif %}><span>Auto fallback enabled</span></label>
+      <label class="toggle-inline"><input name="flag_reliability_events" type="checkbox" {% if runtime_config.channels.stable.featureFlags.reliabilityEvents %}checked{% endif %}><span>Send reliability events</span></label>
+
+      <button type="submit" class="btn btn-primary full">Save Runtime Config</button>
+    </form>
+
+    <article class="status-card release-preview">
+      <h2>Reliability Snapshot</h2>
+      <p class="status-kv"><span>Total events:</span> {{ reliability_summary.totalEvents }}</p>
+      <p class="status-kv"><span>Avg latency:</span> {{ reliability_summary.avgLatencyMs }} ms</p>
+      <p class="status-kv"><span>Last event:</span> {{ reliability_summary.lastTimestamp or 'No data yet' }}</p>
+      <p class="status-notes">Event types: {{ reliability_summary.eventTypeCounts }}</p>
+      <p class="status-notes">Error codes: {{ reliability_summary.errorCodeCounts }}</p>
+    </article>
+  </div>
+</section>
+{% endblock %}

@@ -1,0 +1,34 @@
+{
+  "channels": {
+    "stable": {
+      "rolloutPercent": 100,
+      "platform": "windows",
+      "featureFlags": {
+        "voiceCommands": true,
+        "autoFallback": true,
+        "reliabilityEvents": false
+      },
+      "runtime": {
+        "liveRetryLimit": 2,
+        "commandSetVersion": "v1",
+        "silenceTrimEnabled": true,
+        "endpointingMode": "adaptive"
+      }
+    },
+    "beta": {
+      "rolloutPercent": 20,
+      "platform": "windows",
+      "featureFlags": {
+        "voiceCommands": true,
+        "autoFallback": true,
+        "reliabilityEvents": true
+      },
+      "runtime": {
+        "liveRetryLimit": 3,
+        "commandSetVersion": "v1",
+        "silenceTrimEnabled": true,
+        "endpointingMode": "adaptive"
+      }
+    }
+  }
+}
