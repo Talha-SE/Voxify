@@ -68,6 +68,7 @@ class LicenseEntitlement:
     license_id: str
     status: str
     plan: str
+    billing_cycle: str
     quota_chars: int
     bonus_chars: int
     used_chars: int
@@ -106,6 +107,7 @@ def _parse_entitlement(raw: dict[str, Any]) -> LicenseEntitlement:
         license_id=(raw.get("licenseId") or "").strip(),
         status=(raw.get("status") or "").strip().lower(),
         plan=(raw.get("plan") or "starter").strip().lower(),
+        billing_cycle=(raw.get("billingCycle") or raw.get("cycleType") or "").strip().lower(),
         quota_chars=int(raw.get("quotaChars") or 0),
         bonus_chars=int(raw.get("bonusChars") or 0),
         used_chars=int(raw.get("usedChars") or 0),

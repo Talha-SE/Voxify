@@ -10,7 +10,7 @@ CONFIG_FILE = Path(__file__).parent / "config.json"
 
 DEFAULT_CONFIG = {
     "model": "voxtral-mini-2507",
-    "language": "en",        # ISO-639-1 language code, "" = auto-detect
+    "language": "",          # kept for runtime compatibility; empty means auto-detect
     "sample_rate": 16000,
     "channels": 1,
     "theme": "dark",         # dark | light
@@ -37,7 +37,6 @@ DEFAULT_CONFIG = {
     "device_id": "",
     "auto_minimize": True,
     "minimize_timeout": 10,
-    "license_product_id": "",
     "auto_install_updates": True,
     "restart_after_update": True,
 }

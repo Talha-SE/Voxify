@@ -75,26 +75,11 @@ def _apply_theme_constants(theme_name: str) -> None:
     SUCCESS = palette["SUCCESS"]
 
 MODEL_OPTIONS = [
-    ("Mini", "voxtral-mini-2507"),
-    ("Small", "voxtral-small-2507"),
+    ("Core", "voxtral-mini-2507"),
+    ("Advanced", "voxtral-small-2507"),
 ]
 BATCH_MODEL_OPTIONS = [
-    ("Mini", "voxtral-mini-2507"),
-]
-
-LANGUAGE_OPTIONS = [
-    ("Auto-detect", ""),
-    ("English", "en"),
-    ("Urdu", "ur"),
-    ("Korean", "ko"),
-    ("Japanese", "ja"),
-    ("Chinese (Mandarin)", "zh"),
-    ("German", "de"),
-    ("French", "fr"),
-    ("Spanish", "es"),
-    ("Arabic", "ar"),
-    ("Hindi", "hi"),
-    ("Custom...", "custom"),
+    ("Core", "voxtral-mini-2507"),
 ]
 
 TABS: list[tuple[str, str, str]] = [
@@ -182,6 +167,22 @@ def _fmt_chars(value: int) -> str:
         return "0"
 
 
+def _format_billing_cycle(value: str) -> str:
+    normalized = (value or "").strip().lower().replace("-", "_").replace(" ", "_")
+    labels = {
+        "monthly": "Monthly",
+        "quarterly": "Quarterly",
+        "biannual": "Every 6 months",
+        "yearly": "Yearly",
+        "every_two_years": "Every 2 years",
+        "lifetime": "Lifetime",
+        "one_time": "One-time",
+    }
+    if not normalized:
+        return "-"
+    return labels.get(normalized, normalized.replace("_", " ").title())
+
+
 def _setting_row(label: str, control: ft.Control) -> ft.Row:
     return ft.Row(
         alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
@@ -263,31 +264,9 @@ def main(page: ft.Page) -> None:
     except Exception:
         pass
 
-    known_language_codes = {value for _, value in LANGUAGE_OPTIONS if value != "custom"}
-    stored_language = (cfg.get("language", "") or "").strip().lower()
-    initial_language_label = _dropdown_value(LANGUAGE_OPTIONS, stored_language, "Auto-detect")
-    custom_language_initial = "" if stored_language in {"", *known_language_codes} else stored_language
-
     theme_switch = ft.Switch(value=(cfg.get("theme", "dark") == "dark"), active_color=ACCENT_ALT)
     always_on_top_switch = ft.Switch(value=bool(cfg.get("always_on_top", True)), active_color=ACCENT_ALT)
     auto_minimize_switch = ft.Switch(value=bool(cfg.get("auto_minimize", True)), active_color=ACCENT_ALT)
-
-    language_field = ft.Dropdown(
-        label="Language",
-        value=initial_language_label,
-        options=_dropdown_options(LANGUAGE_OPTIONS),
-        **_field_style(),
-    )
-    custom_language_field = ft.TextField(
-        label="Custom language code",
-        value=custom_language_initial,
-        hint_text="e.g. en, ur, ar",
-        **_field_style(),
-    )
-    custom_language_row = ft.Container(
-        visible=initial_language_label == "Custom...",
-        content=custom_language_field,
-    )
 
     delay_text = ft.Text(
         f"{int(cfg.get('auto_type_delay', 3))} s",
@@ -335,7 +314,7 @@ def main(page: ft.Page) -> None:
     )
     model_field = ft.Dropdown(
         label="Model",
-        value=_dropdown_value(MODEL_OPTIONS, cfg.get("model", "voxtral-mini-2507"), "Mini"),
+        value=_dropdown_value(MODEL_OPTIONS, cfg.get("model", "voxtral-mini-2507"), "Core"),
         options=_dropdown_options(MODEL_OPTIONS),
         **_field_style(),
     )
@@ -404,16 +383,17 @@ def main(page: ft.Page) -> None:
     _downloaded_update_path = ""
 
     license_key_field = ft.TextField(
-        label="Gumroad license key",
+        label="License key",
         value=(license_state.get("licenseKey") or "").strip(),
         password=True,
         can_reveal_password=True,
         **_field_style(),
     )
-    license_status_text = ft.Text("License not activated", size=10, color=MUTED)
-    license_plan_text = ft.Text("", size=9, color=MUTED_SOFT)
-    license_quota_text = ft.Text("", size=9, color=MUTED_SOFT)
-    license_seat_text = ft.Text("", size=9, color=MUTED_SOFT)
+    license_status_text = ft.Text("License not activated", size=11, color=MUTED, weight=ft.FontWeight.W_700)
+    license_plan_text = ft.Text("", size=10, color=TEXT, weight=ft.FontWeight.W_600)
+    license_cycle_text = ft.Text("", size=10, color=TEXT, weight=ft.FontWeight.W_600)
+    license_quota_text = ft.Text("", size=10, color=TEXT)
+    license_seat_text = ft.Text("", size=10, color=TEXT)
     activate_license_button = ft.FilledButton("Activate", icon=ft.Icons.VERIFIED_USER)
     refresh_license_button = ft.OutlinedButton("Refresh", icon=ft.Icons.REFRESH)
     clear_license_button = ft.TextButton("Clear")
@@ -502,16 +482,12 @@ def main(page: ft.Page) -> None:
         if model_field.value not in allowed_labels:
             model_field.value = allowed_labels[0]
         model_field.options = _dropdown_options(allowed_options)
-        model_hint_text.value = "Live supports Mini and Small." if is_live_mode else "Batch supports Mini only."
+        model_hint_text.value = "Live supports Core and Advanced." if is_live_mode else "Batch supports Core only."
         model_field.update()
         model_hint_text.update()
 
     def on_mode_change(_event: ft.ControlEvent) -> None:
         _sync_model_by_mode()
-
-    def on_language_change(_event: ft.ControlEvent) -> None:
-        custom_language_row.visible = language_field.value == "Custom..."
-        custom_language_row.update()
 
     def on_delay_change(_event: ft.ControlEvent) -> None:
         delay_text.value = f"{int(delay_slider.value)} s"
@@ -539,13 +515,15 @@ def main(page: ft.Page) -> None:
             license_status_text.value = "License not activated"
             license_status_text.color = MUTED
             license_plan_text.value = "Plan: -"
+            license_cycle_text.value = "Billing cycle: -"
             license_quota_text.value = "Usage: -"
             license_seat_text.value = "Seats: -"
             page.update()
             return
-        license_status_text.value = f"Status: {entitlement.status}"
+        license_status_text.value = f"Status: {(entitlement.status or '').capitalize()}"
         license_status_text.color = SUCCESS if entitlement.status == "active" else MUTED
-        license_plan_text.value = f"Plan: {entitlement.plan}"
+        license_plan_text.value = f"Plan: {(entitlement.plan or '').title() or '-'}"
+        license_cycle_text.value = f"Billing cycle: {_format_billing_cycle(entitlement.billing_cycle)}"
         license_quota_text.value = (
             f"Usage: {_fmt_chars(entitlement.used_chars)} / {_fmt_chars(entitlement.quota_chars + entitlement.bonus_chars)} chars"
             f" | {_fmt_chars(entitlement.used_words)} words"
@@ -608,6 +586,7 @@ def main(page: ft.Page) -> None:
                         "activeSeats": session_data.entitlement.active_seats,
                         "isSubscription": session_data.entitlement.is_subscription,
                         "canTranscribe": session_data.entitlement.can_transcribe,
+                        "billingCycle": session_data.entitlement.billing_cycle,
                     },
                 )
                 latest_cfg = config.load()
@@ -651,6 +630,7 @@ def main(page: ft.Page) -> None:
                         "activeSeats": session_data.entitlement.active_seats,
                         "isSubscription": session_data.entitlement.is_subscription,
                         "canTranscribe": session_data.entitlement.can_transcribe,
+                        "billingCycle": session_data.entitlement.billing_cycle,
                     },
                 )
                 page.run_thread(_render_license_entitlement, session_data.entitlement)
@@ -668,11 +648,6 @@ def main(page: ft.Page) -> None:
         nonlocal initial_theme
         nonlocal preview_theme
         nonlocal theme_preview_dirty
-        selected_language = language_field.value or "Auto-detect"
-        language_code = next((value for label, value in LANGUAGE_OPTIONS if label == selected_language), "")
-        if selected_language == "Custom...":
-            language_code = (custom_language_field.value or "").strip().lower()
-
         is_live_mode = (mode_field.value or "Batch").strip().lower() == "live"
         allowed_options = MODEL_OPTIONS if is_live_mode else BATCH_MODEL_OPTIONS
         model_value = next((value for label, value in allowed_options if label == model_field.value), allowed_options[0][1])
@@ -681,7 +656,7 @@ def main(page: ft.Page) -> None:
         latest_cfg = config.load()
         latest_cfg.pop("api_key", None)
         latest_cfg["model"] = model_value
-        latest_cfg["language"] = language_code
+        latest_cfg["language"] = ""
         latest_cfg["auto_type_delay"] = int(delay_slider.value or 3)
         latest_cfg["mode"] = "Live" if is_live_mode else "Batch"
         latest_cfg["source"] = source_value
@@ -913,7 +888,6 @@ def main(page: ft.Page) -> None:
     refresh_license_button.on_click = _refresh_license
     clear_license_button.on_click = _clear_license
 
-    language_field.on_change = on_language_change
     delay_slider.on_change = on_delay_change
     minimize_timeout_slider.on_change = on_timeout_change
     auto_minimize_switch.on_change = on_auto_minimize_toggle
@@ -932,11 +906,9 @@ def main(page: ft.Page) -> None:
                 ],
             ),
             _card(
-                "Language & Typing",
-                ft.Icons.LANGUAGE,
+                "Typing",
+                ft.Icons.KEYBOARD,
                 [
-                    language_field,
-                    custom_language_row,
                     ft.Row(
                         alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                         controls=[
@@ -1002,6 +974,7 @@ def main(page: ft.Page) -> None:
                     ft.Row(spacing=8, controls=[activate_license_button, refresh_license_button, clear_license_button]),
                     license_status_text,
                     license_plan_text,
+                    license_cycle_text,
                     license_quota_text,
                     license_seat_text,
                 ],
@@ -1243,6 +1216,7 @@ def main(page: ft.Page) -> None:
                 active_seats=int(raw_ent.get("activeSeats") or 0),
                 is_subscription=bool(raw_ent.get("isSubscription", False)),
                 can_transcribe=bool(raw_ent.get("canTranscribe", False)),
+                billing_cycle=(raw_ent.get("billingCycle") or "").strip().lower(),
             )
         except Exception:
             entitlement_obj = None

@@ -2,6 +2,9 @@
 echo Building Voxify standalone EXE...
 echo.
 
+if exist dist\SONUS.exe del /q dist\SONUS.exe
+if exist dist\BreviosChipVoxtral.exe del /q dist\BreviosChipVoxtral.exe
+
 python -m pip install pyinstaller -q
 
 python -m PyInstaller ^

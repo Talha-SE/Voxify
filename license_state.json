@@ -1,0 +1,19 @@
+{
+  "tokenEnc": "dpapi:AQAAANCMnd8BFdERjHoAwE/Cl+sBAAAA0toOMwpX1EOnHqYV0zD8AAAAAAAOAAAAVgBvAHgAaQBmAHkAAAAQZgAAAAEAACAAAAAbfUDtS8ZZHAleBfOHYJ+tTfh7MbvZ9yS4a9pEiiGFJAAAAAAOgAAAAAIAACAAAAAkmPXX0kJVaFU3HUwj3IaOkvmNUf0J4BUx4LicJJSwdbAAAADP79a58ZWPnI8UKw9hPhnGb4I2fpBbGmBhLomZDbvIhhvV1/JXilVRlNKDcwR7rp8HmQSXiBKRNdcE5hMoqqc/nvJ5VEgaPQjxPJkUMaeEHzwA9KvtgW4/SIFL0fIh0CNogQ8VvBb0+znzwaECxHPIkFr6nJICGFkYUzuWkLlmqrhJKSPlT3OC7tK8p8nM28MR5nFT0bvKd6YJXnPxfbaD5x9sBd2/PvhVT3yfEdNYQEAAAAB68r0b8L07UbMGMHZ2C1Hj9dDAREsI2td9KRuoH4UJnfZnvdLLd/+/mzdImplmjeDE1rHMOz+qmYOszLKDeSiJ",
+  "licenseKeyEnc": "dpapi:AQAAANCMnd8BFdERjHoAwE/Cl+sBAAAA0toOMwpX1EOnHqYV0zD8AAAAAAAOAAAAVgBvAHgAaQBmAHkAAAAQZgAAAAEAACAAAAAnOPMhe3eYRQNTOntjF9Mk9/QbGSjuTt5yJ6cf6ZLY9QAAAAAOgAAAAAIAACAAAACczyOfkglmzVQu5sHygik0jeJ3kxbGRV33u7nkU7DU9jAAAAAuhc3BKOxUliMp/8eYh66ITF55y71JlhMt31hA2bL/aJSzmXHVfhQ/jfHFof50fFpAAAAAaPi1QtJL3tGBO307x0M/S66iaQ0BBKv27tfe4TaZt3U79R0rwW4Q/Tf88arQBTIJWI1KNrQhIsMopvfh9kGYqg==",
+  "entitlement": {
+    "licenseId": "69dbd764c913c69818a59150",
+    "status": "active",
+    "plan": "starter",
+    "billingCycle": "monthly",
+    "quotaChars": 50000,
+    "bonusChars": 0,
+    "usedChars": 4696,
+    "usedWords": 946,
+    "remainingChars": 45304,
+    "seatLimit": 1,
+    "activeSeats": 1,
+    "isSubscription": true,
+    "canTranscribe": true
+  }
+}

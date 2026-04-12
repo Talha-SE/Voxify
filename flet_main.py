@@ -374,7 +374,11 @@ class VoxifyApp:
         except Exception:
             pass
 
-        self.page.update()
+        try:
+            self.page.update()
+        except Exception:
+            # Ignore transient window update failures during rapid minimize/restore transitions.
+            pass
 
     def _build_ui(self) -> None:
         self.title_text = ft.Text(
@@ -948,6 +952,7 @@ class VoxifyApp:
                     license_id=(raw_entitlement.get("licenseId") or "").strip(),
                     status=(raw_entitlement.get("status") or "").strip().lower(),
                     plan=(raw_entitlement.get("plan") or "starter").strip().lower(),
+                    billing_cycle=(raw_entitlement.get("billingCycle") or "").strip().lower(),
                     quota_chars=int(raw_entitlement.get("quotaChars") or 0),
                     bonus_chars=int(raw_entitlement.get("bonusChars") or 0),
                     used_chars=int(raw_entitlement.get("usedChars") or 0),
@@ -1005,6 +1010,7 @@ class VoxifyApp:
             "licenseId": ent.license_id,
             "status": ent.status,
             "plan": ent.plan,
+            "billingCycle": ent.billing_cycle,
             "quotaChars": ent.quota_chars,
             "bonusChars": ent.bonus_chars,
             "usedChars": ent.used_chars,
@@ -1030,7 +1036,7 @@ class VoxifyApp:
         state = license_cache.load_state()
         token = (state.get("token") or self._license_token or "").strip()
         if not token:
-            raise website_client.WebsiteAPIError("License is not activated. Open Settings and activate your Voxify key.")
+            raise website_client.WebsiteAPIError("License is not activated. Open Settings and activate your license key.")
 
         cached_key = (state.get("licenseKey") or "").strip()
         try:
@@ -1224,9 +1230,13 @@ class VoxifyApp:
             self._set_aux_chip("Open Settings to activate", True)
             self._set_action("Open settings", CARD_SOFT, ACCENT, TEXT, self._open_settings)
             return
-        if "license verification is not configured" in normalized or "productid and deviceid are required" in normalized:
+        if (
+            "license verification is not configured" in normalized
+            or "productid and deviceid are required" in normalized
+            or "licensekey and deviceid are required" in normalized
+        ):
             self._set_status("Server config required", DANGER)
-            self._set_aux_chip("Admin: configure product ID on server", True)
+            self._set_aux_chip("Admin: configure server-side license verification", True)
             self._set_action("Retry", CARD_SOFT, ACCENT, TEXT, self._on_action_click)
             return
         if "unable to reach the website" in normalized or "license database is unavailable" in normalized:
