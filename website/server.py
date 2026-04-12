@@ -800,8 +800,10 @@ def license_activate():
     product_id = _text(payload.get("productId") or os.getenv("GUMROAD_PRODUCT_ID", ""))
     device_id = _text(payload.get("deviceId"))
     device_name = _text(payload.get("deviceName"))
-    if not license_key or not product_id or not device_id:
-        return jsonify({"success": False, "message": "licenseKey, productId and deviceId are required."}), 400
+    if not license_key or not device_id:
+        return jsonify({"success": False, "message": "licenseKey and deviceId are required."}), 400
+    if not product_id:
+        return jsonify({"success": False, "message": "License verification is not configured on server."}), 503
 
     store = _get_store()
     if not store:
@@ -852,13 +854,22 @@ def license_refresh():
 
     sync_key = _text(payload.get("licenseKey"))
     sync_product_id = _text(payload.get("productId"))
-    if sync_key and sync_product_id:
-        gumroad_payload, gumroad_error = _gumroad_verify(sync_key, sync_product_id)
+    if sync_key:
+        product_id_to_verify = sync_product_id
+        if not product_id_to_verify:
+            license_doc = store.get_license_by_id(entitlement["licenseId"])
+            product_id_to_verify = _text((license_doc or {}).get("productId"))
+
+        if product_id_to_verify:
+            gumroad_payload, gumroad_error = _gumroad_verify(sync_key, product_id_to_verify)
+        else:
+            gumroad_payload, gumroad_error = None, ""
+
         if gumroad_payload:
             purchase = gumroad_payload.get("purchase") or {}
             synced_entitlement, synced_error = store.activate_from_purchase(
                 license_key=sync_key,
-                product_id=sync_product_id,
+                product_id=product_id_to_verify,
                 device_id=device_id,
                 device_name=device_name,
                 purchase=purchase,
@@ -1112,8 +1123,10 @@ def verify_license():
     license_key = _text(payload.get("licenseKey"))
     product_id = _text(payload.get("productId") or os.getenv("GUMROAD_PRODUCT_ID", ""))
     device_id = _text(payload.get("deviceId") or "legacy-device")
-    if not license_key or not product_id:
-        return jsonify({"success": False, "message": "licenseKey and productId are required."}), 400
+    if not license_key:
+        return jsonify({"success": False, "message": "licenseKey is required."}), 400
+    if not product_id:
+        return jsonify({"success": False, "message": "License verification is not configured on server."}), 503
 
     gumroad_payload, gumroad_error = _gumroad_verify(license_key, product_id)
     if not gumroad_payload:

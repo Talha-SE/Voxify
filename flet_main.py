@@ -938,10 +938,6 @@ class VoxifyApp:
         self.cfg = latest
         return device_id
 
-    def _license_product_id(self) -> str:
-        configured = (self.cfg.get("license_product_id") or "").strip()
-        return configured or (os.getenv("GUMROAD_PRODUCT_ID") or "").strip()
-
     def _load_cached_license_state(self) -> None:
         state = license_cache.load_state()
         self._license_token = (state.get("token") or "").strip()
@@ -1037,23 +1033,18 @@ class VoxifyApp:
             raise website_client.WebsiteAPIError("License is not activated. Open Settings and activate your Voxify key.")
 
         cached_key = (state.get("licenseKey") or "").strip()
-        product_id = self._license_product_id()
         try:
             session_data = website_client.refresh_license(
                 token=token,
                 device_id=self._device_id,
                 device_name=f"{app_info.APP_NAME}-{app_info.APP_PLATFORM}",
                 license_key=cached_key,
-                product_id=product_id,
             )
         except Exception:
             if not cached_key:
                 raise
-            if not product_id:
-                raise website_client.WebsiteAPIError("License product ID is missing. Set it in Settings.")
             session_data = website_client.activate_license(
                 license_key=cached_key,
-                product_id=product_id,
                 device_id=self._device_id,
                 device_name=f"{app_info.APP_NAME}-{app_info.APP_PLATFORM}",
             )
@@ -1228,10 +1219,15 @@ class VoxifyApp:
         )
         self.page.update()
         normalized = (message or "").strip().lower()
-        if "license is not activated" in normalized or "license product id is missing" in normalized:
+        if "license is not activated" in normalized:
             self._set_status("License required", DANGER)
             self._set_aux_chip("Open Settings to activate", True)
             self._set_action("Open settings", CARD_SOFT, ACCENT, TEXT, self._open_settings)
+            return
+        if "license verification is not configured" in normalized or "productid and deviceid are required" in normalized:
+            self._set_status("Server config required", DANGER)
+            self._set_aux_chip("Admin: configure product ID on server", True)
+            self._set_action("Retry", CARD_SOFT, ACCENT, TEXT, self._on_action_click)
             return
         if "unable to reach the website" in normalized or "license database is unavailable" in normalized:
             self._set_status("Server unavailable", DANGER)

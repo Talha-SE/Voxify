@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import subprocess
 import sys
 import threading
@@ -411,12 +410,6 @@ def main(page: ft.Page) -> None:
         can_reveal_password=True,
         **_field_style(),
     )
-    product_id_field = ft.TextField(
-        label="Product ID",
-        value=(cfg.get("license_product_id") or os.getenv("GUMROAD_PRODUCT_ID") or "").strip(),
-        hint_text="Gumroad product ID",
-        **_field_style(),
-    )
     license_status_text = ft.Text("License not activated", size=10, color=MUTED)
     license_plan_text = ft.Text("", size=9, color=MUTED_SOFT)
     license_quota_text = ft.Text("", size=9, color=MUTED_SOFT)
@@ -584,9 +577,8 @@ def main(page: ft.Page) -> None:
 
     def _activate_license(_event: ft.ControlEvent | None = None) -> None:
         key = (license_key_field.value or "").strip()
-        product_id = (product_id_field.value or "").strip()
-        if not key or not product_id:
-            page.snack_bar = ft.SnackBar(content=ft.Text("License key and product ID are required.", color=TEXT), bgcolor=CARD_SOFT, open=True)
+        if not key:
+            page.snack_bar = ft.SnackBar(content=ft.Text("License key is required.", color=TEXT), bgcolor=CARD_SOFT, open=True)
             page.update()
             return
         status_text.value = "Activating license..."
@@ -597,7 +589,6 @@ def main(page: ft.Page) -> None:
             try:
                 session_data = website_client.activate_license(
                     license_key=key,
-                    product_id=product_id,
                     device_id=device_id,
                     device_name=f"{app_info.APP_NAME}-{app_info.APP_PLATFORM}",
                 )
@@ -620,7 +611,6 @@ def main(page: ft.Page) -> None:
                     },
                 )
                 latest_cfg = config.load()
-                latest_cfg["license_product_id"] = product_id
                 latest_cfg["device_id"] = device_id
                 config.save(latest_cfg)
                 page.run_thread(_render_license_entitlement, session_data.entitlement)
@@ -644,7 +634,6 @@ def main(page: ft.Page) -> None:
                     device_id=device_id,
                     device_name=f"{app_info.APP_NAME}-{app_info.APP_PLATFORM}",
                     license_key=(state.get("licenseKey") or "").strip(),
-                    product_id=(product_id_field.value or "").strip(),
                 )
                 license_cache.save_state(
                     token=session_data.token,
@@ -713,7 +702,6 @@ def main(page: ft.Page) -> None:
         latest_cfg["auto_fallback_enabled"] = bool(auto_fallback_switch.value)
         latest_cfg["silence_trim_enabled"] = bool(silence_trim_switch.value)
         latest_cfg["send_reliability_events"] = bool(reliability_events_switch.value)
-        latest_cfg["license_product_id"] = (product_id_field.value or "").strip()
         latest_cfg["device_id"] = device_id
         latest_cfg["auto_install_updates"] = bool(auto_install_updates_switch.value)
         latest_cfg["restart_after_update"] = bool(restart_after_update_switch.value)
@@ -1010,7 +998,6 @@ def main(page: ft.Page) -> None:
                 "License & Quota",
                 ft.Icons.VERIFIED_USER,
                 [
-                    product_id_field,
                     license_key_field,
                     ft.Row(spacing=8, controls=[activate_license_button, refresh_license_button, clear_license_button]),
                     license_status_text,

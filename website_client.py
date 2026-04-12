@@ -138,17 +138,19 @@ def get_site_status(base_url: str | None = None) -> dict:
 
 def activate_license(
     license_key: str,
-    product_id: str,
     device_id: str,
     device_name: str = "",
+    product_id: str = "",
     base_url: str | None = None,
 ) -> LicenseSession:
     payload = {
         "licenseKey": (license_key or "").strip(),
-        "productId": (product_id or "").strip(),
         "deviceId": (device_id or "").strip(),
         "deviceName": (device_name or "").strip(),
     }
+    clean_product_id = (product_id or "").strip()
+    if clean_product_id:
+        payload["productId"] = clean_product_id
     try:
         response = requests.post(
             f"{_normalize_base_url(base_url)}/api/license/activate",
@@ -188,8 +190,10 @@ def refresh_license(
         "deviceId": (device_id or "").strip(),
         "deviceName": (device_name or "").strip(),
         "licenseKey": (license_key or "").strip(),
-        "productId": (product_id or "").strip(),
     }
+    clean_product_id = (product_id or "").strip()
+    if clean_product_id:
+        payload["productId"] = clean_product_id
     try:
         response = requests.post(
             f"{_normalize_base_url(base_url)}/api/license/refresh",
