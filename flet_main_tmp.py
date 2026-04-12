@@ -478,7 +478,8 @@ class SonusApp:
     def _execute_voice_actions(self, actions: tuple[str, ...]) -> None:
         for action in actions:
             if action == "undo_last":
-                output_handler.send_shortcut("ctrl", "z")
+                modifier = "command" if sys.platform == "darwin" else "ctrl"
+                output_handler.send_shortcut(modifier, "z")
 
     def _handle_typing_failure(self, raw_text: str) -> None:
         self._last_raw_transcript = raw_text

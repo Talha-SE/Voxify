@@ -3,13 +3,13 @@
   "language": "ur",
   "sample_rate": 16000,
   "channels": 1,
-  "theme": "light",
+  "theme": "dark",
   "window_x": 631,
   "window_y": 439,
   "always_on_top": true,
   "auto_type_delay": 1,
   "hotkey": "ctrl+shift+space",
-  "mode": "Live",
+  "mode": "Batch",
   "source": "mic",
   "check_for_updates": true,
   "ignored_update_version": "",
@@ -26,5 +26,8 @@
   "send_reliability_events": false,
   "device_id": "0f95a0228b7a463c8c1da43669ee7ed9",
   "auto_minimize": true,
-  "minimize_timeout": 10
+  "minimize_timeout": 10,
+  "license_product_id": "",
+  "auto_install_updates": true,
+  "restart_after_update": true
 }

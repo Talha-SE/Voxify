@@ -172,6 +172,12 @@ class SonusApp:
         threading.Thread(target=self._warmup_startup, daemon=True).start()
         threading.Thread(target=self._watch_config_changes, daemon=True).start()
 
+    def _window_bgcolor(self) -> str:
+        # Transparent app window removes rectangular corners on Win/macOS.
+        if sys.platform.startswith("win") or sys.platform == "darwin":
+            return ft.Colors.TRANSPARENT
+        return BG
+
     def _desired_theme_name(self) -> str:
         requested = (self.cfg.get("theme", "dark") or "dark").strip().lower()
         return requested if requested in THEMES else "dark"
@@ -217,8 +223,9 @@ class SonusApp:
 
     def _apply_theme_to_controls(self) -> None:
         self.page.theme_mode = ft.ThemeMode.DARK if self._theme_name == "dark" else ft.ThemeMode.LIGHT
-        self.page.bgcolor = BG
-        self.page.window.bgcolor = BG
+        window_bg = self._window_bgcolor()
+        self.page.bgcolor = window_bg
+        self.page.window.bgcolor = window_bg
 
         self.title_text.color = TEXT
         if not self._is_recording and not self._waiting_click and not self._api_check_in_flight:
@@ -229,8 +236,11 @@ class SonusApp:
 
         self.settings_icon.color = ft.Colors.with_opacity(0.8, SETTINGS_ICON)
         self.close_icon.color = ft.Colors.with_opacity(0.9, CLOSE_ICON)
+        self.minimize_icon.color = ft.Colors.with_opacity(0.9, SETTINGS_ICON)
         self.settings_btn.bgcolor = ft.Colors.with_opacity(0.2, CARD_ACTIVE)
         self.settings_btn.border = ft.Border.all(1, ft.Colors.with_opacity(0.2, BORDER))
+        self.minimize_btn.bgcolor = ft.Colors.with_opacity(0.2, CARD_ACTIVE)
+        self.minimize_btn.border = ft.Border.all(1, ft.Colors.with_opacity(0.2, BORDER))
         self.close_btn.bgcolor = ft.Colors.with_opacity(0.2, CARD_ACTIVE)
         self.close_btn.border = ft.Border.all(1, ft.Colors.with_opacity(0.2, BORDER))
 
@@ -245,12 +255,8 @@ class SonusApp:
             if self._is_minimized
             else ft.Padding.symmetric(horizontal=10, vertical=6)
         )
-        self.widget_shell.border = ft.Border.all(1, ft.Colors.with_opacity(0.55, ACCENT))
-        self.widget_shell.shadow = ft.BoxShadow(
-            blur_radius=24,
-            spread_radius=1,
-            color=ft.Colors.with_opacity(0.42, "#020617"),
-        )
+        self.widget_shell.border = None
+        self.widget_shell.shadow = None
 
         self._set_mode_badge()
         self._sync_action_visual(fg=ACCENT, border=ACCENT, text_color=self.action_label.color or TEXT)
@@ -258,11 +264,12 @@ class SonusApp:
 
     def _setup_page(self) -> None:
         self.page.title = APP_TITLE
-        self.page.bgcolor = BG
+        window_bg = self._window_bgcolor()
+        self.page.bgcolor = window_bg
         self.page.padding = 0
         self.page.spacing = 0
         self.page.theme_mode = ft.ThemeMode.DARK if self._theme_name == "dark" else ft.ThemeMode.LIGHT
-        self.page.window.bgcolor = BG
+        self.page.window.bgcolor = window_bg
         self.page.window.width = WIDGET_FULL_WIDTH
         self.page.window.height = WIDGET_FULL_HEIGHT
         self.page.window.min_width = WIDGET_FULL_WIDTH
@@ -270,12 +277,23 @@ class SonusApp:
         self.page.window.min_height = WIDGET_FULL_HEIGHT
         self.page.window.max_height = WIDGET_FULL_HEIGHT
         self.page.window.resizable = False
-        self.page.window.shadow = True
+        self.page.window.shadow = False
         self.page.window.title_bar_hidden = True
         self.page.window.title_bar_buttons_hidden = True
         self.page.window.frameless = True
         self.page.window.always_on_top = bool(self.cfg.get("always_on_top", True))
         self.page.window.movable = True
+
+        def _on_window_event(event) -> None:
+            event_type = str(getattr(event, "type", "")).lower()
+            event_data = str(getattr(event, "data", "")).lower()
+            if "close" in event_type or event_data == "close":
+                self._stop_any_active_work()
+
+        try:
+            self.page.window.on_event = _on_window_event
+        except Exception:
+            pass
 
     def _auto_minimize_enabled(self) -> bool:
         return bool(self.cfg.get("auto_minimize", True))
@@ -321,6 +339,9 @@ class SonusApp:
     def _on_widget_hover(self, event: ft.ControlEvent) -> None:
         if str(event.data).lower() == "true":
             self._register_widget_interaction()
+
+    def _toggle_minimized(self, _event) -> None:
+        self._set_minimized(not self._is_minimized)
 
     def _set_minimized(self, minimized: bool) -> None:
         if minimized == self._is_minimized:
@@ -500,6 +521,19 @@ class SonusApp:
             ink=True,
         )
 
+        self.minimize_icon = ft.Icon(ft.Icons.REMOVE_ROUNDED, size=14, color=ft.Colors.with_opacity(0.9, SETTINGS_ICON))
+        self.minimize_btn = ft.Container(
+            width=28,
+            height=28,
+            border_radius=14,
+            alignment=ft.Alignment(0, 0),
+            bgcolor=ft.Colors.with_opacity(0.2, CARD_ACTIVE),
+            border=ft.Border.all(1, ft.Colors.with_opacity(0.2, BORDER)),
+            content=self.minimize_icon,
+            on_click=self._toggle_minimized,
+            ink=True,
+        )
+
         self.close_icon = ft.Icon(ft.Icons.CLOSE_ROUNDED, size=14, color=ft.Colors.with_opacity(0.9, CLOSE_ICON))
         self.close_btn = ft.Container(
             width=28,
@@ -534,7 +568,7 @@ class SonusApp:
             content=ft.Row(
                 spacing=4,
                 vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                controls=[self.action_button, self.settings_btn, self.close_btn],
+                controls=[self.action_button, self.settings_btn, self.minimize_btn, self.close_btn],
             ),
         )
 
@@ -570,12 +604,6 @@ class SonusApp:
                 begin=ft.Alignment(-1, -1),
                 end=ft.Alignment(1, 1),
                 colors=[CARD, WIDGET_GRADIENT_END],
-            ),
-            border=ft.Border.all(1, ft.Colors.with_opacity(0.55, ACCENT)),
-            shadow=ft.BoxShadow(
-                blur_radius=24,
-                spread_radius=1,
-                color=ft.Colors.with_opacity(0.42, "#020617"),
             ),
             on_hover=self._on_widget_hover,
             content=ft.Stack(
@@ -639,6 +667,8 @@ class SonusApp:
         is_stop = "stop" in label
         is_cancel = "cancel" in label
         is_copy = "copy" in label
+        is_settings = "settings" in label
+        is_retry = "retry" in label
 
         icon_name = ft.Icons.MIC_OFF_ROUNDED
         icon_color = ACCENT
@@ -670,6 +700,18 @@ class SonusApp:
             button_bg = CARD_ACTIVE
             button_border = ft.Colors.with_opacity(0.5, ACCENT)
             glow_color = ft.Colors.with_opacity(0.25, ACCENT)
+        elif is_settings:
+            icon_name = ft.Icons.SETTINGS_ROUNDED
+            icon_color = ACCENT
+            button_bg = CARD_ACTIVE
+            button_border = ft.Colors.with_opacity(0.5, ACCENT)
+            glow_color = ft.Colors.with_opacity(0.24, ACCENT)
+        elif is_retry:
+            icon_name = ft.Icons.REFRESH_ROUNDED
+            icon_color = ACCENT_GLOW
+            button_bg = CARD_ACTIVE
+            button_border = ft.Colors.with_opacity(0.5, ACCENT)
+            glow_color = ft.Colors.with_opacity(0.24, ACCENT)
         elif is_busy:
             icon_name = ft.Icons.HOURGLASS_TOP_ROUNDED
             icon_color = MUTED
@@ -1081,7 +1123,8 @@ class SonusApp:
     def _execute_voice_actions(self, actions: tuple[str, ...]) -> None:
         for action in actions:
             if action == "undo_last":
-                output_handler.send_shortcut("ctrl", "z")
+                modifier = "command" if sys.platform == "darwin" else "ctrl"
+                output_handler.send_shortcut(modifier, "z")
 
     def _handle_typing_failure(self, raw_text: str) -> None:
         self._last_raw_transcript = raw_text
@@ -1164,6 +1207,9 @@ class SonusApp:
 
     def _on_api_check_failed(self, message: str) -> None:
         self._api_check_in_flight = False
+        self._waiting_click = False
+        self.page.window.opacity = 1
+        self._stop_target_listener()
         self._runtime_api_key = ""
         self._set_health_chip("", False)
         self._log_reliability_event("api_check_failed", error_code=reliability.normalize_error_code(message), detail=message)
@@ -1173,6 +1219,17 @@ class SonusApp:
             open=True,
         )
         self.page.update()
+        normalized = (message or "").strip().lower()
+        if "license is not activated" in normalized or "license product id is missing" in normalized:
+            self._set_status("License required", DANGER)
+            self._set_aux_chip("Open Settings to activate", True)
+            self._set_action("Open settings", CARD_SOFT, ACCENT, TEXT, self._open_settings)
+            return
+        if "unable to reach the website" in normalized or "license database is unavailable" in normalized:
+            self._set_status("Server unavailable", DANGER)
+            self._set_aux_chip("Start website server", True)
+            self._set_action("Retry", CARD_SOFT, ACCENT, TEXT, self._on_action_click)
+            return
         self._reset_to_ready()
 
     def _get_runtime_api_key(self) -> str:

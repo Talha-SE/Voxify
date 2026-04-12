@@ -222,6 +222,11 @@ def main(page: ft.Page) -> None:
     device_id = _get_or_create_device_id(cfg)
     license_state = license_cache.load_state()
     selected_theme = (cfg.get("theme", "dark") or "dark").strip().lower()
+    if selected_theme not in THEME_PALETTES:
+        selected_theme = "dark"
+    initial_theme = selected_theme
+    preview_theme = selected_theme
+    theme_preview_dirty = False
     _apply_theme_constants(selected_theme)
 
     page.title = APP_TITLE
@@ -239,6 +244,25 @@ def main(page: ft.Page) -> None:
     page.window.max_width = 500
     page.window.min_height = 650
     page.window.max_height = 650
+
+    def _on_window_event(event) -> None:
+        nonlocal preview_theme
+        nonlocal theme_preview_dirty
+        event_type = str(getattr(event, "type", "")).lower()
+        event_data = str(getattr(event, "data", "")).lower()
+        if "close" in event_type or event_data == "close":
+            if theme_preview_dirty and preview_theme != initial_theme:
+                try:
+                    latest_cfg = config.load()
+                    latest_cfg["theme"] = initial_theme
+                    config.save(latest_cfg)
+                except Exception:
+                    pass
+
+    try:
+        page.window.on_event = _on_window_event
+    except Exception:
+        pass
 
     known_language_codes = {value for _, value in LANGUAGE_OPTIONS if value != "custom"}
     stored_language = (cfg.get("language", "") or "").strip().lower()
@@ -457,7 +481,24 @@ def main(page: ft.Page) -> None:
             except Exception:
                 pass
 
+    def _persist_theme_preview(theme_name: str) -> None:
+        latest_cfg = config.load()
+        latest_cfg["theme"] = theme_name
+        config.save(latest_cfg)
+
+    def _revert_theme_preview_if_needed() -> None:
+        nonlocal preview_theme
+        nonlocal theme_preview_dirty
+        if theme_preview_dirty and preview_theme != initial_theme:
+            try:
+                _persist_theme_preview(initial_theme)
+            except Exception:
+                pass
+        preview_theme = initial_theme
+        theme_preview_dirty = False
+
     def _close_window(_event=None) -> None:
+        _revert_theme_preview_if_needed()
         page.run_task(_close_window_async)
 
     def _sync_model_by_mode() -> None:
@@ -526,6 +567,19 @@ def main(page: ft.Page) -> None:
             open=True,
         )
         page.update()
+
+    def on_theme_toggle(_event: ft.ControlEvent) -> None:
+        nonlocal preview_theme
+        nonlocal theme_preview_dirty
+        preview_theme = "dark" if theme_switch.value else "light"
+        try:
+            _persist_theme_preview(preview_theme)
+            theme_preview_dirty = preview_theme != initial_theme
+            status_text.value = "Theme preview active (save to keep)"
+            status_text.color = MUTED
+            page.update()
+        except Exception as exc:
+            _show_snack(f"Unable to preview theme: {exc}")
 
     def _activate_license(_event: ft.ControlEvent | None = None) -> None:
         key = (license_key_field.value or "").strip()
@@ -617,6 +671,9 @@ def main(page: ft.Page) -> None:
         _render_license_entitlement(None)
 
     def on_save(_event: ft.ControlEvent) -> None:
+        nonlocal initial_theme
+        nonlocal preview_theme
+        nonlocal theme_preview_dirty
         selected_language = language_field.value or "Auto-detect"
         language_code = next((value for label, value in LANGUAGE_OPTIONS if label == selected_language), "")
         if selected_language == "Custom...":
@@ -658,6 +715,10 @@ def main(page: ft.Page) -> None:
         latest_cfg["personal_dictionary"] = _parse_multiline_list(personal_dictionary_field.value or "")
         latest_cfg["text_replacements"] = _parse_replacements(text_replacements_field.value or "")
         config.save(latest_cfg)
+
+        initial_theme = latest_cfg["theme"] if latest_cfg["theme"] in THEME_PALETTES else "dark"
+        preview_theme = initial_theme
+        theme_preview_dirty = False
 
         status_text.value = "Saved"
         status_text.color = SUCCESS
@@ -864,6 +925,7 @@ def main(page: ft.Page) -> None:
     minimize_timeout_slider.on_change = on_timeout_change
     auto_minimize_switch.on_change = on_auto_minimize_toggle
     check_updates_switch.on_change = on_updates_toggle
+    theme_switch.on_change = on_theme_toggle
     mode_field.on_change = on_mode_change
 
     general_content = ft.Column(

@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import os
 import subprocess
+import sys
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -390,9 +391,11 @@ def get_update_info(
 
     latest_version = (payload.get("latestVersion") or "").strip()
     download_url = (payload.get("downloadUrl") or "").strip()
-    update_available = bool(payload.get("updateAvailable"))
-    if latest_version and download_url:
-        update_available = update_available or is_newer_version(current_version, latest_version)
+    server_update_available = payload.get("updateAvailable")
+    if isinstance(server_update_available, bool):
+        update_available = server_update_available
+    else:
+        update_available = bool(latest_version and download_url and is_newer_version(current_version, latest_version))
 
     return UpdateInfo(
         update_available=update_available,
@@ -506,6 +509,10 @@ def launch_update_installer(file_path: str, info: UpdateInfo) -> str:
             cmd = [str(path)] + args
         subprocess.Popen(cmd, cwd=str(path.parent))
         return "Installer launched."
+
+    if sys.platform == "darwin":
+        subprocess.Popen(["open", str(path)])
+        return "Opened downloaded update."
 
     subprocess.Popen(["xdg-open", str(path)])
     return "Opened downloaded update."
