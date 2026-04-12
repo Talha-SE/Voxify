@@ -1,5 +1,5 @@
 @echo off
-echo Building SONUS standalone EXE...
+echo Building Voxify standalone EXE...
 echo.
 
 python -m pip install pyinstaller -q
@@ -7,7 +7,7 @@ python -m pip install pyinstaller -q
 python -m PyInstaller ^
     --onefile ^
     --windowed ^
-    --name "SONUS" ^
+    --name "Voxify" ^
     --add-data "config.json;." ^
     --collect-all flet ^
     --hidden-import flet_settings ^
@@ -22,5 +22,5 @@ python -m PyInstaller ^
     app.py
 
 echo.
-echo Done! Executable is in: dist\SONUS.exe
+echo Done! Executable is in: dist\Voxify.exe
 pause

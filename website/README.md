@@ -1,4 +1,4 @@
-# Brevios Website Module
+# Voxify Website Module
 
 This folder contains a separate website with server-side secret management.
 
@@ -55,7 +55,7 @@ GUMROAD_ONETIME_URL=https://yourname.gumroad.com/l/your-onetime-plan
 GUMROAD_PRODUCT_ID=your_gumroad_product_id
 GUMROAD_API_ACCESS_TOKEN=
 MONGODB_URI=mongodb://127.0.0.1:27017
-MONGODB_DB_NAME=sonus
+MONGODB_DB_NAME=voxify
 ```
 
 ## Desktop app license validation flow

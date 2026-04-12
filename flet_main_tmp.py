@@ -20,7 +20,7 @@ import realtime_transcriber as rt_module
 import transcriber as tr_module
 import website_client
 
-APP_TITLE = "SONUS"
+APP_TITLE = "Voxify"
 self.colors['accent'] = "#0A84FF"         # Professional Sapphire Blue
 ACCENT_HOVER = "#0070E0"
 self.colors['bg'] = "#0F0F0F"            # Solid Dark Background
@@ -38,7 +38,7 @@ BATCH_MODEL = "voxtral-mini-2507"
 LIVE_MODELS = {"voxtral-mini-2507", "voxtral-small-2507"}
 
 
-class SonusApp:
+class VoxifyApp:
     def __init__(self, page: ft.Page) -> None:
         self.page = page
         self.cfg = config.load()
@@ -105,7 +105,7 @@ class SonusApp:
 
     def _build_ui(self) -> None:
         # custom title bar
-        self.title_text = ft.Text("SONUS", size=13, weight=ft.FontWeight.W_900, color=self.colors['text'])
+        self.title_text = ft.Text("Voxify", size=13, weight=ft.FontWeight.W_900, color=self.colors['text'])
         self.subtitle_text = ft.Text("PRIVATE VOICE AI", size=7, color=self.colors['muted'], weight=ft.FontWeight.BOLD)
         
         self.settings_btn = ft.IconButton(
@@ -1027,7 +1027,7 @@ class SonusApp:
 
 
 def main(page: ft.Page) -> None:
-    SonusApp(page)
+    VoxifyApp(page)
 
 
 if __name__ == "__main__":

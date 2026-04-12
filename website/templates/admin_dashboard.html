@@ -1,7 +1,7 @@
 {% extends 'base.html' %}
 
-{% block title %}Admin Dashboard | SONUS{% endblock %}
-{% block meta_description %}Secure SONUS admin dashboard and service configuration status.{% endblock %}
+{% block title %}Admin Dashboard | Voxify{% endblock %}
+{% block meta_description %}Secure Voxify admin dashboard and service configuration status.{% endblock %}
 {% block extra_head %}<meta name="robots" content="noindex,nofollow">{% endblock %}
 
 {% block content %}
@@ -71,7 +71,7 @@
       <input id="latest_version" name="latest_version" type="text" value="{{ release_info.latestVersion }}" placeholder="e.g. 1.2.0" required>
 
       <label for="download_url">Download URL</label>
-      <input id="download_url" name="download_url" type="url" value="{{ release_info.downloadUrl }}" placeholder="https://.../SONUS-setup.exe" required>
+      <input id="download_url" name="download_url" type="url" value="{{ release_info.downloadUrl }}" placeholder="https://.../Voxify-setup.exe" required>
 
       <div class="release-form-row">
         <div>

@@ -28,7 +28,7 @@ def _protect_windows(value: str) -> str:
         out_blob = DATA_BLOB()
         if not crypt32.CryptProtectData(
             ctypes.byref(in_blob),
-            "SONUS",
+            "Voxify",
             None,
             None,
             None,

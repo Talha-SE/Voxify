@@ -54,9 +54,9 @@ RELEASE_INFO_FILE = Path(__file__).with_name("release_info.json")
 RUNTIME_CONFIG_FILE = Path(__file__).with_name("runtime_config.json")
 RELIABILITY_EVENTS_FILE = Path(__file__).with_name("reliability_events.jsonl")
 
-LICENSE_TOKEN_MAX_AGE_SEC = max(3600, int(os.getenv("SONUS_LICENSE_TOKEN_MAX_AGE_SEC", "604800")))
-LICENSE_REFRESH_INTERVAL_SEC = max(600, int(os.getenv("SONUS_LICENSE_REFRESH_INTERVAL_SEC", "21600")))
-ALLOW_CLIENT_LIVE_KEY = os.getenv("SONUS_ALLOW_CLIENT_LIVE_KEY", "true").strip().lower() == "true"
+LICENSE_TOKEN_MAX_AGE_SEC = max(3600, int(os.getenv("VOXIFY_LICENSE_TOKEN_MAX_AGE_SEC") or os.getenv("SONUS_LICENSE_TOKEN_MAX_AGE_SEC", "604800")))
+LICENSE_REFRESH_INTERVAL_SEC = max(600, int(os.getenv("VOXIFY_LICENSE_REFRESH_INTERVAL_SEC") or os.getenv("SONUS_LICENSE_REFRESH_INTERVAL_SEC", "21600")))
+ALLOW_CLIENT_LIVE_KEY = (os.getenv("VOXIFY_ALLOW_CLIENT_LIVE_KEY") or os.getenv("SONUS_ALLOW_CLIENT_LIVE_KEY", "true")).strip().lower() == "true"
 
 _store: MongoLicenseStore | None = None
 _store_error: str = ""
@@ -765,7 +765,7 @@ def admin_export_licenses():
 
     response = make_response(output.getvalue())
     response.headers["Content-Type"] = "text/csv; charset=utf-8"
-    response.headers["Content-Disposition"] = "attachment; filename=sonus-license-export.csv"
+    response.headers["Content-Disposition"] = "attachment; filename=voxify-license-export.csv"
     return response
 
 
@@ -781,7 +781,7 @@ def site_status():
     db_ok = bool(store is not None)
     return jsonify(
         {
-            "service": "sonus-website",
+            "service": "voxify-website",
             "status": "ok",
             "apiConfigured": api_is_set,
             "licenseDbConfigured": db_ok,
@@ -1162,7 +1162,7 @@ def app_update():
     return jsonify(
         {
             "success": True,
-            "app": "sonus-desktop",
+            "app": "voxify-desktop",
             "channel": release_info.get("channel", "stable"),
             "platform": release_info.get("platform", "windows"),
             "latestVersion": release_info.get("latestVersion", "1.0.0"),

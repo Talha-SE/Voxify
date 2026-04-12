@@ -1,6 +1,6 @@
 """
-SONUS - Floating Speech-to-Text Desktop Tool
-===========================================
+Voxify - Floating Speech-to-Text Desktop Tool
+=============================================
 A compact, always-on-top CustomTkinter window that:
     - records mic or system audio
     - transcribes speech in batch or live mode
@@ -32,7 +32,7 @@ import recorder as rec_module
 import realtime_transcriber as rt_module
 import transcriber as tr_module
 
-APP_NAME = "SONUS"
+APP_NAME = "Voxify"
 WIN_W = 286
 WIN_H = 120
 CORNER_R = 18
@@ -94,7 +94,7 @@ class _SingleInstanceLock:
         self._locked = False
 
 
-_MAIN_INSTANCE_LOCK = _SingleInstanceLock("sonus-main.lock")
+_MAIN_INSTANCE_LOCK = _SingleInstanceLock("voxify-main.lock")
 
 COLORS = {
     "bg_main": "#06111F",
@@ -147,7 +147,7 @@ class SettingsDialog(ctk.CTkToplevel):
 
         ctk.CTkLabel(
             main_frame,
-            text="SONUS Settings",
+            text="Voxify Settings",
             font=ctk.CTkFont(size=17, weight="bold"),
             text_color=COLORS["text_main"],
         ).pack(anchor="w", pady=(0, 12))
@@ -511,7 +511,7 @@ class FloatingApp(ctk.CTk):
 
         ctk.CTkLabel(
             title_bar,
-            text="SONUS",
+            text="Voxify",
             font=ctk.CTkFont(size=12, weight="bold"),
             text_color=COLORS["text_main"],
         ).pack(side="left")
@@ -1030,7 +1030,7 @@ def main() -> None:
     is_settings_mode = "--settings" in sys.argv
     if not is_settings_mode:
         if not _MAIN_INSTANCE_LOCK.acquire():
-            notice = "SONUS is already running. Close the existing window first."
+            notice = "Voxify is already running. Close the existing window first."
             if sys.platform.startswith("win"):
                 try:
                     ctypes.windll.user32.MessageBoxW(None, notice, APP_NAME, 0x40)
@@ -1052,7 +1052,7 @@ def main() -> None:
 
         ft.run(flet_main.main, view=ft.AppView.FLET_APP)
     except Exception as exc:
-        message = f"Unable to start SONUS: {exc}"
+        message = f"Unable to start Voxify: {exc}"
         if sys.platform.startswith("win"):
             try:
                 ctypes.windll.user32.MessageBoxW(None, message, APP_NAME, 0x10)

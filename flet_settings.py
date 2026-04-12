@@ -14,7 +14,7 @@ import config
 import license_cache
 import website_client
 
-APP_TITLE = "SONUS Settings"
+APP_TITLE = "Voxify Settings"
 ACCENT = "#00B3FF"
 ACCENT_ALT = "#0066FF"
 BG = "#030712"
@@ -1048,7 +1048,7 @@ def main(page: ft.Page) -> None:
         spacing=10,
         controls=[
             _card(
-                "About SONUS",
+                "About Voxify",
                 ft.Icons.INFO_OUTLINE,
                 [
                     ft.Container(
@@ -1064,7 +1064,7 @@ def main(page: ft.Page) -> None:
                                     vertical_alignment=ft.CrossAxisAlignment.CENTER,
                                     controls=[
                                         ft.Icon(ft.Icons.MIC, size=22, color=ACCENT),
-                                        ft.Text("SONUS", size=16, color=TEXT, weight=ft.FontWeight.W_900),
+                                        ft.Text("Voxify", size=16, color=TEXT, weight=ft.FontWeight.W_900),
                                     ],
                                 ),
                                 ft.Text("Speech to Text Engine", size=10, color=MUTED, weight=ft.FontWeight.W_700),
@@ -1185,7 +1185,7 @@ def main(page: ft.Page) -> None:
                             ft.Column(
                                 spacing=2,
                                 controls=[
-                                    ft.Text("SONUS", size=16, weight=ft.FontWeight.W_900, color=TEXT),
+                                    ft.Text("Voxify", size=16, weight=ft.FontWeight.W_900, color=TEXT),
                                     ft.Text("Command Center", size=9, color=MUTED, weight=ft.FontWeight.W_700),
                                 ],
                             ),

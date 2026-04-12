@@ -24,7 +24,7 @@ import realtime_transcriber as rt_module
 import transcriber as tr_module
 import website_client
 
-APP_TITLE = "SONUS"
+APP_TITLE = "Voxify"
 ACCENT = "#2563EB"
 ACCENT_GLOW = "#22D3EE"
 ACCENT_HOVER = "#1D4ED8"
@@ -114,7 +114,7 @@ THEMES: dict[str, dict[str, str]] = {
 }
 
 
-class SonusApp:
+class VoxifyApp:
     def __init__(self, page: ft.Page) -> None:
         self.page = page
         self.cfg = config.load()
@@ -352,30 +352,33 @@ class SonusApp:
         self.full_mode_container.visible = not minimized
         self.minimized_mode_container.visible = minimized
 
-        if minimized:
-            self.widget_shell.padding = ft.Padding.all(0)
-            self.page.window.min_width = WIDGET_MINI_WIDTH
-            self.page.window.max_width = WIDGET_MINI_WIDTH
-            self.page.window.min_height = WIDGET_MINI_HEIGHT
-            self.page.window.max_height = WIDGET_MINI_HEIGHT
-            self.page.window.width = WIDGET_MINI_WIDTH
-            self.page.window.height = WIDGET_MINI_HEIGHT
-            self._cancel_auto_minimize_timer()
-        else:
-            self.widget_shell.padding = ft.Padding.symmetric(horizontal=10, vertical=6)
-            self.page.window.min_width = WIDGET_FULL_WIDTH
-            self.page.window.max_width = WIDGET_FULL_WIDTH
-            self.page.window.min_height = WIDGET_FULL_HEIGHT
-            self.page.window.max_height = WIDGET_FULL_HEIGHT
-            self.page.window.width = WIDGET_FULL_WIDTH
-            self.page.window.height = WIDGET_FULL_HEIGHT
-            self._schedule_auto_minimize_timer()
+        try:
+            if minimized:
+                self.widget_shell.padding = ft.Padding.all(0)
+                self.page.window.min_width = WIDGET_MINI_WIDTH
+                self.page.window.max_width = WIDGET_MINI_WIDTH
+                self.page.window.min_height = WIDGET_MINI_HEIGHT
+                self.page.window.max_height = WIDGET_MINI_HEIGHT
+                self.page.window.width = WIDGET_MINI_WIDTH
+                self.page.window.height = WIDGET_MINI_HEIGHT
+                self._cancel_auto_minimize_timer()
+            else:
+                self.widget_shell.padding = ft.Padding.symmetric(horizontal=10, vertical=6)
+                self.page.window.min_width = WIDGET_FULL_WIDTH
+                self.page.window.max_width = WIDGET_FULL_WIDTH
+                self.page.window.min_height = WIDGET_FULL_HEIGHT
+                self.page.window.max_height = WIDGET_FULL_HEIGHT
+                self.page.window.width = WIDGET_FULL_WIDTH
+                self.page.window.height = WIDGET_FULL_HEIGHT
+                self._schedule_auto_minimize_timer()
+        except Exception:
+            pass
 
         self.page.update()
 
     def _build_ui(self) -> None:
         self.title_text = ft.Text(
-            "SONUS",
+            "Voxify",
             size=10,
             weight=ft.FontWeight.W_900,
             color=TEXT,
@@ -1031,7 +1034,7 @@ class SonusApp:
         state = license_cache.load_state()
         token = (state.get("token") or self._license_token or "").strip()
         if not token:
-            raise website_client.WebsiteAPIError("License is not activated. Open Settings and activate your Gumroad key.")
+            raise website_client.WebsiteAPIError("License is not activated. Open Settings and activate your Voxify key.")
 
         cached_key = (state.get("licenseKey") or "").strip()
         product_id = self._license_product_id()
@@ -1750,7 +1753,7 @@ class SonusApp:
 
 
 def main(page: ft.Page) -> None:
-    SonusApp(page)
+    VoxifyApp(page)
 
 
 if __name__ == "__main__":

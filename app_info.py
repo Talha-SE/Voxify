@@ -17,11 +17,11 @@ def _detect_platform() -> str:
 
 
 def _resolve_platform() -> str:
-	override = (os.getenv("SONUS_APP_PLATFORM") or "").strip().lower()
+	override = (os.getenv("VOXIFY_APP_PLATFORM") or os.getenv("SONUS_APP_PLATFORM") or "").strip().lower()
 	return override or _detect_platform()
 
-APP_NAME = "SONUS"
-APP_VERSION = (os.getenv("SONUS_APP_VERSION") or "1.0.0").strip()
+APP_NAME = "Voxify"
+APP_VERSION = (os.getenv("VOXIFY_APP_VERSION") or os.getenv("SONUS_APP_VERSION") or "1.0.0").strip()
 APP_PLATFORM = _resolve_platform()
 APP_CHANNEL = "stable"
 

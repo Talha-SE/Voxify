@@ -13,7 +13,7 @@ from typing import Any
 
 import requests
 
-DEFAULT_WEBSITE_URL = os.getenv("SONUS_WEBSITE_URL", "http://127.0.0.1:5050")
+DEFAULT_WEBSITE_URL = os.getenv("VOXIFY_WEBSITE_URL") or os.getenv("SONUS_WEBSITE_URL", "http://127.0.0.1:5050")
 STATUS_TIMEOUT = 2.0
 BOOTSTRAP_TIMEOUT = 5.0
 UPDATE_TIMEOUT = 5.0
@@ -479,9 +479,9 @@ def download_update_asset(info: UpdateInfo, dest_dir: str | None = None) -> str:
     if not info.download_url:
         raise WebsiteAPIError("Update download URL is missing.")
 
-    target_dir = Path(dest_dir or tempfile.gettempdir()) / "sonus_updates"
+    target_dir = Path(dest_dir or tempfile.gettempdir()) / "voxify_updates"
     target_dir.mkdir(parents=True, exist_ok=True)
-    filename = Path(info.download_url.split("?")[0]).name or f"sonus-{info.latest_version}.exe"
+    filename = Path(info.download_url.split("?")[0]).name or f"voxify-{info.latest_version}.exe"
     target_path = target_dir / filename
 
     try:

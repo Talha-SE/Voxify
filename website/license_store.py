@@ -50,6 +50,42 @@ def _estimate_words_from_chars(chars: int) -> int:
     return max(1, int(round(charge / 5.0)))
 
 
+def _extract_purchased_seats(payload: Any) -> int:
+    if not isinstance(payload, dict):
+        return 0
+
+    direct_keys = (
+        "quantity",
+        "seat_count",
+        "seats",
+        "seats_count",
+        "license_quantity",
+    )
+    for key in direct_keys:
+        value = _safe_int(payload.get(key), 0)
+        if value > 0:
+            return value
+
+    variants = payload.get("variants_and_quantity")
+    if isinstance(variants, dict):
+        total = 0
+        for variant_value in variants.values():
+            if isinstance(variant_value, dict):
+                qty = _safe_int(
+                    variant_value.get("quantity")
+                    or variant_value.get("qty")
+                    or variant_value.get("count"),
+                    0,
+                )
+            else:
+                qty = _safe_int(variant_value, 0)
+            if qty > 0:
+                total += qty
+        if total > 0:
+            return total
+    return 0
+
+
 @dataclass(frozen=True)
 class PlanSpec:
     code: str
@@ -68,7 +104,7 @@ DEFAULT_PLAN_SPECS: dict[str, PlanSpec] = {
 
 
 def _load_plan_specs() -> dict[str, PlanSpec]:
-    raw = _normalize_text(os.getenv("SONUS_PLAN_CATALOG_JSON", ""))
+    raw = _normalize_text(os.getenv("VOXIFY_PLAN_CATALOG_JSON") or os.getenv("SONUS_PLAN_CATALOG_JSON", ""))
     if not raw:
         return dict(DEFAULT_PLAN_SPECS)
     try:
@@ -126,7 +162,7 @@ def _load_product_map() -> dict[str, str]:
 class MongoLicenseStore:
     def __init__(self) -> None:
         mongo_uri = _normalize_text(os.getenv("MONGODB_URI", "mongodb://127.0.0.1:27017"))
-        db_name = _normalize_text(os.getenv("MONGODB_DB_NAME", "sonus"))
+        db_name = _normalize_text(os.getenv("MONGODB_DB_NAME", "voxify"))
         self._client = MongoClient(mongo_uri, serverSelectionTimeoutMS=2500)
         self._db = self._client[db_name]
         self.licenses: Collection = self._db["licenses"]
@@ -235,6 +271,8 @@ class MongoLicenseStore:
         license_hash = self.hash_license(license_key)
         device_hash = self.hash_device(device_id)
         plan = self.resolve_plan(product_id)
+        purchased_seats = _extract_purchased_seats(purchase)
+        effective_seat_limit = purchased_seats if purchased_seats > 0 else int(plan.seat_limit)
 
         subscription_stopped = bool(
             purchase.get("subscription_cancelled_at") or purchase.get("subscription_ended_at")
@@ -249,7 +287,8 @@ class MongoLicenseStore:
             "productId": _normalize_text(product_id),
             "planCode": plan.code,
             "quotaChars": int(plan.quota_chars),
-            "seatLimit": int(plan.seat_limit),
+            "seatLimit": int(max(1, _safe_int(effective_seat_limit, plan.seat_limit))),
+            "purchasedSeats": int(max(0, _safe_int(purchased_seats, 0))),
             "cycleType": plan.cycle_type,
             "commercial": bool(plan.commercial),
             "status": status,
@@ -557,6 +596,9 @@ class MongoLicenseStore:
             clean_status = "revoked"
 
         purchase_payload = payload.get("purchase") if isinstance(payload.get("purchase"), dict) else {}
+        payload_seats = _extract_purchased_seats(payload)
+        purchase_seats = _extract_purchased_seats(purchase_payload)
+        purchased_seats = payload_seats if payload_seats > 0 else purchase_seats
         sale_id = _normalize_text(
             payload.get("sale_id") or payload.get("saleId") or purchase_payload.get("sale_id")
         )
@@ -625,9 +667,11 @@ class MongoLicenseStore:
         if plan:
             shared_updates["planCode"] = plan.code
             shared_updates["quotaChars"] = int(plan.quota_chars)
-            shared_updates["seatLimit"] = int(plan.seat_limit)
             shared_updates["cycleType"] = plan.cycle_type
             shared_updates["commercial"] = bool(plan.commercial)
+        if purchased_seats > 0:
+            shared_updates["seatLimit"] = int(max(1, _safe_int(purchased_seats, 1)))
+            shared_updates["purchasedSeats"] = int(max(0, _safe_int(purchased_seats, 0)))
 
         if license_hash:
             create_fields = {
@@ -642,6 +686,13 @@ class MongoLicenseStore:
                 "licenseHint": f"***{license_key[-4:]}",
                 "licenseHash": license_hash,
             }
+            if "seatLimit" not in shared_updates:
+                if plan:
+                    create_fields["seatLimit"] = int(plan.seat_limit)
+                    create_fields["purchasedSeats"] = 0
+                else:
+                    create_fields["seatLimit"] = 1
+                    create_fields["purchasedSeats"] = 0
             one_result = self.licenses.update_one(
                 {"licenseHash": license_hash},
                 {"$set": shared_updates, "$setOnInsert": create_fields},
