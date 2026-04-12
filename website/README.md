@@ -53,6 +53,12 @@ python server.py
 GUMROAD_MEMBERSHIP_URL=https://yourname.gumroad.com/l/your-membership
 GUMROAD_ONETIME_URL=https://yourname.gumroad.com/l/your-onetime-plan
 GUMROAD_PRODUCT_ID=your_gumroad_product_id
+GUMROAD_PRODUCT_ID_STARTER=
+GUMROAD_PRODUCT_ID_PRO=
+GUMROAD_PRODUCT_ID_TEAM=
+GUMROAD_PRODUCT_ID_LIFETIME=
+# Optional one-product variant mapping:
+VOXIFY_GUMROAD_VARIANT_RULES_JSON={"monthly starter":{"planCode":"starter","billingCycle":"monthly","priceType":"membership","seatLimit":1},"yearly pro":{"planCode":"pro","billingCycle":"yearly","priceType":"membership","seatLimit":5}}
 GUMROAD_API_ACCESS_TOKEN=
 MONGODB_URI=mongodb://127.0.0.1:27017
 MONGODB_DB_NAME=voxify

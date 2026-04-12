@@ -199,9 +199,15 @@
               <p class="table-meta">{{ row.purchaseEmail or '-' }}</p>
               <p class="table-meta">Sale: {{ row.saleId or '-' }}</p>
             </td>
-            <td>{{ row.plan }}</td>
+            <td>
+              <p class="table-primary">{{ row.plan }}</p>
+              <p class="table-meta">{{ row.billingCycle }} | {{ row.priceType }}</p>
+              {% if row.variantLabel %}
+              <p class="table-meta">Variant: {{ row.variantLabel }}</p>
+              {% endif %}
+            </td>
             <td>{{ row.status }}</td>
-            <td>{{ row.activeSeats }} / {{ row.seatLimit }}</td>
+            <td>{{ row.activeSeats }} / {{ row.seatLimit }}{% if row.purchasedSeats %} ({{ row.purchasedSeats }} purchased){% endif %}</td>
             <td>
               <p class="table-primary">{{ row.usedChars }} / {{ row.quotaChars + row.bonusChars }} chars</p>
               <p class="table-meta">{{ row.usedWords }} words</p>

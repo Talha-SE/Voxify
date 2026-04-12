@@ -27,6 +27,11 @@ def _month_key(dt: datetime | None) -> str:
     return value.strftime("%Y-%m")
 
 
+def _year_key(dt: datetime | None) -> str:
+    value = dt or _utc_now()
+    return value.strftime("%Y")
+
+
 def _safe_int(value: Any, default: int = 0) -> int:
     try:
         return int(value)
@@ -48,6 +53,106 @@ def _estimate_words_from_chars(chars: int) -> int:
         return 0
     # Light fallback for live streams that report chars without raw transcript text.
     return max(1, int(round(charge / 5.0)))
+
+
+def _normalize_cycle_type(value: Any, fallback: str = "monthly") -> str:
+    normalized = _normalize_text(value).lower()
+    if normalized in {"monthly", "yearly", "lifetime"}:
+        return normalized
+    return fallback
+
+
+def _normalize_billing_cycle(value: Any, fallback: str = "monthly") -> str:
+    normalized = _normalize_text(value).lower().replace("-", "_").replace(" ", "_")
+    aliases = {
+        "month": "monthly",
+        "monthly": "monthly",
+        "quarter": "quarterly",
+        "quarterly": "quarterly",
+        "biannual": "biannual",
+        "biannually": "biannual",
+        "half_year": "biannual",
+        "halfyear": "biannual",
+        "year": "yearly",
+        "yearly": "yearly",
+        "annual": "yearly",
+        "annually": "yearly",
+        "every_two_years": "every_two_years",
+        "two_years": "every_two_years",
+        "lifetime": "lifetime",
+        "one_time": "one_time",
+        "onetime": "one_time",
+        "once": "one_time",
+    }
+    return aliases.get(normalized, fallback)
+
+
+def _normalize_variant_key(value: Any) -> str:
+    return _normalize_text(value).lower()
+
+
+def _extract_variant_label(payload: Any) -> str:
+    if not isinstance(payload, dict):
+        return ""
+    direct_keys = (
+        "variant",
+        "variant_name",
+        "variants",
+        "version",
+        "version_name",
+        "tier",
+        "tier_name",
+        "membership_tier",
+        "membership_tier_name",
+        "option",
+        "options",
+    )
+    for key in direct_keys:
+        candidate = _normalize_text(payload.get(key))
+        if candidate:
+            return candidate
+
+    variants = payload.get("variants_and_quantity")
+    if isinstance(variants, dict) and variants:
+        keys = [str(item).strip() for item in variants.keys() if str(item).strip()]
+        if len(keys) == 1:
+            return keys[0]
+        if len(keys) > 1:
+            return " | ".join(keys[:3])
+    return ""
+
+
+def _extract_billing_cycle_hint(payload: Any) -> str:
+    if not isinstance(payload, dict):
+        return ""
+    direct_keys = ("recurrence", "interval", "billing_cycle", "billing_period", "frequency")
+    for key in direct_keys:
+        candidate = _normalize_text(payload.get(key))
+        if candidate:
+            return _normalize_billing_cycle(candidate, fallback="")
+
+    text_candidates = [
+        _normalize_text(payload.get("variant")),
+        _normalize_text(payload.get("variants")),
+        _normalize_text(payload.get("version_name")),
+        _normalize_text(payload.get("tier_name")),
+    ]
+    merged = " ".join(item.lower() for item in text_candidates if item)
+    if not merged:
+        return ""
+    if "every two years" in merged or "2 years" in merged or "two years" in merged:
+        return "every_two_years"
+    if "year" in merged or "annual" in merged:
+        return "yearly"
+    if "quarter" in merged:
+        return "quarterly"
+    if "6 month" in merged or "biannual" in merged or "half year" in merged:
+        return "biannual"
+    if "month" in merged:
+        return "monthly"
+    if "lifetime" in merged or "one time" in merged or "onetime" in merged:
+        return "lifetime"
+    return ""
 
 
 def _extract_purchased_seats(payload: Any) -> int:
@@ -91,7 +196,7 @@ class PlanSpec:
     code: str
     quota_chars: int
     seat_limit: int
-    cycle_type: str  # "monthly" | "lifetime"
+    cycle_type: str  # "monthly" | "yearly" | "lifetime"
     commercial: bool
 
 
@@ -125,7 +230,10 @@ def _load_plan_specs() -> dict[str, PlanSpec]:
             code=plan_code,
             quota_chars=max(0, _safe_int(payload.get("quotaChars"), merged.get(plan_code, DEFAULT_PLAN_SPECS["starter"]).quota_chars)),
             seat_limit=max(1, _safe_int(payload.get("seatLimit"), merged.get(plan_code, DEFAULT_PLAN_SPECS["starter"]).seat_limit)),
-            cycle_type="lifetime" if _normalize_text(payload.get("cycleType")).lower() == "lifetime" else "monthly",
+            cycle_type=_normalize_cycle_type(
+                payload.get("cycleType"),
+                fallback=merged.get(plan_code, DEFAULT_PLAN_SPECS["starter"]).cycle_type,
+            ),
             commercial=bool(payload.get("commercial", merged.get(plan_code, DEFAULT_PLAN_SPECS["starter"]).commercial)),
         )
     return merged
@@ -159,6 +267,45 @@ def _load_product_map() -> dict[str, str]:
     return mapping
 
 
+def _load_variant_rules() -> dict[str, dict[str, Any]]:
+    raw = _normalize_text(
+        os.getenv("VOXIFY_GUMROAD_VARIANT_RULES_JSON")
+        or os.getenv("GUMROAD_VARIANT_RULES_JSON", "")
+    )
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return {}
+    if not isinstance(parsed, dict):
+        return {}
+
+    rules: dict[str, dict[str, Any]] = {}
+    for raw_key, raw_rule in parsed.items():
+        key = _normalize_variant_key(raw_key)
+        if not key or not isinstance(raw_rule, dict):
+            continue
+        rule: dict[str, Any] = {}
+        if _normalize_text(raw_rule.get("planCode")):
+            rule["planCode"] = _normalize_text(raw_rule.get("planCode")).lower()
+        if raw_rule.get("quotaChars") is not None:
+            rule["quotaChars"] = max(0, _safe_int(raw_rule.get("quotaChars"), 0))
+        if raw_rule.get("seatLimit") is not None:
+            rule["seatLimit"] = max(1, _safe_int(raw_rule.get("seatLimit"), 1))
+        if _normalize_text(raw_rule.get("cycleType")):
+            rule["cycleType"] = _normalize_cycle_type(raw_rule.get("cycleType"), fallback="monthly")
+        if _normalize_text(raw_rule.get("billingCycle")):
+            rule["billingCycle"] = _normalize_billing_cycle(raw_rule.get("billingCycle"), fallback="monthly")
+        if _normalize_text(raw_rule.get("priceType")):
+            rule["priceType"] = _normalize_text(raw_rule.get("priceType")).lower()
+        if raw_rule.get("commercial") is not None:
+            rule["commercial"] = bool(raw_rule.get("commercial"))
+        if rule:
+            rules[key] = rule
+    return rules
+
+
 class MongoLicenseStore:
     def __init__(self) -> None:
         mongo_uri = _normalize_text(os.getenv("MONGODB_URI", "mongodb://127.0.0.1:27017"))
@@ -171,6 +318,7 @@ class MongoLicenseStore:
         self.webhooks: Collection = self._db["gumroad_events"]
         self.plan_specs = _load_plan_specs()
         self.product_map = _load_product_map()
+        self.variant_rules = _load_variant_rules()
         self._ensure_indexes()
 
     def _ensure_indexes(self) -> None:
@@ -199,12 +347,57 @@ class MongoLicenseStore:
     def hash_license(self, license_key: str) -> str:
         return _sha256(license_key)
 
+    def _resolve_purchase_profile(
+        self,
+        product_id: str,
+        purchase: dict[str, Any],
+        fallback_plan: str = "starter",
+    ) -> dict[str, Any]:
+        base_plan = self.resolve_plan(product_id, fallback=fallback_plan)
+        variant_label = _extract_variant_label(purchase)
+        variant_rule = self.variant_rules.get(_normalize_variant_key(variant_label), {})
+
+        preferred_plan_code = _normalize_text(variant_rule.get("planCode")).lower() or base_plan.code
+        plan = self.plan_specs.get(preferred_plan_code, base_plan)
+
+        cycle_type = _normalize_cycle_type(
+            variant_rule.get("cycleType"),
+            fallback=plan.cycle_type,
+        )
+        billing_cycle = _normalize_billing_cycle(
+            variant_rule.get("billingCycle") or _extract_billing_cycle_hint(purchase),
+            fallback="lifetime" if cycle_type == "lifetime" else "monthly",
+        )
+        if cycle_type == "monthly" and billing_cycle == "yearly":
+            cycle_type = "yearly"
+        if billing_cycle in {"lifetime", "one_time"}:
+            cycle_type = "lifetime"
+        price_type = _normalize_text(variant_rule.get("priceType")).lower()
+        if not price_type:
+            price_type = "membership" if bool(purchase.get("subscription_id")) else "one_time"
+
+        quota_chars = max(0, _safe_int(variant_rule.get("quotaChars"), plan.quota_chars))
+        seat_limit = max(1, _safe_int(variant_rule.get("seatLimit"), plan.seat_limit))
+        commercial = bool(variant_rule.get("commercial", plan.commercial))
+
+        return {
+            "planCode": plan.code,
+            "quotaChars": int(quota_chars),
+            "seatLimit": int(seat_limit),
+            "cycleType": cycle_type,
+            "billingCycle": billing_cycle,
+            "priceType": price_type,
+            "commercial": commercial,
+            "variantLabel": variant_label,
+        }
+
     def _monthly_reset_if_needed(self, doc: dict[str, Any]) -> dict[str, Any]:
-        if _normalize_text(doc.get("cycleType")) != "monthly":
+        cycle_type = _normalize_cycle_type(doc.get("cycleType"), fallback="monthly")
+        if cycle_type not in {"monthly", "yearly"}:
             return doc
         now = _utc_now()
         active_cycle = _normalize_text(doc.get("cycleKey"))
-        current_cycle = _month_key(now)
+        current_cycle = _year_key(now) if cycle_type == "yearly" else _month_key(now)
         if active_cycle == current_cycle:
             return doc
         updated = self.licenses.find_one_and_update(
@@ -250,7 +443,18 @@ class MongoLicenseStore:
             "activeSeats": int(seats),
             "seatLimitReached": bool(seat_limit_reached),
             "cycleType": _normalize_text(doc.get("cycleType")) or "monthly",
-            "cycleKey": _normalize_text(doc.get("cycleKey")) or _month_key(_utc_now()),
+            "billingCycle": _normalize_billing_cycle(
+                doc.get("billingCycle"),
+                fallback="lifetime" if _normalize_cycle_type(doc.get("cycleType"), "monthly") == "lifetime" else "monthly",
+            ),
+            "priceType": _normalize_text(doc.get("priceType")).lower() or "one_time",
+            "variantLabel": _normalize_text(doc.get("variantLabel")),
+            "cycleKey": _normalize_text(doc.get("cycleKey"))
+            or (
+                _year_key(_utc_now())
+                if _normalize_cycle_type(doc.get("cycleType"), "monthly") == "yearly"
+                else _month_key(_utc_now())
+            ),
             "commercial": bool(doc.get("commercial", False)),
             "lastVerifiedAt": _iso(doc.get("lastVerifiedAt")),
             "updatedAt": _iso(doc.get("updatedAt")),
@@ -270,9 +474,9 @@ class MongoLicenseStore:
         now = _utc_now()
         license_hash = self.hash_license(license_key)
         device_hash = self.hash_device(device_id)
-        plan = self.resolve_plan(product_id)
+        profile = self._resolve_purchase_profile(product_id=product_id, purchase=purchase)
         purchased_seats = _extract_purchased_seats(purchase)
-        effective_seat_limit = purchased_seats if purchased_seats > 0 else int(plan.seat_limit)
+        effective_seat_limit = purchased_seats if purchased_seats > 0 else int(profile["seatLimit"])
 
         subscription_stopped = bool(
             purchase.get("subscription_cancelled_at") or purchase.get("subscription_ended_at")
@@ -285,12 +489,15 @@ class MongoLicenseStore:
             "purchaseEmail": _normalize_text(purchase.get("email")),
             "saleId": _normalize_text(purchase.get("sale_id")),
             "productId": _normalize_text(product_id),
-            "planCode": plan.code,
-            "quotaChars": int(plan.quota_chars),
-            "seatLimit": int(max(1, _safe_int(effective_seat_limit, plan.seat_limit))),
+            "planCode": _normalize_text(profile.get("planCode")).lower() or "starter",
+            "quotaChars": int(max(0, _safe_int(profile.get("quotaChars"), 0))),
+            "seatLimit": int(max(1, _safe_int(effective_seat_limit, 1))),
             "purchasedSeats": int(max(0, _safe_int(purchased_seats, 0))),
-            "cycleType": plan.cycle_type,
-            "commercial": bool(plan.commercial),
+            "cycleType": _normalize_cycle_type(profile.get("cycleType"), fallback="monthly"),
+            "billingCycle": _normalize_billing_cycle(profile.get("billingCycle"), fallback="monthly"),
+            "priceType": _normalize_text(profile.get("priceType")).lower() or "one_time",
+            "variantLabel": _normalize_text(profile.get("variantLabel")),
+            "commercial": bool(profile.get("commercial", False)),
             "status": status,
             "isSubscription": bool(purchase.get("subscription_id")),
             "subscriptionEndedAt": _normalize_text(purchase.get("subscription_ended_at")),
@@ -303,7 +510,9 @@ class MongoLicenseStore:
             "usedChars": 0,
             "usedWords": 0,
             "bonusChars": 0,
-            "cycleKey": _month_key(now),
+            "cycleKey": _year_key(now)
+            if _normalize_cycle_type(profile.get("cycleType"), fallback="monthly") == "yearly"
+            else _month_key(now),
             "cycleStartedAt": now,
             "revokedAt": None,
             "revokedReason": "",
@@ -433,7 +642,7 @@ class MongoLicenseStore:
             "revokedAt": None,
             "usedChars": {"$lte": max_used_before},
         }
-        if _normalize_text(doc.get("cycleType")) == "monthly":
+        if _normalize_cycle_type(doc.get("cycleType"), fallback="monthly") in {"monthly", "yearly"}:
             update_filter["cycleKey"] = entitlement["cycleKey"]
         updated = self.licenses.find_one_and_update(
             update_filter,
@@ -463,6 +672,8 @@ class MongoLicenseStore:
                     {"saleId": {"$regex": clean_query, "$options": "i"}},
                     {"licenseHint": {"$regex": clean_query, "$options": "i"}},
                     {"planCode": {"$regex": clean_query, "$options": "i"}},
+                    {"variantLabel": {"$regex": clean_query, "$options": "i"}},
+                    {"billingCycle": {"$regex": clean_query, "$options": "i"}},
                 ]
             }
         docs = list(
@@ -478,6 +689,9 @@ class MongoLicenseStore:
                     "purchaseEmail": _normalize_text(doc.get("purchaseEmail")),
                     "saleId": _normalize_text(doc.get("saleId")),
                     "plan": ent["plan"],
+                    "billingCycle": ent["billingCycle"],
+                    "priceType": ent["priceType"],
+                    "variantLabel": ent["variantLabel"],
                     "status": ent["status"],
                     "usedChars": ent["usedChars"],
                     "usedWords": ent["usedWords"],
@@ -486,6 +700,7 @@ class MongoLicenseStore:
                     "remainingChars": ent["remainingChars"],
                     "activeSeats": ent["activeSeats"],
                     "seatLimit": ent["seatLimit"],
+                    "purchasedSeats": max(0, _safe_int(doc.get("purchasedSeats"), 0)),
                     "updatedAt": ent["updatedAt"],
                     "lastVerifiedAt": ent["lastVerifiedAt"],
                 }
@@ -596,6 +811,21 @@ class MongoLicenseStore:
             clean_status = "revoked"
 
         purchase_payload = payload.get("purchase") if isinstance(payload.get("purchase"), dict) else {}
+        merged_purchase = dict(purchase_payload)
+        for key in (
+            "variant",
+            "variant_name",
+            "variants",
+            "version_name",
+            "tier_name",
+            "recurrence",
+            "interval",
+            "billing_cycle",
+            "billing_period",
+            "frequency",
+        ):
+            if key in payload and payload.get(key) not in (None, ""):
+                merged_purchase[key] = payload.get(key)
         payload_seats = _extract_purchased_seats(payload)
         purchase_seats = _extract_purchased_seats(purchase_payload)
         purchased_seats = payload_seats if payload_seats > 0 else purchase_seats
@@ -632,9 +862,11 @@ class MongoLicenseStore:
 
         touched = 0
         license_hash = self.hash_license(license_key) if license_key else ""
-        plan: PlanSpec | None = None
-        if product_id:
-            plan = self.resolve_plan(product_id)
+        profile = self._resolve_purchase_profile(
+            product_id=product_id,
+            purchase=merged_purchase,
+            fallback_plan="starter",
+        )
 
         has_subscription_id = any(
             key in payload or key in purchase_payload for key in ("subscription_id", "subscriptionId")
@@ -664,11 +896,14 @@ class MongoLicenseStore:
             shared_updates["purchaseEmail"] = purchase_email
         if product_id:
             shared_updates["productId"] = product_id
-        if plan:
-            shared_updates["planCode"] = plan.code
-            shared_updates["quotaChars"] = int(plan.quota_chars)
-            shared_updates["cycleType"] = plan.cycle_type
-            shared_updates["commercial"] = bool(plan.commercial)
+        if profile:
+            shared_updates["planCode"] = _normalize_text(profile.get("planCode")).lower() or "starter"
+            shared_updates["quotaChars"] = int(max(0, _safe_int(profile.get("quotaChars"), 0)))
+            shared_updates["cycleType"] = _normalize_cycle_type(profile.get("cycleType"), fallback="monthly")
+            shared_updates["billingCycle"] = _normalize_billing_cycle(profile.get("billingCycle"), fallback="monthly")
+            shared_updates["priceType"] = _normalize_text(profile.get("priceType")).lower() or "one_time"
+            shared_updates["variantLabel"] = _normalize_text(profile.get("variantLabel"))
+            shared_updates["commercial"] = bool(profile.get("commercial", False))
         if purchased_seats > 0:
             shared_updates["seatLimit"] = int(max(1, _safe_int(purchased_seats, 1)))
             shared_updates["purchasedSeats"] = int(max(0, _safe_int(purchased_seats, 0)))
@@ -687,12 +922,13 @@ class MongoLicenseStore:
                 "licenseHash": license_hash,
             }
             if "seatLimit" not in shared_updates:
-                if plan:
-                    create_fields["seatLimit"] = int(plan.seat_limit)
-                    create_fields["purchasedSeats"] = 0
-                else:
-                    create_fields["seatLimit"] = 1
-                    create_fields["purchasedSeats"] = 0
+                create_fields["seatLimit"] = int(max(1, _safe_int(profile.get("seatLimit"), 1)))
+                create_fields["purchasedSeats"] = 0
+            create_fields["cycleKey"] = (
+                _year_key(now)
+                if _normalize_cycle_type(profile.get("cycleType"), fallback="monthly") == "yearly"
+                else _month_key(now)
+            )
             one_result = self.licenses.update_one(
                 {"licenseHash": license_hash},
                 {"$set": shared_updates, "$setOnInsert": create_fields},
