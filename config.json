@@ -3,7 +3,7 @@
   "language": "ur",
   "sample_rate": 16000,
   "channels": 1,
-  "theme": "dark",
+  "theme": "light",
   "window_x": 631,
   "window_y": 439,
   "always_on_top": true,
@@ -24,5 +24,7 @@
   "live_retry_limit": 2,
   "runtime_channel": "stable",
   "send_reliability_events": false,
-  "device_id": "0f95a0228b7a463c8c1da43669ee7ed9"
+  "device_id": "0f95a0228b7a463c8c1da43669ee7ed9",
+  "auto_minimize": true,
+  "minimize_timeout": 10
 }

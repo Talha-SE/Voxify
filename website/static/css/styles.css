@@ -17,6 +17,8 @@
   --accent-2: #736efe;
   --accent-3: #ff5e95;
   --accent-4: #f4d03f;
+  --ok: #22c55e;
+  --danger: #ef4444;
   
   --shadow-lg: 0 30px 60px -12px rgba(0, 0, 0, 0.45);
   --shadow-sm: 0 8px 16px -4px rgba(0, 0, 0, 0.3);
@@ -648,6 +650,95 @@ main {
   border-top: 1px solid var(--line);
   color: #b6b6c0;
   white-space: pre-wrap;
+}
+.table-card { margin-top: 1.6rem; }
+.table-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+.table-head .btn {
+  width: auto;
+  padding: 0.6rem 1rem;
+  font-size: 0.85rem;
+}
+.table-search-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.8rem;
+  margin-bottom: 1rem;
+}
+.table-search-row input {
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.45);
+  color: #fff;
+  padding: 0.8rem 0.9rem;
+}
+.table-search-row .btn {
+  width: auto;
+  padding: 0.75rem 1rem;
+  border-radius: 10px;
+}
+.table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+.admin-table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 920px;
+}
+.admin-table th,
+.admin-table td {
+  text-align: left;
+  padding: 0.85rem;
+  border-bottom: 1px solid var(--line);
+  vertical-align: top;
+}
+.admin-table th {
+  color: #d9d9e2;
+  font-size: 0.85rem;
+  font-weight: 700;
+  background: rgba(255, 255, 255, 0.04);
+}
+.admin-table td {
+  color: #b6b6c0;
+  font-size: 0.85rem;
+}
+.table-primary {
+  color: #f2f2f7;
+  font-size: 0.9rem;
+  margin: 0 0 0.2rem 0;
+}
+.table-meta {
+  color: #8f8f9e;
+  font-size: 0.75rem;
+  margin: 0.1rem 0;
+}
+.table-actions {
+  display: grid;
+  grid-template-columns: 80px 1fr 1fr;
+  gap: 0.5rem;
+  align-items: center;
+}
+.table-actions input {
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.4);
+  color: #fff;
+  padding: 0.5rem 0.6rem;
+  width: 100%;
+}
+.table-actions .btn {
+  width: auto;
+  min-width: 82px;
+  padding: 0.55rem 0.7rem;
+  font-size: 0.76rem;
+  border-radius: 8px;
 }
 .ok-box, .error-box {
   margin-top: 1rem;

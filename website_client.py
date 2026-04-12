@@ -1,18 +1,26 @@
-"""Client helpers for website-backed API bootstrap."""
+"""Client helpers for website-backed API bootstrap and licensing."""
 
 from __future__ import annotations
 
+import hashlib
 import os
+import subprocess
+import tempfile
 from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
 
 import requests
 
 DEFAULT_WEBSITE_URL = os.getenv("SONUS_WEBSITE_URL", "http://127.0.0.1:5050")
 STATUS_TIMEOUT = 2.0
-BOOTSTRAP_TIMEOUT = 4.0
-UPDATE_TIMEOUT = 4.0
+BOOTSTRAP_TIMEOUT = 5.0
+UPDATE_TIMEOUT = 5.0
 RUNTIME_CONFIG_TIMEOUT = 4.0
 RELIABILITY_TIMEOUT = 3.0
+LICENSE_TIMEOUT = 8.0
+TRANSCRIBE_TIMEOUT = 75.0
+DOWNLOAD_TIMEOUT = 15.0
 DEFAULT_MODEL = "voxtral-mini-2507"
 
 
@@ -24,6 +32,7 @@ class WebsiteAPIError(RuntimeError):
 class DesktopBootstrap:
     api_key: str
     model: str
+    entitlement: dict[str, Any]
 
 
 @dataclass(frozen=True)
@@ -34,6 +43,10 @@ class UpdateInfo:
     notes: str
     mandatory: bool
     published_at: str
+    asset_type: str
+    sha256: str
+    installer_args: str
+    restart_required: bool
 
 
 @dataclass(frozen=True)
@@ -49,13 +62,60 @@ class RuntimeConfig:
     endpointing_mode: str
 
 
+@dataclass(frozen=True)
+class LicenseEntitlement:
+    license_id: str
+    status: str
+    plan: str
+    quota_chars: int
+    bonus_chars: int
+    used_chars: int
+    remaining_chars: int
+    seat_limit: int
+    active_seats: int
+    is_subscription: bool
+    can_transcribe: bool
+
+
+@dataclass(frozen=True)
+class LicenseSession:
+    token: str
+    refresh_at: str
+    expires_at: str
+    entitlement: LicenseEntitlement
+    live_api_key: str
+    live_model: str
+
+
+@dataclass(frozen=True)
+class ProxyTranscriptionResult:
+    text: str
+    usage: LicenseEntitlement
+    quota_limited: bool
+
+
 def _normalize_base_url(base_url: str | None = None) -> str:
     cleaned = (base_url or DEFAULT_WEBSITE_URL).strip().rstrip("/")
     return cleaned or DEFAULT_WEBSITE_URL
 
 
+def _parse_entitlement(raw: dict[str, Any]) -> LicenseEntitlement:
+    return LicenseEntitlement(
+        license_id=(raw.get("licenseId") or "").strip(),
+        status=(raw.get("status") or "").strip().lower(),
+        plan=(raw.get("plan") or "starter").strip().lower(),
+        quota_chars=int(raw.get("quotaChars") or 0),
+        bonus_chars=int(raw.get("bonusChars") or 0),
+        used_chars=int(raw.get("usedChars") or 0),
+        remaining_chars=int(raw.get("remainingChars") or 0),
+        seat_limit=int(raw.get("seatLimit") or 1),
+        active_seats=int(raw.get("activeSeats") or 0),
+        is_subscription=bool(raw.get("isSubscription", False)),
+        can_transcribe=bool(raw.get("canTranscribe", False)),
+    )
+
+
 def get_site_status(base_url: str | None = None) -> dict:
-    """Return parsed JSON from the website status endpoint."""
     try:
         response = requests.get(
             f"{_normalize_base_url(base_url)}/api/site-status",
@@ -64,49 +124,226 @@ def get_site_status(base_url: str | None = None) -> dict:
         response.raise_for_status()
         payload = response.json()
     except requests.RequestException as exc:
-        raise WebsiteAPIError(
-            "Unable to reach the website. Start the website server first."
-        ) from exc
+        raise WebsiteAPIError("Unable to reach the website. Start the website server first.") from exc
     except ValueError as exc:
-        raise WebsiteAPIError(
-            "The website returned an invalid status response."
-        ) from exc
+        raise WebsiteAPIError("The website returned an invalid status response.") from exc
 
     if not isinstance(payload, dict):
         raise WebsiteAPIError("The website returned an unexpected status payload.")
     return payload
 
 
-def get_desktop_bootstrap(base_url: str | None = None) -> DesktopBootstrap:
-    """Fetch runtime API key/model from the website for desktop transcription."""
-    status = get_site_status(base_url)
-    if not bool(status.get("apiConfigured")):
-        raise WebsiteAPIError(
-            "The website API key is missing. Configure it on the website first."
+def activate_license(
+    license_key: str,
+    product_id: str,
+    device_id: str,
+    device_name: str = "",
+    base_url: str | None = None,
+) -> LicenseSession:
+    payload = {
+        "licenseKey": (license_key or "").strip(),
+        "productId": (product_id or "").strip(),
+        "deviceId": (device_id or "").strip(),
+        "deviceName": (device_name or "").strip(),
+    }
+    try:
+        response = requests.post(
+            f"{_normalize_base_url(base_url)}/api/license/activate",
+            json=payload,
+            timeout=LICENSE_TIMEOUT,
         )
+        data = response.json() if response.content else {}
+    except requests.RequestException as exc:
+        raise WebsiteAPIError("Unable to activate license right now.") from exc
+    except ValueError as exc:
+        raise WebsiteAPIError("License activation returned invalid JSON.") from exc
 
+    if response.status_code >= 400 or not isinstance(data, dict) or not data.get("success"):
+        raise WebsiteAPIError((data or {}).get("message") or "License activation failed.")
+
+    entitlement_raw = data.get("entitlement") if isinstance(data.get("entitlement"), dict) else {}
+    return LicenseSession(
+        token=(data.get("token") or "").strip(),
+        refresh_at=(data.get("refreshAt") or "").strip(),
+        expires_at=(data.get("expiresAt") or "").strip(),
+        entitlement=_parse_entitlement(entitlement_raw),
+        live_api_key=(data.get("liveApiKey") or "").strip(),
+        live_model=(data.get("liveModel") or DEFAULT_MODEL).strip(),
+    )
+
+
+def refresh_license(
+    token: str,
+    device_id: str,
+    device_name: str = "",
+    base_url: str | None = None,
+) -> LicenseSession:
+    payload = {
+        "token": (token or "").strip(),
+        "deviceId": (device_id or "").strip(),
+        "deviceName": (device_name or "").strip(),
+    }
+    try:
+        response = requests.post(
+            f"{_normalize_base_url(base_url)}/api/license/refresh",
+            json=payload,
+            timeout=LICENSE_TIMEOUT,
+        )
+        data = response.json() if response.content else {}
+    except requests.RequestException as exc:
+        raise WebsiteAPIError("Unable to refresh license right now.") from exc
+    except ValueError as exc:
+        raise WebsiteAPIError("License refresh returned invalid JSON.") from exc
+
+    if response.status_code >= 400 or not isinstance(data, dict) or not data.get("success"):
+        raise WebsiteAPIError((data or {}).get("message") or "License refresh failed.")
+
+    entitlement_raw = data.get("entitlement") if isinstance(data.get("entitlement"), dict) else {}
+    return LicenseSession(
+        token=(data.get("token") or "").strip(),
+        refresh_at=(data.get("refreshAt") or "").strip(),
+        expires_at=(data.get("expiresAt") or "").strip(),
+        entitlement=_parse_entitlement(entitlement_raw),
+        live_api_key=(data.get("liveApiKey") or "").strip(),
+        live_model=(data.get("liveModel") or DEFAULT_MODEL).strip(),
+    )
+
+
+def get_license_status(token: str, device_id: str, base_url: str | None = None) -> LicenseEntitlement:
+    params = {"token": (token or "").strip(), "deviceId": (device_id or "").strip()}
+    try:
+        response = requests.get(
+            f"{_normalize_base_url(base_url)}/api/license/status",
+            params=params,
+            timeout=LICENSE_TIMEOUT,
+        )
+        data = response.json() if response.content else {}
+    except requests.RequestException as exc:
+        raise WebsiteAPIError("Unable to load license status right now.") from exc
+    except ValueError as exc:
+        raise WebsiteAPIError("License status returned invalid JSON.") from exc
+
+    if response.status_code >= 400 or not isinstance(data, dict) or not data.get("success"):
+        raise WebsiteAPIError((data or {}).get("message") or "License status lookup failed.")
+    entitlement_raw = data.get("entitlement") if isinstance(data.get("entitlement"), dict) else {}
+    return _parse_entitlement(entitlement_raw)
+
+
+def consume_license_usage(
+    token: str,
+    device_id: str,
+    chars_used: int,
+    mode: str,
+    session_id: str,
+    idempotency_key: str,
+    detail: str = "",
+    base_url: str | None = None,
+) -> LicenseEntitlement:
+    payload = {
+        "token": (token or "").strip(),
+        "deviceId": (device_id or "").strip(),
+        "charsUsed": max(0, int(chars_used or 0)),
+        "mode": (mode or "batch").strip().lower(),
+        "sessionId": (session_id or "").strip(),
+        "idempotencyKey": (idempotency_key or "").strip(),
+        "detail": (detail or "").strip(),
+    }
+    try:
+        response = requests.post(
+            f"{_normalize_base_url(base_url)}/api/license/consume",
+            json=payload,
+            timeout=LICENSE_TIMEOUT,
+        )
+        data = response.json() if response.content else {}
+    except requests.RequestException as exc:
+        raise WebsiteAPIError("Unable to record usage right now.") from exc
+    except ValueError as exc:
+        raise WebsiteAPIError("Usage response returned invalid JSON.") from exc
+
+    if response.status_code >= 400 or not isinstance(data, dict) or not data.get("success"):
+        raise WebsiteAPIError((data or {}).get("message") or "Usage update failed.")
+    entitlement_raw = data.get("entitlement") if isinstance(data.get("entitlement"), dict) else {}
+    return _parse_entitlement(entitlement_raw)
+
+
+def get_desktop_bootstrap(token: str, device_id: str, base_url: str | None = None) -> DesktopBootstrap:
+    params = {
+        "token": (token or "").strip(),
+        "deviceId": (device_id or "").strip(),
+    }
     try:
         response = requests.get(
             f"{_normalize_base_url(base_url)}/api/desktop-bootstrap",
+            params=params,
             timeout=BOOTSTRAP_TIMEOUT,
         )
-        response.raise_for_status()
-        payload = response.json()
+        payload = response.json() if response.content else {}
     except requests.RequestException as exc:
-        raise WebsiteAPIError("Unable to fetch the API key from the website.") from exc
+        raise WebsiteAPIError("Unable to fetch desktop bootstrap right now.") from exc
     except ValueError as exc:
-        raise WebsiteAPIError(
-            "The website returned an invalid API bootstrap response."
-        ) from exc
+        raise WebsiteAPIError("Desktop bootstrap returned invalid JSON.") from exc
 
-    if not isinstance(payload, dict):
-        raise WebsiteAPIError("The website returned an unexpected API bootstrap payload.")
+    if response.status_code >= 400 or not isinstance(payload, dict) or not payload.get("success"):
+        raise WebsiteAPIError((payload or {}).get("message") or "Desktop bootstrap failed.")
 
-    api_key = (payload.get("apiKey") or "").strip()
-    model = (payload.get("model") or DEFAULT_MODEL).strip()
-    if not api_key:
-        raise WebsiteAPIError("The website did not return an API key.")
-    return DesktopBootstrap(api_key=api_key, model=model)
+    entitlement_raw = payload.get("license") if isinstance(payload.get("license"), dict) else {}
+    return DesktopBootstrap(
+        api_key=(payload.get("apiKey") or "").strip(),
+        model=(payload.get("model") or DEFAULT_MODEL).strip(),
+        entitlement=entitlement_raw,
+    )
+
+
+def transcribe_via_proxy(
+    wav_path: str,
+    token: str,
+    device_id: str,
+    model: str = DEFAULT_MODEL,
+    language: str | None = None,
+    prompt: str | None = None,
+    session_id: str = "",
+    idempotency_key: str = "",
+    base_url: str | None = None,
+) -> ProxyTranscriptionResult:
+    file_path = Path(wav_path)
+    if not file_path.exists():
+        raise WebsiteAPIError(f"Audio file not found: {wav_path}")
+
+    payload = {
+        "token": (token or "").strip(),
+        "deviceId": (device_id or "").strip(),
+        "model": (model or DEFAULT_MODEL).strip(),
+        "sessionId": (session_id or "").strip(),
+        "idempotencyKey": (idempotency_key or "").strip(),
+    }
+    if language:
+        payload["language"] = language.strip()
+    if prompt:
+        payload["prompt"] = prompt.strip()
+
+    try:
+        with file_path.open("rb") as audio_file:
+            response = requests.post(
+                f"{_normalize_base_url(base_url)}/api/transcribe",
+                data=payload,
+                files={"file": (file_path.name, audio_file, "audio/wav")},
+                timeout=TRANSCRIBE_TIMEOUT,
+            )
+            data = response.json() if response.content else {}
+    except requests.RequestException as exc:
+        raise WebsiteAPIError("Unable to transcribe through website proxy.") from exc
+    except ValueError as exc:
+        raise WebsiteAPIError("Proxy transcription returned invalid JSON.") from exc
+
+    if response.status_code >= 400 or not isinstance(data, dict) or not data.get("success"):
+        raise WebsiteAPIError((data or {}).get("message") or "Proxy transcription failed.")
+
+    usage_raw = data.get("usage") if isinstance(data.get("usage"), dict) else {}
+    return ProxyTranscriptionResult(
+        text=(data.get("text") or "").strip(),
+        usage=_parse_entitlement(usage_raw),
+        quota_limited=bool(data.get("quotaLimited", False)),
+    )
 
 
 def _parse_version(value: str) -> tuple[int, int, int]:
@@ -164,6 +401,10 @@ def get_update_info(
         notes=(payload.get("notes") or "").strip(),
         mandatory=bool(payload.get("mandatory")),
         published_at=(payload.get("publishedAt") or "").strip(),
+        asset_type=(payload.get("assetType") or "exe").strip().lower(),
+        sha256=(payload.get("sha256") or "").strip().lower(),
+        installer_args=(payload.get("installerArgs") or "").strip(),
+        restart_required=bool(payload.get("restartRequired", True)),
     )
 
 
@@ -221,3 +462,50 @@ def post_reliability_event(event: dict, base_url: str | None = None) -> bool:
         return bool(payload.get("success", False))
     except Exception:
         return False
+
+
+def download_update_asset(info: UpdateInfo, dest_dir: str | None = None) -> str:
+    if not info.download_url:
+        raise WebsiteAPIError("Update download URL is missing.")
+
+    target_dir = Path(dest_dir or tempfile.gettempdir()) / "sonus_updates"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    filename = Path(info.download_url.split("?")[0]).name or f"sonus-{info.latest_version}.exe"
+    target_path = target_dir / filename
+
+    try:
+        with requests.get(info.download_url, stream=True, timeout=DOWNLOAD_TIMEOUT) as response:
+            response.raise_for_status()
+            with target_path.open("wb") as handle:
+                for chunk in response.iter_content(chunk_size=1024 * 256):
+                    if chunk:
+                        handle.write(chunk)
+    except requests.RequestException as exc:
+        raise WebsiteAPIError("Failed to download update package.") from exc
+
+    expected_sha = (info.sha256 or "").lower()
+    if expected_sha:
+        digest = hashlib.sha256(target_path.read_bytes()).hexdigest().lower()
+        if digest != expected_sha:
+            raise WebsiteAPIError("Downloaded update failed checksum verification.")
+    return str(target_path)
+
+
+def launch_update_installer(file_path: str, info: UpdateInfo) -> str:
+    path = Path(file_path)
+    if not path.exists():
+        raise WebsiteAPIError("Update package was not found on disk.")
+
+    args = [part for part in (info.installer_args or "").split(" ") if part]
+    if os.name == "nt":
+        if info.asset_type == "msi":
+            cmd = ["msiexec", "/i", str(path)] + args
+        elif info.asset_type == "zip":
+            cmd = ["explorer", str(path.parent)]
+        else:
+            cmd = [str(path)] + args
+        subprocess.Popen(cmd, cwd=str(path.parent))
+        return "Installer launched."
+
+    subprocess.Popen(["xdg-open", str(path)])
+    return "Opened downloaded update."

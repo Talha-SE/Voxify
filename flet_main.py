@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import math
+import os
 import subprocess
 import sys
 import threading
 import time
 import uuid
+import hashlib
 from pathlib import Path
 from typing import Optional
 
@@ -14,6 +16,7 @@ import flet as ft
 import config
 import app_info
 import dictation_features
+import license_cache
 import output_handler
 import recorder as rec_module
 import reliability
@@ -40,12 +43,75 @@ ACTIVE_DOT = "#67E8F9"
 INACTIVE_DOT = "#60A5FA"
 BAR_ACTIVE = "#22D3EE"
 BAR_INACTIVE = "#335780"
+WIDGET_GRADIENT_END = "#0B1A32"
+SETTINGS_ICON = "#60A5FA"
+CLOSE_ICON = "#93A8C6"
+AUX_BG = "#B45309"
+AUX_BORDER = "#FB923C"
+MODE_BATCH_BG = "#1D4ED8"
+MODE_BATCH_BORDER = "#60A5FA"
+MODE_BATCH_TEXT = "#93C5FD"
 BATCH_MODEL = "voxtral-mini-2507"
 LIVE_MODELS = {"voxtral-mini-2507", "voxtral-small-2507"}
-WIDGET_FULL_WIDTH = 452
-WIDGET_FULL_HEIGHT = 126
-WIDGET_MINI_WIDTH = 64
-WIDGET_MINI_HEIGHT = 64
+WIDGET_FULL_WIDTH = 280
+WIDGET_FULL_HEIGHT = 56
+WIDGET_MINI_WIDTH = 56
+WIDGET_MINI_HEIGHT = 56
+
+THEMES: dict[str, dict[str, str]] = {
+    "dark": {
+        "ACCENT": "#2563EB",
+        "ACCENT_GLOW": "#22D3EE",
+        "BG": "#040914",
+        "CARD": "#060D1F",
+        "CARD_SOFT": "#0F172A",
+        "CARD_ACTIVE": "#131C31",
+        "BORDER": "#274F85",
+        "TEXT": "#F8FBFF",
+        "MUTED": "#89A2C7",
+        "MUTED_SOFT": "#5D7598",
+        "DANGER": "#FF453A",
+        "SUCCESS": "#32D74B",
+        "ACTIVE_DOT": "#67E8F9",
+        "INACTIVE_DOT": "#60A5FA",
+        "BAR_ACTIVE": "#22D3EE",
+        "BAR_INACTIVE": "#335780",
+        "WIDGET_GRADIENT_END": "#0B1A32",
+        "SETTINGS_ICON": "#60A5FA",
+        "CLOSE_ICON": "#93A8C6",
+        "AUX_BG": "#B45309",
+        "AUX_BORDER": "#FB923C",
+        "MODE_BATCH_BG": "#1D4ED8",
+        "MODE_BATCH_BORDER": "#60A5FA",
+        "MODE_BATCH_TEXT": "#93C5FD",
+    },
+    "light": {
+        "ACCENT": "#2563EB",
+        "ACCENT_GLOW": "#0891B2",
+        "BG": "#EAF4FF",
+        "CARD": "#F8FCFF",
+        "CARD_SOFT": "#E7F0FD",
+        "CARD_ACTIVE": "#DDEBFD",
+        "BORDER": "#9AB8E8",
+        "TEXT": "#0B1A32",
+        "MUTED": "#3B5B88",
+        "MUTED_SOFT": "#5E7DAA",
+        "DANGER": "#DC2626",
+        "SUCCESS": "#16A34A",
+        "ACTIVE_DOT": "#0EA5E9",
+        "INACTIVE_DOT": "#3B82F6",
+        "BAR_ACTIVE": "#0EA5E9",
+        "BAR_INACTIVE": "#A8C4EB",
+        "WIDGET_GRADIENT_END": "#DDEBFD",
+        "SETTINGS_ICON": "#2563EB",
+        "CLOSE_ICON": "#3B5B88",
+        "AUX_BG": "#F59E0B",
+        "AUX_BORDER": "#D97706",
+        "MODE_BATCH_BG": "#BFDBFE",
+        "MODE_BATCH_BORDER": "#93C5FD",
+        "MODE_BATCH_TEXT": "#1E3A8A",
+    },
+}
 
 
 class SonusApp:
@@ -66,6 +132,10 @@ class SonusApp:
         self._api_cache_ttl_sec = 120.0
         self._api_check_in_flight = False
         self._api_lock = threading.Lock()
+        self._license_token = ""
+        self._license_entitlement: Optional[website_client.LicenseEntitlement] = None
+        self._license_refresh_at = 0.0
+        self._license_lock = threading.Lock()
         self._runtime_config: Optional[website_client.RuntimeConfig] = None
         self._runtime_config_last_fetch = 0.0
         self._runtime_config_ttl_sec = 300.0
@@ -78,6 +148,7 @@ class SonusApp:
         self._live_source_index = 0
         self._live_type_lock = threading.Lock()
         self._last_live_typed_char = ""
+        self._live_session_chars = 0
         self._is_minimized = False
         self._auto_minimize_timer: Optional[threading.Timer] = None
 
@@ -90,18 +161,107 @@ class SonusApp:
         self._settings_process: Optional[subprocess.Popen] = None
         self._settings_opening = False
         self._config_mtime = self._get_config_mtime()
+        self._theme_name = "dark"
+        self._device_id = self._get_or_create_device_id()
+        self._load_cached_license_state()
+
+        self._apply_theme_globals()
 
         self._setup_page()
         self._build_ui()
         threading.Thread(target=self._warmup_startup, daemon=True).start()
         threading.Thread(target=self._watch_config_changes, daemon=True).start()
 
+    def _desired_theme_name(self) -> str:
+        requested = (self.cfg.get("theme", "dark") or "dark").strip().lower()
+        return requested if requested in THEMES else "dark"
+
+    def _apply_theme_globals(self) -> bool:
+        global ACCENT, ACCENT_GLOW, BG, CARD, CARD_SOFT, CARD_ACTIVE
+        global BORDER, TEXT, MUTED, MUTED_SOFT, DANGER, SUCCESS
+        global ACTIVE_DOT, INACTIVE_DOT, BAR_ACTIVE, BAR_INACTIVE
+        global WIDGET_GRADIENT_END, SETTINGS_ICON, CLOSE_ICON
+        global AUX_BG, AUX_BORDER, MODE_BATCH_BG, MODE_BATCH_BORDER, MODE_BATCH_TEXT
+
+        theme_name = self._desired_theme_name()
+        palette = THEMES[theme_name]
+
+        ACCENT = palette["ACCENT"]
+        ACCENT_GLOW = palette["ACCENT_GLOW"]
+        BG = palette["BG"]
+        CARD = palette["CARD"]
+        CARD_SOFT = palette["CARD_SOFT"]
+        CARD_ACTIVE = palette["CARD_ACTIVE"]
+        BORDER = palette["BORDER"]
+        TEXT = palette["TEXT"]
+        MUTED = palette["MUTED"]
+        MUTED_SOFT = palette["MUTED_SOFT"]
+        DANGER = palette["DANGER"]
+        SUCCESS = palette["SUCCESS"]
+        ACTIVE_DOT = palette["ACTIVE_DOT"]
+        INACTIVE_DOT = palette["INACTIVE_DOT"]
+        BAR_ACTIVE = palette["BAR_ACTIVE"]
+        BAR_INACTIVE = palette["BAR_INACTIVE"]
+        WIDGET_GRADIENT_END = palette["WIDGET_GRADIENT_END"]
+        SETTINGS_ICON = palette["SETTINGS_ICON"]
+        CLOSE_ICON = palette["CLOSE_ICON"]
+        AUX_BG = palette["AUX_BG"]
+        AUX_BORDER = palette["AUX_BORDER"]
+        MODE_BATCH_BG = palette["MODE_BATCH_BG"]
+        MODE_BATCH_BORDER = palette["MODE_BATCH_BORDER"]
+        MODE_BATCH_TEXT = palette["MODE_BATCH_TEXT"]
+
+        changed = self._theme_name != theme_name
+        self._theme_name = theme_name
+        return changed
+
+    def _apply_theme_to_controls(self) -> None:
+        self.page.theme_mode = ft.ThemeMode.DARK if self._theme_name == "dark" else ft.ThemeMode.LIGHT
+        self.page.bgcolor = BG
+        self.page.window.bgcolor = BG
+
+        self.title_text.color = TEXT
+        if not self._is_recording and not self._waiting_click and not self._api_check_in_flight:
+            self.status_text.color = MUTED
+        self.aux_chip_text.color = TEXT
+        self.aux_chip.bgcolor = ft.Colors.with_opacity(0.28, AUX_BG)
+        self.aux_chip.border = ft.Border.all(1, ft.Colors.with_opacity(0.55, AUX_BORDER))
+
+        self.settings_icon.color = ft.Colors.with_opacity(0.8, SETTINGS_ICON)
+        self.close_icon.color = ft.Colors.with_opacity(0.9, CLOSE_ICON)
+        self.settings_btn.bgcolor = ft.Colors.with_opacity(0.2, CARD_ACTIVE)
+        self.settings_btn.border = ft.Border.all(1, ft.Colors.with_opacity(0.2, BORDER))
+        self.close_btn.bgcolor = ft.Colors.with_opacity(0.2, CARD_ACTIVE)
+        self.close_btn.border = ft.Border.all(1, ft.Colors.with_opacity(0.2, BORDER))
+
+        self.controls_group.border = ft.Border.only(left=ft.BorderSide(1, ft.Colors.with_opacity(0.3, ACCENT)))
+        self.widget_shell.gradient = ft.LinearGradient(
+            begin=ft.Alignment(-1, -1),
+            end=ft.Alignment(1, 1),
+            colors=[CARD, WIDGET_GRADIENT_END],
+        )
+        self.widget_shell.padding = (
+            ft.Padding.all(0)
+            if self._is_minimized
+            else ft.Padding.symmetric(horizontal=10, vertical=6)
+        )
+        self.widget_shell.border = ft.Border.all(1, ft.Colors.with_opacity(0.55, ACCENT))
+        self.widget_shell.shadow = ft.BoxShadow(
+            blur_radius=24,
+            spread_radius=1,
+            color=ft.Colors.with_opacity(0.42, "#020617"),
+        )
+
+        self._set_mode_badge()
+        self._sync_action_visual(fg=ACCENT, border=ACCENT, text_color=self.action_label.color or TEXT)
+        self.page.update()
+
     def _setup_page(self) -> None:
         self.page.title = APP_TITLE
         self.page.bgcolor = BG
         self.page.padding = 0
         self.page.spacing = 0
-        self.page.theme_mode = ft.ThemeMode.DARK
+        self.page.theme_mode = ft.ThemeMode.DARK if self._theme_name == "dark" else ft.ThemeMode.LIGHT
         self.page.window.bgcolor = BG
         self.page.window.width = WIDGET_FULL_WIDTH
         self.page.window.height = WIDGET_FULL_HEIGHT
@@ -171,20 +331,22 @@ class SonusApp:
         self.minimized_mode_container.visible = minimized
 
         if minimized:
-            self.page.window.width = WIDGET_MINI_WIDTH
-            self.page.window.height = WIDGET_MINI_HEIGHT
+            self.widget_shell.padding = ft.Padding.all(0)
             self.page.window.min_width = WIDGET_MINI_WIDTH
             self.page.window.max_width = WIDGET_MINI_WIDTH
             self.page.window.min_height = WIDGET_MINI_HEIGHT
             self.page.window.max_height = WIDGET_MINI_HEIGHT
+            self.page.window.width = WIDGET_MINI_WIDTH
+            self.page.window.height = WIDGET_MINI_HEIGHT
             self._cancel_auto_minimize_timer()
         else:
-            self.page.window.width = WIDGET_FULL_WIDTH
-            self.page.window.height = WIDGET_FULL_HEIGHT
+            self.widget_shell.padding = ft.Padding.symmetric(horizontal=10, vertical=6)
             self.page.window.min_width = WIDGET_FULL_WIDTH
             self.page.window.max_width = WIDGET_FULL_WIDTH
             self.page.window.min_height = WIDGET_FULL_HEIGHT
             self.page.window.max_height = WIDGET_FULL_HEIGHT
+            self.page.window.width = WIDGET_FULL_WIDTH
+            self.page.window.height = WIDGET_FULL_HEIGHT
             self._schedule_auto_minimize_timer()
 
         self.page.update()
@@ -192,13 +354,13 @@ class SonusApp:
     def _build_ui(self) -> None:
         self.title_text = ft.Text(
             "SONUS",
-            size=11,
+            size=10,
             weight=ft.FontWeight.W_900,
             color=TEXT,
         )
         self.status_text = ft.Text(
             "Standby",
-            size=8,
+            size=7,
             weight=ft.FontWeight.W_700,
             color=MUTED,
             max_lines=1,
@@ -207,12 +369,12 @@ class SonusApp:
 
         self.mode_badge_text = ft.Text(
             "LIVE",
-            size=7,
+            size=6,
             weight=ft.FontWeight.W_800,
             color=ACCENT_GLOW,
         )
         self.mode_badge = ft.Container(
-            padding=ft.Padding.symmetric(horizontal=6, vertical=2),
+            padding=ft.Padding.symmetric(horizontal=5, vertical=1),
             border_radius=999,
             bgcolor=ft.Colors.with_opacity(0.15, ACCENT),
             border=ft.Border.all(1, ft.Colors.with_opacity(0.4, ACCENT)),
@@ -231,33 +393,33 @@ class SonusApp:
             visible=False,
             padding=ft.Padding.symmetric(horizontal=6, vertical=2),
             border_radius=999,
-            bgcolor=ft.Colors.with_opacity(0.28, "#B45309"),
-            border=ft.Border.all(1, ft.Colors.with_opacity(0.55, "#FB923C")),
+            bgcolor=ft.Colors.with_opacity(0.28, AUX_BG),
+            border=ft.Border.all(1, ft.Colors.with_opacity(0.55, AUX_BORDER)),
             content=self.aux_chip_text,
         )
 
         self.pulse_ring = ft.Container(
-            width=10,
-            height=10,
-            border_radius=5,
+            width=8,
+            height=8,
+            border_radius=4,
             bgcolor=ft.Colors.with_opacity(0.3, INACTIVE_DOT),
             alignment=ft.Alignment(0, 0),
             animate=120,
         )
         self.pulse_core = ft.Container(
-            width=7,
-            height=7,
-            border_radius=3.5,
+            width=5,
+            height=5,
+            border_radius=2.5,
             bgcolor=INACTIVE_DOT,
             animate=120,
         )
         indicator = ft.Container(
-            width=16,
-            height=16,
+            width=12,
+            height=12,
             alignment=ft.Alignment(0, 0),
             content=ft.Stack(
-                width=16,
-                height=16,
+                width=12,
+                height=12,
                 controls=[
                     ft.Container(alignment=ft.Alignment(0, 0), content=self.pulse_ring),
                     ft.Container(alignment=ft.Alignment(0, 0), content=self.pulse_core),
@@ -268,20 +430,20 @@ class SonusApp:
         self.wave_bars: list[ft.Container] = []
         for _ in range(5):
             bar = ft.Container(
-                width=3,
-                height=6,
-                border_radius=3,
+                width=2,
+                height=5,
+                border_radius=2,
                 bgcolor=BAR_INACTIVE,
                 animate=120,
             )
             self.wave_bars.append(bar)
 
         waveform = ft.Container(
-            width=54,
-            height=24,
+            width=44,
+            height=16,
             alignment=ft.Alignment(0, 0),
             content=ft.Row(
-                spacing=3,
+                spacing=2,
                 alignment=ft.MainAxisAlignment.CENTER,
                 vertical_alignment=ft.CrossAxisAlignment.END,
                 controls=self.wave_bars,
@@ -289,11 +451,11 @@ class SonusApp:
         )
 
         self.action_label = ft.Text("Start", color=TEXT)
-        self.action_icon = ft.Icon(ft.Icons.MIC_OFF_ROUNDED, size=18, color=ACCENT)
+        self.action_icon = ft.Icon(ft.Icons.MIC_OFF_ROUNDED, size=16, color=ACCENT)
         self.action_button = ft.Container(
-            width=40,
-            height=40,
-            border_radius=20,
+            width=36,
+            height=36,
+            border_radius=18,
             alignment=ft.Alignment(0, 0),
             bgcolor=CARD_ACTIVE,
             border=ft.Border.all(1, ft.Colors.with_opacity(0.45, ACCENT)),
@@ -307,11 +469,11 @@ class SonusApp:
             ),
         )
 
-        self.minimized_action_icon = ft.Icon(ft.Icons.MIC_OFF_ROUNDED, size=22, color=ACCENT)
+        self.minimized_action_icon = ft.Icon(ft.Icons.MIC_OFF_ROUNDED, size=20, color=ACCENT)
         self.minimized_action_button = ft.Container(
-            width=52,
-            height=52,
-            border_radius=26,
+            width=56,
+            height=56,
+            border_radius=28,
             alignment=ft.Alignment(0, 0),
             bgcolor=CARD_ACTIVE,
             border=ft.Border.all(1, ft.Colors.with_opacity(0.45, ACCENT)),
@@ -325,38 +487,38 @@ class SonusApp:
             ),
         )
 
-        settings_icon = ft.Icon(ft.Icons.SETTINGS_ROUNDED, size=16, color=ft.Colors.with_opacity(0.8, "#60A5FA"))
+        self.settings_icon = ft.Icon(ft.Icons.SETTINGS_ROUNDED, size=14, color=ft.Colors.with_opacity(0.8, SETTINGS_ICON))
         self.settings_btn = ft.Container(
-            width=32,
-            height=32,
-            border_radius=16,
+            width=28,
+            height=28,
+            border_radius=14,
             alignment=ft.Alignment(0, 0),
             bgcolor=ft.Colors.with_opacity(0.2, CARD_ACTIVE),
             border=ft.Border.all(1, ft.Colors.with_opacity(0.2, BORDER)),
-            content=settings_icon,
+            content=self.settings_icon,
             on_click=self._open_settings,
             ink=True,
         )
 
-        close_icon = ft.Icon(ft.Icons.CLOSE_ROUNDED, size=16, color=ft.Colors.with_opacity(0.9, "#93A8C6"))
+        self.close_icon = ft.Icon(ft.Icons.CLOSE_ROUNDED, size=14, color=ft.Colors.with_opacity(0.9, CLOSE_ICON))
         self.close_btn = ft.Container(
-            width=32,
-            height=32,
-            border_radius=16,
+            width=28,
+            height=28,
+            border_radius=14,
             alignment=ft.Alignment(0, 0),
             bgcolor=ft.Colors.with_opacity(0.2, CARD_ACTIVE),
             border=ft.Border.all(1, ft.Colors.with_opacity(0.2, BORDER)),
-            content=close_icon,
+            content=self.close_icon,
             on_click=self._close_app,
             ink=True,
         )
 
         brand_block = ft.Column(
-            spacing=1,
+            spacing=0,
             tight=True,
             controls=[
                 ft.Row(
-                    spacing=6,
+                    spacing=4,
                     vertical_alignment=ft.CrossAxisAlignment.CENTER,
                     controls=[self.title_text, self.mode_badge],
                 ),
@@ -365,12 +527,12 @@ class SonusApp:
             ],
         )
 
-        controls_group = ft.Container(
-            margin=ft.Margin.only(left=4),
-            padding=ft.Padding.only(left=10),
+        self.controls_group = ft.Container(
+            margin=ft.Margin.only(left=3),
+            padding=ft.Padding.only(left=8),
             border=ft.Border.only(left=ft.BorderSide(1, ft.Colors.with_opacity(0.3, ACCENT))),
             content=ft.Row(
-                spacing=6,
+                spacing=4,
                 vertical_alignment=ft.CrossAxisAlignment.CENTER,
                 controls=[self.action_button, self.settings_btn, self.close_btn],
             ),
@@ -383,12 +545,12 @@ class SonusApp:
                 vertical_alignment=ft.CrossAxisAlignment.CENTER,
                 controls=[
                     ft.Row(
-                        spacing=8,
+                        spacing=6,
                         vertical_alignment=ft.CrossAxisAlignment.CENTER,
                         controls=[indicator, brand_block],
                     ),
                     waveform,
-                    controls_group,
+                    self.controls_group,
                 ],
             ),
         )
@@ -399,15 +561,15 @@ class SonusApp:
             content=self.minimized_action_button,
         )
 
-        widget_shell = ft.Container(
+        self.widget_shell = ft.Container(
             expand=True,
-            margin=ft.Margin.all(8),
-            padding=ft.Padding.symmetric(horizontal=12, vertical=10),
-            border_radius=999,
+            margin=ft.Margin.all(0),
+            padding=ft.Padding.symmetric(horizontal=10, vertical=6),
+            border_radius=28,
             gradient=ft.LinearGradient(
                 begin=ft.Alignment(-1, -1),
                 end=ft.Alignment(1, 1),
-                colors=[CARD, "#0B1A32"],
+                colors=[CARD, WIDGET_GRADIENT_END],
             ),
             border=ft.Border.all(1, ft.Colors.with_opacity(0.55, ACCENT)),
             shadow=ft.BoxShadow(
@@ -425,7 +587,7 @@ class SonusApp:
             ),
         )
 
-        root = ft.WindowDragArea(maximizable=False, content=widget_shell)
+        root = ft.WindowDragArea(maximizable=False, content=self.widget_shell)
         self.page.add(root)
 
         self._set_mode_badge()
@@ -443,9 +605,9 @@ class SonusApp:
             self.mode_badge.border = ft.Border.all(1, ft.Colors.with_opacity(0.45, ACCENT))
             self.mode_badge_text.color = ACCENT_GLOW
         else:
-            self.mode_badge.bgcolor = ft.Colors.with_opacity(0.16, "#1D4ED8")
-            self.mode_badge.border = ft.Border.all(1, ft.Colors.with_opacity(0.4, "#60A5FA"))
-            self.mode_badge_text.color = "#93C5FD"
+            self.mode_badge.bgcolor = ft.Colors.with_opacity(0.16, MODE_BATCH_BG)
+            self.mode_badge.border = ft.Border.all(1, ft.Colors.with_opacity(0.4, MODE_BATCH_BORDER))
+            self.mode_badge_text.color = MODE_BATCH_TEXT
         self.page.update()
 
     def _is_live_mode(self) -> bool:
@@ -584,10 +746,10 @@ class SonusApp:
                     pulse = (math.sin(step * 0.6) + 1.0) / 2.0
 
                     for index, bar in enumerate(self.wave_bars):
-                        bar.height = int(5 + pattern[index] * 16)
+                        bar.height = int(4 + pattern[index] * 10)
                         bar.bgcolor = BAR_ACTIVE if active else BAR_INACTIVE
 
-                    ring_size = int(10 + (6 * pulse if active else 2 * pulse))
+                    ring_size = int(8 + (4 * pulse if active else 2 * pulse))
                     ring_alpha = 0.45 if active else (0.2 + 0.12 * pulse)
                     ring_color = ACCENT_GLOW if active else INACTIVE_DOT
 
@@ -658,11 +820,17 @@ class SonusApp:
     def _sync_settings_from_disk(self) -> None:
         previous_mode = (self.cfg.get("mode") or "Batch").strip()
         previous_channel = (self.cfg.get("runtime_channel") or "stable").strip().lower()
-        previous_auto_minimize = self._auto_minimize_enabled()
+        previous_theme = self._theme_name
 
         self.cfg = config.load()
+        self._device_id = self._get_or_create_device_id()
         self._config_mtime = self._get_config_mtime()
+        theme_changed = self._apply_theme_globals()
         self.page.window.always_on_top = bool(self.cfg.get("always_on_top", True))
+
+        if theme_changed or previous_theme != self._theme_name:
+            self._apply_theme_to_controls()
+
         self._set_mode_badge()
 
         if self._auto_minimize_enabled():
@@ -724,6 +892,32 @@ class SonusApp:
         self.cfg = latest
         return device_id
 
+    def _license_product_id(self) -> str:
+        configured = (self.cfg.get("license_product_id") or "").strip()
+        return configured or (os.getenv("GUMROAD_PRODUCT_ID") or "").strip()
+
+    def _load_cached_license_state(self) -> None:
+        state = license_cache.load_state()
+        self._license_token = (state.get("token") or "").strip()
+        raw_entitlement = state.get("entitlement")
+        if isinstance(raw_entitlement, dict) and raw_entitlement.get("licenseId"):
+            try:
+                self._license_entitlement = website_client.LicenseEntitlement(
+                    license_id=(raw_entitlement.get("licenseId") or "").strip(),
+                    status=(raw_entitlement.get("status") or "").strip().lower(),
+                    plan=(raw_entitlement.get("plan") or "starter").strip().lower(),
+                    quota_chars=int(raw_entitlement.get("quotaChars") or 0),
+                    bonus_chars=int(raw_entitlement.get("bonusChars") or 0),
+                    used_chars=int(raw_entitlement.get("usedChars") or 0),
+                    remaining_chars=int(raw_entitlement.get("remainingChars") or 0),
+                    seat_limit=int(raw_entitlement.get("seatLimit") or 1),
+                    active_seats=int(raw_entitlement.get("activeSeats") or 0),
+                    is_subscription=bool(raw_entitlement.get("isSubscription", False)),
+                    can_transcribe=bool(raw_entitlement.get("canTranscribe", False)),
+                )
+            except Exception:
+                self._license_entitlement = None
+
     def _load_runtime_config(self, force: bool = False) -> website_client.RuntimeConfig | None:
         now = time.time()
         if (
@@ -755,10 +949,78 @@ class SonusApp:
             pass
         self._load_runtime_config(force=True)
         try:
+            self._refresh_license_session(force=False)
             self._get_runtime_api_key()
             self.page.run_thread(self._set_health_chip, "Connected", True)
         except Exception:
             pass
+
+    def _serialize_entitlement(self, ent: website_client.LicenseEntitlement | None) -> dict:
+        if not ent:
+            return {}
+        return {
+            "licenseId": ent.license_id,
+            "status": ent.status,
+            "plan": ent.plan,
+            "quotaChars": ent.quota_chars,
+            "bonusChars": ent.bonus_chars,
+            "usedChars": ent.used_chars,
+            "remainingChars": ent.remaining_chars,
+            "seatLimit": ent.seat_limit,
+            "activeSeats": ent.active_seats,
+            "isSubscription": ent.is_subscription,
+            "canTranscribe": ent.can_transcribe,
+        }
+
+    def _refresh_license_session(self, force: bool = False) -> website_client.LicenseEntitlement:
+        now = time.time()
+        with self._license_lock:
+            if (
+                not force
+                and self._license_entitlement is not None
+                and self._license_token
+                and now < self._license_refresh_at
+            ):
+                return self._license_entitlement
+
+        state = license_cache.load_state()
+        token = (state.get("token") or self._license_token or "").strip()
+        if not token:
+            raise website_client.WebsiteAPIError("License is not activated. Open Settings and activate your Gumroad key.")
+
+        try:
+            session_data = website_client.refresh_license(
+                token=token,
+                device_id=self._device_id,
+                device_name=f"{app_info.APP_NAME}-{app_info.APP_PLATFORM}",
+            )
+        except Exception:
+            cached_key = (state.get("licenseKey") or "").strip()
+            if not cached_key:
+                raise
+            product_id = self._license_product_id()
+            if not product_id:
+                raise website_client.WebsiteAPIError("License product ID is missing. Set it in Settings.")
+            session_data = website_client.activate_license(
+                license_key=cached_key,
+                product_id=product_id,
+                device_id=self._device_id,
+                device_name=f"{app_info.APP_NAME}-{app_info.APP_PLATFORM}",
+            )
+
+        with self._license_lock:
+            self._license_token = session_data.token
+            self._license_entitlement = session_data.entitlement
+            self._license_refresh_at = time.time() + 1800
+            self._runtime_api_key = session_data.live_api_key or self._runtime_api_key
+            if session_data.live_api_key:
+                self._api_last_check_at = time.time()
+        license_cache.save_state(
+            token=session_data.token,
+            license_key=(state.get("licenseKey") or "").strip(),
+            entitlement=self._serialize_entitlement(session_data.entitlement),
+        )
+        return session_data.entitlement
 
     def _current_feature_flag(self, key: str, fallback: bool) -> bool:
         runtime_cfg = self._runtime_config
@@ -869,14 +1131,18 @@ class SonusApp:
         self._last_raw_transcript = ""
         self._typing_failed_pending = False
         self._api_check_in_flight = True
-        self._set_status("Checking API", MUTED)
+        self._set_status("Checking license", MUTED)
         self._set_action("Checking...", CARD_SOFT, BORDER, MUTED, lambda _e: None)
         threading.Thread(target=self._check_api_and_prepare_target, daemon=True).start()
 
     def _check_api_and_prepare_target(self) -> None:
         try:
             self._load_runtime_config(force=False)
-            self._get_runtime_api_key()
+            entitlement = self._refresh_license_session(force=False)
+            if not entitlement.can_transcribe:
+                raise website_client.WebsiteAPIError("License quota exhausted. Top up or renew the plan.")
+            if self._is_live_mode():
+                self._get_runtime_api_key()
         except website_client.WebsiteAPIError as exc:
             self.page.run_thread(self._on_api_check_failed, str(exc))
             return
@@ -915,11 +1181,12 @@ class SonusApp:
             if self._runtime_api_key and (now - self._api_last_check_at) < self._api_cache_ttl_sec:
                 return self._runtime_api_key
 
-        bootstrap = website_client.get_desktop_bootstrap()
+        self._refresh_license_session(force=False)
+        bootstrap = website_client.get_desktop_bootstrap(
+            token=self._license_token,
+            device_id=self._device_id,
+        )
         key = bootstrap.api_key.strip()
-        if not key:
-            raise website_client.WebsiteAPIError("The website did not return an API key.")
-
         with self._api_lock:
             self._runtime_api_key = key
             self._api_last_check_at = time.time()
@@ -1056,12 +1323,13 @@ class SonusApp:
     def _start_live_mode(self) -> None:
         api_key = self._runtime_api_key.strip()
         if not api_key:
-            self._on_transcription_error("Runtime API key is missing. Press Start to re-check website API.")
+            self._on_transcription_error("Live mode key is unavailable. Refresh license from Settings and retry.")
             return
         preferred_source = self.cfg.get("source", "mic")
         self._live_text_buffer.clear()
         self._live_retry_count = 0
         self._last_live_typed_char = ""
+        self._live_session_chars = 0
         self._live_source_candidates = [preferred_source]
         if bool(self.cfg.get("auto_fallback_enabled", True)) and self._current_feature_flag("autoFallback", True):
             alt = "system" if preferred_source == "mic" else "mic"
@@ -1173,12 +1441,19 @@ class SonusApp:
             client = tr_module.TranscriptionClient(
                 api_key=self._runtime_api_key,
                 model=self._selected_batch_model(),
+                license_token=self._license_token,
+                device_id=self._device_id,
             )
             raw_text = client.transcribe(
                 wav_path,
                 language=self.cfg.get("language") or None,
                 prompt=prompt,
             )
+            if client.last_usage:
+                try:
+                    self._refresh_license_session(force=True)
+                except Exception:
+                    pass
             processed = self._process_transcript(raw_text)
             self._execute_voice_actions(processed.actions)
 
@@ -1284,6 +1559,7 @@ class SonusApp:
     def _finalize_stop(self) -> None:
         self._stopping = False
         self._last_live_typed_char = ""
+        self._sync_live_usage()
         self._set_status("Completed", SUCCESS)
         self._reset_to_ready()
         if self._typing_failed_pending and self._last_raw_transcript:
@@ -1332,6 +1608,7 @@ class SonusApp:
                 ok = output_handler.type_text(payload, interval=0.01)
                 if ok and payload:
                     self._last_live_typed_char = payload[-1]
+                    self._live_session_chars += len(payload)
 
             if not ok:
                 self.page.run_thread(self._handle_typing_failure, raw_chunk)
@@ -1339,6 +1616,40 @@ class SonusApp:
 
         threading.Thread(target=_type, daemon=True).start()
         self._live_paste_job = None
+
+    def _sync_live_usage(self) -> None:
+        if self._live_session_chars <= 0:
+            return
+        if not self._license_token:
+            return
+        chars = int(self._live_session_chars)
+        self._live_session_chars = 0
+        idempotency_key = hashlib.sha256(
+            f"{self._session_id}:live:{chars}:{time.time_ns()}".encode("utf-8")
+        ).hexdigest()
+
+        def _worker() -> None:
+            try:
+                updated = website_client.consume_license_usage(
+                    token=self._license_token,
+                    device_id=self._device_id,
+                    chars_used=chars,
+                    mode="live",
+                    session_id=self._session_id,
+                    idempotency_key=idempotency_key,
+                    detail="live_session",
+                )
+                with self._license_lock:
+                    self._license_entitlement = updated
+                license_cache.save_state(
+                    token=self._license_token,
+                    license_key=(license_cache.load_state().get("licenseKey") or "").strip(),
+                    entitlement=self._serialize_entitlement(updated),
+                )
+            except Exception:
+                pass
+
+        threading.Thread(target=_worker, daemon=True).start()
 
     def _on_realtime_done(self) -> None:
         self._is_recording = False

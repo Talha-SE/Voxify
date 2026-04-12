@@ -7,6 +7,7 @@ This folder contains a separate website with server-side secret management.
 - `MISTRAL_API_KEY` is loaded from `.env` only on the server.
 - Admin login credentials are loaded from `.env`.
 - Gumroad checkout links are loaded from `.env`.
+- License and usage data are stored in MongoDB (`MONGODB_URI`, `MONGODB_DB_NAME`).
 - No user signup or user login routes are exposed on the public website.
 
 ## Pages included
@@ -17,6 +18,10 @@ This folder contains a separate website with server-side secret management.
 - `/admin-brevios-login` hidden admin login page
 - `/admin-brevios-dashboard` admin dashboard after login
 - `/api/verify-license` backend endpoint for Gumroad license verification
+- `/api/license/activate`, `/api/license/refresh`, `/api/license/status`
+- `/api/license/consume` quota accounting endpoint
+- `/api/transcribe` server-side transcription proxy for batch mode
+- `/api/gumroad/webhook` webhook status sync endpoint
 
 ## Run locally
 
@@ -49,6 +54,8 @@ GUMROAD_MEMBERSHIP_URL=https://yourname.gumroad.com/l/your-membership
 GUMROAD_ONETIME_URL=https://yourname.gumroad.com/l/your-onetime-plan
 GUMROAD_PRODUCT_ID=your_gumroad_product_id
 GUMROAD_API_ACCESS_TOKEN=
+MONGODB_URI=mongodb://127.0.0.1:27017
+MONGODB_DB_NAME=sonus
 ```
 
 ## Desktop app license validation flow

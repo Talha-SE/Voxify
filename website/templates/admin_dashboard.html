@@ -11,7 +11,7 @@
     <a class="btn btn-ghost" href="{{ url_for('admin_logout') }}">Logout</a>
   </div>
 
-  <p class="dashboard-sub">Welcome, {{ admin_user }}. Server-side configuration is shown below.</p>
+  <p class="dashboard-sub">Welcome, {{ admin_user }}. Licensing, quota, and release controls are managed here.</p>
 
   {% if dashboard_message %}
     <div class="ok-box">{{ dashboard_message }}</div>
@@ -27,35 +27,37 @@
         {{ 'Configured' if api_configured else 'Missing' }}
       </p>
     </article>
-
     <article class="status-card">
       <h2>Model</h2>
       <p class="status-value">{{ model_name }}</p>
     </article>
-
     <article class="status-card">
       <h2>Masked API Key</h2>
       <p class="status-value">{{ masked_key }}</p>
     </article>
   </div>
 
-  <div class="dashboard-grid">
-    <article class="status-card release-preview">
-      <h2>Current Release Metadata</h2>
-      <p class="status-kv"><span>Latest:</span> {{ release_info.latestVersion }}</p>
-      <p class="status-kv"><span>Channel:</span> {{ release_info.channel }}</p>
-      <p class="status-kv"><span>Platform:</span> {{ release_info.platform }}</p>
-      <p class="status-kv"><span>Mandatory:</span> {{ 'Yes' if release_info.mandatory else 'No' }}</p>
-      <p class="status-kv"><span>Published:</span> {{ release_info.publishedAt or 'Not published yet' }}</p>
-      <p class="status-kv"><span>Download:</span> {{ release_info.downloadUrl or 'Not set' }}</p>
-      <p class="status-notes">{{ release_info.notes or 'No release notes yet.' }}</p>
+  <div class="status-grid">
+    <article class="status-card">
+      <h2>Total Licenses</h2>
+      <p class="status-value">{{ license_summary.totalLicenses }}</p>
     </article>
+    <article class="status-card">
+      <h2>Active Licenses</h2>
+      <p class="status-value">{{ license_summary.activeLicenses }}</p>
+    </article>
+    <article class="status-card">
+      <h2>Active Devices</h2>
+      <p class="status-value">{{ license_summary.activeDevices }}</p>
+    </article>
+  </div>
 
+  <div class="dashboard-grid">
     <form method="post" class="admin-card release-form" autocomplete="off">
       <input type="hidden" name="form_type" value="release">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <h2>Publish App Update</h2>
-      <p class="dashboard-sub">This powers the in-app update notification and update button.</p>
+      <p class="dashboard-sub">Desktop checks this metadata for download, install, and restart flow.</p>
 
       <label for="latest_version">Latest Version</label>
       <input id="latest_version" name="latest_version" type="text" value="{{ release_info.latestVersion }}" placeholder="e.g. 1.2.0" required>
@@ -74,12 +76,34 @@
         </div>
       </div>
 
+      <div class="release-form-row">
+        <div>
+          <label for="asset_type">Asset Type</label>
+          <select id="asset_type" name="asset_type">
+            <option value="exe" {% if release_info.assetType == 'exe' %}selected{% endif %}>exe</option>
+            <option value="msi" {% if release_info.assetType == 'msi' %}selected{% endif %}>msi</option>
+            <option value="zip" {% if release_info.assetType == 'zip' %}selected{% endif %}>zip</option>
+          </select>
+        </div>
+        <div>
+          <label for="installer_args">Installer Args</label>
+          <input id="installer_args" name="installer_args" type="text" value="{{ release_info.installerArgs or '/S' }}" placeholder="/S">
+        </div>
+      </div>
+
+      <label for="sha256">SHA-256 (optional)</label>
+      <input id="sha256" name="sha256" type="text" value="{{ release_info.sha256 or '' }}" placeholder="checksum for package validation">
+
       <label for="release_notes">Release Notes</label>
       <textarea id="release_notes" name="release_notes" rows="4" placeholder="What changed in this version?">{{ release_info.notes }}</textarea>
 
       <label class="toggle-inline">
         <input id="mandatory_update" name="mandatory_update" type="checkbox" {% if release_info.mandatory %}checked{% endif %}>
         <span>Mark as mandatory update</span>
+      </label>
+      <label class="toggle-inline">
+        <input id="restart_required" name="restart_required" type="checkbox" {% if release_info.restartRequired %}checked{% endif %}>
+        <span>Restart required after install</span>
       </label>
 
       <button type="submit" class="btn btn-primary full">Publish Update Metadata</button>
@@ -93,33 +117,33 @@
 
       <label for="runtime_channel">Channel</label>
       <select id="runtime_channel" name="runtime_channel">
-        <option value="stable" selected>stable</option>
-        <option value="beta">beta</option>
+        <option value="stable" {% if selected_runtime_channel == 'stable' %}selected{% endif %}>stable</option>
+        <option value="beta" {% if selected_runtime_channel == 'beta' %}selected{% endif %}>beta</option>
       </select>
 
       <label for="runtime_platform">Platform</label>
-      <input id="runtime_platform" name="runtime_platform" type="text" value="{{ runtime_config.channels.stable.platform }}">
+      <input id="runtime_platform" name="runtime_platform" type="text" value="{{ runtime_channel_data.platform }}">
 
       <label for="rollout_percent">Rollout Percent</label>
-      <input id="rollout_percent" name="rollout_percent" type="number" min="0" max="100" value="{{ runtime_config.channels.stable.rolloutPercent }}">
+      <input id="rollout_percent" name="rollout_percent" type="number" min="0" max="100" value="{{ runtime_channel_data.rolloutPercent }}">
 
       <label for="live_retry_limit">Live Retry Limit</label>
-      <input id="live_retry_limit" name="live_retry_limit" type="number" min="0" max="10" value="{{ runtime_config.channels.stable.runtime.liveRetryLimit }}">
+      <input id="live_retry_limit" name="live_retry_limit" type="number" min="0" max="10" value="{{ runtime_channel_data.runtime.liveRetryLimit }}">
 
       <label for="command_set_version">Command Set Version</label>
-      <input id="command_set_version" name="command_set_version" type="text" value="{{ runtime_config.channels.stable.runtime.commandSetVersion }}">
+      <input id="command_set_version" name="command_set_version" type="text" value="{{ runtime_channel_data.runtime.commandSetVersion }}">
 
       <label for="endpointing_mode">Endpointing Mode</label>
       <select id="endpointing_mode" name="endpointing_mode">
-        <option value="adaptive" {% if runtime_config.channels.stable.runtime.endpointingMode == 'adaptive' %}selected{% endif %}>adaptive</option>
-        <option value="latency" {% if runtime_config.channels.stable.runtime.endpointingMode == 'latency' %}selected{% endif %}>latency</option>
-        <option value="accuracy" {% if runtime_config.channels.stable.runtime.endpointingMode == 'accuracy' %}selected{% endif %}>accuracy</option>
+        <option value="adaptive" {% if runtime_channel_data.runtime.endpointingMode == 'adaptive' %}selected{% endif %}>adaptive</option>
+        <option value="latency" {% if runtime_channel_data.runtime.endpointingMode == 'latency' %}selected{% endif %}>latency</option>
+        <option value="accuracy" {% if runtime_channel_data.runtime.endpointingMode == 'accuracy' %}selected{% endif %}>accuracy</option>
       </select>
 
-      <label class="toggle-inline"><input name="silence_trim_enabled" type="checkbox" {% if runtime_config.channels.stable.runtime.silenceTrimEnabled %}checked{% endif %}><span>Silence trim enabled</span></label>
-      <label class="toggle-inline"><input name="flag_voice_commands" type="checkbox" {% if runtime_config.channels.stable.featureFlags.voiceCommands %}checked{% endif %}><span>Voice commands enabled</span></label>
-      <label class="toggle-inline"><input name="flag_auto_fallback" type="checkbox" {% if runtime_config.channels.stable.featureFlags.autoFallback %}checked{% endif %}><span>Auto fallback enabled</span></label>
-      <label class="toggle-inline"><input name="flag_reliability_events" type="checkbox" {% if runtime_config.channels.stable.featureFlags.reliabilityEvents %}checked{% endif %}><span>Send reliability events</span></label>
+      <label class="toggle-inline"><input name="silence_trim_enabled" type="checkbox" {% if runtime_channel_data.runtime.silenceTrimEnabled %}checked{% endif %}><span>Silence trim enabled</span></label>
+      <label class="toggle-inline"><input name="flag_voice_commands" type="checkbox" {% if runtime_channel_data.featureFlags.voiceCommands %}checked{% endif %}><span>Voice commands enabled</span></label>
+      <label class="toggle-inline"><input name="flag_auto_fallback" type="checkbox" {% if runtime_channel_data.featureFlags.autoFallback %}checked{% endif %}><span>Auto fallback enabled</span></label>
+      <label class="toggle-inline"><input name="flag_reliability_events" type="checkbox" {% if runtime_channel_data.featureFlags.reliabilityEvents %}checked{% endif %}><span>Send reliability events</span></label>
 
       <button type="submit" class="btn btn-primary full">Save Runtime Config</button>
     </form>
@@ -133,5 +157,68 @@
       <p class="status-notes">Error codes: {{ reliability_summary.errorCodeCounts }}</p>
     </article>
   </div>
+
+  <article class="status-card table-card">
+    <div class="table-head">
+      <h2>License Usage</h2>
+      <a class="btn btn-outline" href="{{ url_for('admin_export_licenses', license_query=license_query) }}">Export CSV</a>
+    </div>
+
+    <form method="post" class="table-search-row">
+      <input type="hidden" name="form_type" value="license_search">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input name="license_query" value="{{ license_query }}" placeholder="Search by email, sale ID, or hint">
+      <button type="submit" class="btn btn-primary">Search</button>
+    </form>
+
+    <div class="table-wrap">
+      <table class="admin-table" aria-label="License table">
+        <thead>
+          <tr>
+            <th>License</th>
+            <th>Plan</th>
+            <th>Status</th>
+            <th>Seats</th>
+            <th>Usage</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in license_rows %}
+          <tr>
+            <td>
+              <p class="table-primary">{{ row.licenseHint }}</p>
+              <p class="table-meta">{{ row.purchaseEmail or '-' }}</p>
+              <p class="table-meta">Sale: {{ row.saleId or '-' }}</p>
+            </td>
+            <td>{{ row.plan }}</td>
+            <td>{{ row.status }}</td>
+            <td>{{ row.activeSeats }} / {{ row.seatLimit }}</td>
+            <td>{{ row.usedChars }} / {{ row.quotaChars + row.bonusChars }}</td>
+            <td>
+              <form method="post" class="table-actions">
+                <input type="hidden" name="form_type" value="license_action">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <input type="hidden" name="license_id" value="{{ row.id }}">
+                <input type="hidden" name="license_query" value="{{ license_query }}">
+                <input name="topup_chars" type="number" min="0" placeholder="chars">
+                <button name="license_action" value="topup" class="btn btn-outline">Top-up</button>
+                {% if row.status != 'revoked' %}
+                <button name="license_action" value="revoke" class="btn btn-ghost">Revoke</button>
+                {% else %}
+                <button name="license_action" value="unrevoke" class="btn btn-primary">Restore</button>
+                {% endif %}
+              </form>
+            </td>
+          </tr>
+          {% else %}
+          <tr>
+            <td colspan="6">No licenses found.</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </article>
 </section>
 {% endblock %}

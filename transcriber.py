@@ -6,10 +6,13 @@ Sends a WAV file to the transcription endpoint and returns the text.
 
 import os
 import time
+import hashlib
 from pathlib import Path
 from typing import Optional
 
 import requests
+
+import website_client
 
 TRANSCRIPTION_URL = "https://api.mistral.ai/v1/audio/transcriptions"
 DEFAULT_MODEL = "voxtral-mini-2507"
@@ -23,11 +26,19 @@ class TranscriptionError(Exception):
 class TranscriptionClient:
     """Thin wrapper around the audio transcription REST API."""
 
-    def __init__(self, api_key: str, model: str = DEFAULT_MODEL) -> None:
-        if not api_key:
-            raise TranscriptionError(
-                "API key is not available. Press Start so the app can fetch it from the website."
-            )
+    def __init__(
+        self,
+        api_key: str = "",
+        model: str = DEFAULT_MODEL,
+        license_token: str = "",
+        device_id: str = "",
+    ) -> None:
+        self.license_token = (license_token or "").strip()
+        self.device_id = (device_id or "").strip()
+        self.last_usage: dict = {}
+
+        if not self.license_token and not api_key:
+            raise TranscriptionError("No transcription credentials available. Activate license and retry.")
         self.api_key = api_key
         self.model = model
 
@@ -59,9 +70,29 @@ class TranscriptionClient:
         if not Path(wav_path).exists():
             raise TranscriptionError(f"Audio file not found: {wav_path}")
 
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-        }
+        if self.license_token and self.device_id:
+            try:
+                proxy_result = website_client.transcribe_via_proxy(
+                    wav_path=wav_path,
+                    token=self.license_token,
+                    device_id=self.device_id,
+                    model=self.model,
+                    language=language,
+                    prompt=prompt,
+                    idempotency_key=hashlib.sha256(
+                        f"{self.device_id}:{Path(wav_path).name}:{time.time_ns()}".encode("utf-8")
+                    ).hexdigest(),
+                )
+                self.last_usage = {
+                    "remainingChars": proxy_result.usage.remaining_chars,
+                    "usedChars": proxy_result.usage.used_chars,
+                    "quotaChars": proxy_result.usage.quota_chars,
+                }
+                return proxy_result.text.strip()
+            except website_client.WebsiteAPIError as exc:
+                raise TranscriptionError(str(exc)) from exc
+
+        headers = {"Authorization": f"Bearer {self.api_key}"}
 
         data: dict = {"model": self.model}
         if language:
@@ -70,9 +101,7 @@ class TranscriptionClient:
             data["prompt"] = prompt
 
         with open(wav_path, "rb") as audio_file:
-            files = {
-                "file": (Path(wav_path).name, audio_file, "audio/wav"),
-            }
+            files = {"file": (Path(wav_path).name, audio_file, "audio/wav")}
             response = requests.post(
                 TRANSCRIPTION_URL,
                 headers=headers,

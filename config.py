@@ -37,6 +37,9 @@ DEFAULT_CONFIG = {
     "device_id": "",
     "auto_minimize": True,
     "minimize_timeout": 10,
+    "license_product_id": "",
+    "auto_install_updates": True,
+    "restart_after_update": True,
 }
 
 

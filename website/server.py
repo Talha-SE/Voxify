@@ -1,20 +1,41 @@
+from __future__ import annotations
+
+import csv
+import hashlib
+import io
+import json
 import os
 import re
 import secrets
 import time
-import hashlib
-from datetime import datetime, timezone
+from collections import Counter
+from datetime import datetime, timedelta, timezone
 from functools import wraps
 from pathlib import Path
-import json
-from collections import Counter
+from typing import Any
 
 from dotenv import load_dotenv
-from flask import Flask, jsonify, redirect, render_template, request, send_from_directory, session, url_for
+from flask import (
+    Flask,
+    jsonify,
+    make_response,
+    redirect,
+    render_template,
+    request,
+    send_from_directory,
+    session,
+    url_for,
+)
+from itsdangerous import BadData, URLSafeTimedSerializer
 import requests
 from werkzeug.security import check_password_hash
 
-from secure_api import get_masked_api_key, get_mistral_api_key, get_mistral_model
+try:
+    from .license_store import MongoLicenseStore
+    from .secure_api import get_masked_api_key, get_mistral_api_key, get_mistral_model
+except ImportError:
+    from license_store import MongoLicenseStore
+    from secure_api import get_masked_api_key, get_mistral_api_key, get_mistral_model
 
 load_dotenv()
 
@@ -26,12 +47,20 @@ app.config["SESSION_COOKIE_SECURE"] = os.getenv("SESSION_SECURE_COOKIE", "false"
 
 LOGIN_WINDOW_SECONDS = 300
 MAX_LOGIN_ATTEMPTS = 5
-_failed_attempts = {}
+_failed_attempts: dict[str, list[float]] = {}
 
 GUMROAD_VERIFY_URL = "https://api.gumroad.com/v2/licenses/verify"
 RELEASE_INFO_FILE = Path(__file__).with_name("release_info.json")
 RUNTIME_CONFIG_FILE = Path(__file__).with_name("runtime_config.json")
 RELIABILITY_EVENTS_FILE = Path(__file__).with_name("reliability_events.jsonl")
+
+LICENSE_TOKEN_MAX_AGE_SEC = max(3600, int(os.getenv("SONUS_LICENSE_TOKEN_MAX_AGE_SEC", "604800")))
+LICENSE_REFRESH_INTERVAL_SEC = max(600, int(os.getenv("SONUS_LICENSE_REFRESH_INTERVAL_SEC", "21600")))
+ALLOW_CLIENT_LIVE_KEY = os.getenv("SONUS_ALLOW_CLIENT_LIVE_KEY", "true").strip().lower() == "true"
+
+_store: MongoLicenseStore | None = None
+_store_error: str = ""
+_token_serializer = URLSafeTimedSerializer(app.config["SECRET_KEY"], salt="sonus-license-v1")
 
 MEMBERSHIP_TIERS = [
     {
@@ -92,7 +121,12 @@ DEFAULT_RELEASE_INFO = {
     "publishedAt": "",
     "channel": "stable",
     "platform": "windows",
+    "assetType": "exe",
+    "sha256": "",
+    "installerArgs": "/S",
+    "restartRequired": True,
 }
+
 DEFAULT_RUNTIME_CONFIG = {
     "channels": {
         "stable": {
@@ -129,8 +163,38 @@ DEFAULT_RUNTIME_CONFIG = {
 }
 
 
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _text(value: Any) -> str:
+    return str(value or "").strip()
+
+
+def _get_store() -> MongoLicenseStore | None:
+    global _store
+    global _store_error
+    if _store is not None:
+        return _store
+    try:
+        _store = MongoLicenseStore()
+        _store.ping()
+        _store_error = ""
+    except Exception as exc:
+        _store = None
+        _store_error = str(exc)
+    return _store
+
+
+def _store_problem() -> tuple[dict[str, Any], int]:
+    message = "License database is unavailable."
+    if _store_error:
+        message = f"{message} {_store_error}"
+    return {"success": False, "message": message}, 503
+
+
 def _normalize_checkout_url(value: str, fallback: str) -> str:
-    cleaned = (value or "").strip()
+    cleaned = _text(value)
     if cleaned.startswith("http://") or cleaned.startswith("https://"):
         return cleaned
     return fallback
@@ -152,14 +216,13 @@ def _clear_failed_attempts(client_ip: str) -> None:
 
 
 def _verify_admin_credentials(username: str, password: str) -> bool:
-    env_user = (os.getenv("ADMIN_USERNAME") or "admin").strip()
-    password_hash = (os.getenv("ADMIN_PASSWORD_HASH") or "").strip()
+    env_user = _text(os.getenv("ADMIN_USERNAME", "admin"))
+    password_hash = _text(os.getenv("ADMIN_PASSWORD_HASH", ""))
 
     if username != env_user:
         return False
     if not password_hash:
         return False
-
     return check_password_hash(password_hash, password)
 
 
@@ -241,7 +304,7 @@ def _event_rollout_bucket(value: str) -> int:
 def _resolve_channel_runtime(channel: str) -> tuple[str, dict]:
     runtime_config = _load_runtime_config()
     channels = runtime_config.get("channels", {})
-    normalized = (channel or "stable").strip().lower()
+    normalized = _text(channel).lower() or "stable"
     if normalized not in channels:
         normalized = "stable"
     return normalized, channels.get(normalized, channels.get("stable", {}))
@@ -275,10 +338,10 @@ def _summarize_reliability_events(limit: int = 2000) -> dict:
         except Exception:
             continue
 
-        event_type = (event.get("eventType") or "unknown").strip().lower()
-        error_code = (event.get("errorCode") or "").strip().lower()
+        event_type = _text(event.get("eventType")).lower() or "unknown"
+        error_code = _text(event.get("errorCode")).lower()
         latency = event.get("latencyMs")
-        timestamp = (event.get("timestamp") or "").strip()
+        timestamp = _text(event.get("timestamp"))
 
         event_type_counts[event_type] += 1
         if error_code:
@@ -298,6 +361,86 @@ def _summarize_reliability_events(limit: int = 2000) -> dict:
     }
 
 
+def _gumroad_verify(license_key: str, product_id: str) -> tuple[dict[str, Any] | None, str]:
+    verify_form = {
+        "product_id": _text(product_id),
+        "license_key": _text(license_key),
+        "increment_uses_count": "false",
+    }
+    access_token = _text(os.getenv("GUMROAD_API_ACCESS_TOKEN", ""))
+    if access_token:
+        verify_form["access_token"] = access_token
+
+    try:
+        response = requests.post(GUMROAD_VERIFY_URL, data=verify_form, timeout=15)
+        payload = response.json() if response.content else {}
+    except requests.RequestException:
+        return None, "Unable to verify license right now."
+    except ValueError:
+        return None, "Unexpected response from Gumroad."
+
+    if response.status_code != 200 or not payload.get("success"):
+        return None, "Invalid or inactive license."
+    return payload, ""
+
+
+def _mint_license_token(license_id: str, device_hash: str) -> str:
+    return _token_serializer.dumps({"lid": license_id, "dh": device_hash, "iat": int(time.time())})
+
+
+def _parse_license_token(raw_token: str) -> tuple[dict[str, Any] | None, str]:
+    token = _text(raw_token)
+    if not token:
+        return None, "token is required."
+    try:
+        payload = _token_serializer.loads(token, max_age=LICENSE_TOKEN_MAX_AGE_SEC)
+    except BadData:
+        return None, "Invalid or expired token."
+    if not isinstance(payload, dict):
+        return None, "Invalid token payload."
+    if not _text(payload.get("lid")) or not _text(payload.get("dh")):
+        return None, "Token payload is incomplete."
+    return payload, ""
+
+
+def _entitlement_payload(entitlement: dict[str, Any], token: str, include_runtime_key: bool = False) -> dict[str, Any]:
+    payload = {
+        "success": True,
+        "token": token,
+        "entitlement": entitlement,
+        "refreshAt": (_utc_now() + timedelta(seconds=LICENSE_REFRESH_INTERVAL_SEC)).isoformat(),
+        "expiresAt": (_utc_now() + timedelta(seconds=LICENSE_TOKEN_MAX_AGE_SEC)).isoformat(),
+    }
+    if include_runtime_key and ALLOW_CLIENT_LIVE_KEY:
+        try:
+            payload["liveApiKey"] = get_mistral_api_key()
+            payload["liveModel"] = get_mistral_model()
+        except RuntimeError:
+            payload["liveApiKey"] = ""
+            payload["liveModel"] = get_mistral_model()
+    return payload
+
+
+def _validate_token_and_license(device_id: str, token: str) -> tuple[dict[str, Any] | None, dict[str, Any] | None, str]:
+    store = _get_store()
+    if not store:
+        return None, None, _store_problem()[0]["message"]
+
+    payload, token_error = _parse_license_token(token)
+    if not payload:
+        return None, None, token_error
+
+    device_hash = store.hash_device(device_id)
+    if not secrets.compare_digest(device_hash, _text(payload.get("dh"))):
+        return None, None, "Device does not match the active token."
+
+    doc = store.get_license_by_id(_text(payload.get("lid")))
+    if not doc:
+        return None, None, "License not found."
+    entitlement = store.build_entitlement(doc)
+    return entitlement, payload, ""
+
+
 def login_required(view_func):
     @wraps(view_func)
     def wrapped_view(*args, **kwargs):
@@ -311,7 +454,7 @@ def login_required(view_func):
 @app.context_processor
 def inject_template_globals():
     return {
-        "current_year": datetime.now(timezone.utc).year,
+        "current_year": _utc_now().year,
         "membership_url": _normalize_checkout_url(
             os.getenv("GUMROAD_MEMBERSHIP_URL", ""),
             "https://gumroad.com",
@@ -365,14 +508,13 @@ def sitemap():
 def admin_login():
     error_message = ""
     csrf_token = session.get("admin_csrf_token")
-
     if not csrf_token:
         csrf_token = secrets.token_urlsafe(24)
         session["admin_csrf_token"] = csrf_token
 
     if request.method == "POST":
         client_ip = request.remote_addr or "unknown"
-        form_token = request.form.get("csrf_token") or ""
+        form_token = _text(request.form.get("csrf_token"))
 
         if not secrets.compare_digest(form_token, csrf_token):
             return render_template("admin_login.html", error_message="Invalid form token.", csrf_token=csrf_token), 400
@@ -381,9 +523,8 @@ def admin_login():
             error_message = "Too many attempts. Try again in a few minutes."
             return render_template("admin_login.html", error_message=error_message, csrf_token=csrf_token), 429
 
-        username = (request.form.get("username") or "").strip()
+        username = _text(request.form.get("username"))
         password = request.form.get("password") or ""
-
         if _verify_admin_credentials(username, password):
             session["admin_logged_in"] = True
             session["admin_user"] = username
@@ -417,17 +558,30 @@ def admin_dashboard():
     release_info = _load_release_info()
     runtime_config = _load_runtime_config()
     reliability_summary = _summarize_reliability_events()
+    selected_runtime_channel = _text(request.args.get("runtime_channel") or request.form.get("runtime_channel") or "stable").lower()
+    if selected_runtime_channel not in {"stable", "beta"}:
+        selected_runtime_channel = "stable"
+
+    license_query = _text(request.args.get("license_query") or request.form.get("license_query") or "")
+    store = _get_store()
+    license_summary = {
+        "totalLicenses": 0,
+        "activeLicenses": 0,
+        "revokedLicenses": 0,
+        "activeDevices": 0,
+        "totalCharsUsed": 0,
+    }
 
     if request.method == "POST":
-        form_token = request.form.get("csrf_token") or ""
+        form_token = _text(request.form.get("csrf_token"))
         if not secrets.compare_digest(form_token, csrf_token):
             dashboard_error = "Invalid form token."
         else:
-            form_type = (request.form.get("form_type") or "release").strip().lower()
+            form_type = _text(request.form.get("form_type")).lower() or "release"
             if form_type == "runtime":
-                selected_channel = (request.form.get("runtime_channel") or "stable").strip().lower()
-                if selected_channel not in {"stable", "beta"}:
-                    selected_channel = "stable"
+                selected_runtime_channel = _text(request.form.get("runtime_channel") or "stable").lower()
+                if selected_runtime_channel not in {"stable", "beta"}:
+                    selected_runtime_channel = "stable"
 
                 try:
                     rollout_percent = int(request.form.get("rollout_percent") or 100)
@@ -439,34 +593,38 @@ def admin_dashboard():
                 except ValueError:
                     live_retry_limit = 2
                 live_retry_limit = max(0, min(10, live_retry_limit))
-                command_set_version = (request.form.get("command_set_version") or "v1").strip()
-                endpointing_mode = (request.form.get("endpointing_mode") or "adaptive").strip().lower()
+                command_set_version = _text(request.form.get("command_set_version") or "v1")
+                endpointing_mode = _text(request.form.get("endpointing_mode") or "adaptive").lower()
                 if endpointing_mode not in {"adaptive", "latency", "accuracy"}:
                     endpointing_mode = "adaptive"
 
-                ch_data = runtime_config["channels"].setdefault(selected_channel, {})
+                ch_data = runtime_config["channels"].setdefault(selected_runtime_channel, {})
                 ch_data["rolloutPercent"] = rollout_percent
-                ch_data["platform"] = (request.form.get("runtime_platform") or "windows").strip().lower() or "windows"
+                ch_data["platform"] = _text(request.form.get("runtime_platform") or "windows").lower() or "windows"
                 ch_data["featureFlags"] = {
-                    "voiceCommands": (request.form.get("flag_voice_commands") or "").strip().lower() == "on",
-                    "autoFallback": (request.form.get("flag_auto_fallback") or "").strip().lower() == "on",
-                    "reliabilityEvents": (request.form.get("flag_reliability_events") or "").strip().lower() == "on",
+                    "voiceCommands": _text(request.form.get("flag_voice_commands")).lower() == "on",
+                    "autoFallback": _text(request.form.get("flag_auto_fallback")).lower() == "on",
+                    "reliabilityEvents": _text(request.form.get("flag_reliability_events")).lower() == "on",
                 }
                 ch_data["runtime"] = {
                     "liveRetryLimit": live_retry_limit,
                     "commandSetVersion": command_set_version or "v1",
-                    "silenceTrimEnabled": (request.form.get("silence_trim_enabled") or "").strip().lower() == "on",
+                    "silenceTrimEnabled": _text(request.form.get("silence_trim_enabled")).lower() == "on",
                     "endpointingMode": endpointing_mode,
                 }
                 _save_runtime_config(runtime_config)
-                dashboard_message = f"Runtime configuration updated for {selected_channel}."
-            else:
-                latest_version = (request.form.get("latest_version") or "").strip()
-                download_url = (request.form.get("download_url") or "").strip()
-                notes = (request.form.get("release_notes") or "").strip()
-                mandatory = (request.form.get("mandatory_update") or "").strip().lower() == "on"
-                channel = (request.form.get("channel") or "stable").strip().lower()
-                platform = (request.form.get("platform") or "windows").strip().lower()
+                dashboard_message = f"Runtime configuration updated for {selected_runtime_channel}."
+            elif form_type == "release":
+                latest_version = _text(request.form.get("latest_version"))
+                download_url = _text(request.form.get("download_url"))
+                notes = _text(request.form.get("release_notes"))
+                mandatory = _text(request.form.get("mandatory_update")).lower() == "on"
+                channel = _text(request.form.get("channel") or "stable").lower() or "stable"
+                platform = _text(request.form.get("platform") or "windows").lower() or "windows"
+                asset_type = _text(request.form.get("asset_type") or "exe").lower() or "exe"
+                sha256_value = _text(request.form.get("sha256"))
+                installer_args = _text(request.form.get("installer_args") or "/S")
+                restart_required = _text(request.form.get("restart_required")).lower() == "on"
 
                 if not re.match(r"^\d+\.\d+\.\d+$", latest_version):
                     dashboard_error = "Version must be in semantic format, e.g. 1.4.2"
@@ -478,24 +636,69 @@ def admin_dashboard():
                         "downloadUrl": download_url,
                         "notes": notes,
                         "mandatory": mandatory,
-                        "publishedAt": datetime.now(timezone.utc).isoformat(),
-                        "channel": channel or "stable",
-                        "platform": platform or "windows",
+                        "publishedAt": _utc_now().isoformat(),
+                        "channel": channel,
+                        "platform": platform,
+                        "assetType": asset_type if asset_type in {"exe", "msi", "zip"} else "exe",
+                        "sha256": sha256_value.lower(),
+                        "installerArgs": installer_args,
+                        "restartRequired": restart_required,
                     }
                     _save_release_info(release_info)
                     dashboard_message = "Release metadata updated successfully."
+            elif form_type == "license_action":
+                if not store:
+                    dashboard_error = _store_problem()[0]["message"]
+                else:
+                    action = _text(request.form.get("license_action")).lower()
+                    license_id = _text(request.form.get("license_id"))
+                    if action == "revoke":
+                        reason = _text(request.form.get("license_reason") or "admin_revoke")
+                        if store.set_revoke_state(license_id, True, reason=reason):
+                            dashboard_message = "License revoked."
+                        else:
+                            dashboard_error = "Unable to revoke license."
+                    elif action == "unrevoke":
+                        if store.set_revoke_state(license_id, False):
+                            dashboard_message = "License restored."
+                        else:
+                            dashboard_error = "Unable to restore license."
+                    elif action == "topup":
+                        try:
+                            amount = int(request.form.get("topup_chars") or 0)
+                        except ValueError:
+                            amount = 0
+                        if amount <= 0:
+                            dashboard_error = "Top-up amount must be greater than zero."
+                        elif store.top_up_chars(license_id, amount):
+                            dashboard_message = f"Added {amount:,} chars."
+                        else:
+                            dashboard_error = "Unable to apply top-up."
+            elif form_type == "license_search":
+                license_query = _text(request.form.get("license_query"))
 
     runtime_config = _load_runtime_config()
     reliability_summary = _summarize_reliability_events()
+    release_info = _load_release_info()
+    runtime_channel_data = runtime_config["channels"].get(selected_runtime_channel, runtime_config["channels"]["stable"])
 
     api_configured = True
     masked_key = "not-configured"
-
     try:
         _ = get_mistral_api_key()
         masked_key = get_masked_api_key()
     except RuntimeError:
         api_configured = False
+
+    license_rows: list[dict[str, Any]] = []
+    if store:
+        try:
+            license_summary = store.dashboard_summary()
+            license_rows = store.list_licenses(limit=120, query=license_query)
+        except Exception as exc:
+            dashboard_error = dashboard_error or f"License store error: {exc}"
+    else:
+        dashboard_error = dashboard_error or _store_problem()[0]["message"]
 
     return render_template(
         "admin_dashboard.html",
@@ -506,10 +709,55 @@ def admin_dashboard():
         masked_key=masked_key,
         release_info=release_info,
         runtime_config=runtime_config,
+        runtime_channel_data=runtime_channel_data,
+        selected_runtime_channel=selected_runtime_channel,
         reliability_summary=reliability_summary,
         dashboard_message=dashboard_message,
         dashboard_error=dashboard_error,
+        license_summary=license_summary,
+        license_rows=license_rows,
+        license_query=license_query,
     )
+
+
+@app.get("/admin/licenses/export.csv")
+@login_required
+def admin_export_licenses():
+    store = _get_store()
+    if not store:
+        payload, status = _store_problem()
+        return jsonify(payload), status
+
+    query = _text(request.args.get("license_query"))
+    rows = store.list_licenses(limit=2000, query=query)
+    output = io.StringIO()
+    writer = csv.DictWriter(
+        output,
+        fieldnames=[
+            "id",
+            "licenseHint",
+            "purchaseEmail",
+            "saleId",
+            "plan",
+            "status",
+            "activeSeats",
+            "seatLimit",
+            "usedChars",
+            "quotaChars",
+            "bonusChars",
+            "remainingChars",
+            "updatedAt",
+            "lastVerifiedAt",
+        ],
+    )
+    writer.writeheader()
+    for row in rows:
+        writer.writerow(row)
+
+    response = make_response(output.getvalue())
+    response.headers["Content-Type"] = "text/csv; charset=utf-8"
+    response.headers["Content-Disposition"] = "attachment; filename=sonus-license-export.csv"
+    return response
 
 
 @app.get("/api/site-status")
@@ -520,27 +768,289 @@ def site_status():
     except RuntimeError:
         api_is_set = False
 
+    store = _get_store()
+    db_ok = bool(store is not None)
     return jsonify(
         {
             "service": "sonus-website",
             "status": "ok",
             "apiConfigured": api_is_set,
+            "licenseDbConfigured": db_ok,
         }
     )
 
 
+@app.post("/api/license/activate")
+def license_activate():
+    payload = request.get_json(silent=True) or {}
+    license_key = _text(payload.get("licenseKey"))
+    product_id = _text(payload.get("productId") or os.getenv("GUMROAD_PRODUCT_ID", ""))
+    device_id = _text(payload.get("deviceId"))
+    device_name = _text(payload.get("deviceName"))
+    if not license_key or not product_id or not device_id:
+        return jsonify({"success": False, "message": "licenseKey, productId and deviceId are required."}), 400
+
+    store = _get_store()
+    if not store:
+        data, status = _store_problem()
+        return jsonify(data), status
+
+    gumroad_payload, gumroad_error = _gumroad_verify(license_key, product_id)
+    if not gumroad_payload:
+        return jsonify({"success": False, "active": False, "message": gumroad_error}), 401
+
+    purchase = gumroad_payload.get("purchase") or {}
+    entitlement, activation_error = store.activate_from_purchase(
+        license_key=license_key,
+        product_id=product_id,
+        device_id=device_id,
+        device_name=device_name,
+        purchase=purchase,
+    )
+    if not entitlement:
+        message_map = {
+            "license_revoked": "This license was revoked.",
+            "license_inactive": "This license is inactive.",
+            "seat_limit_reached": "Seat limit reached for this license.",
+        }
+        return jsonify({"success": False, "message": message_map.get(activation_error, "Unable to activate this license.")}), 403
+
+    token = _mint_license_token(entitlement["licenseId"], store.hash_device(device_id))
+    return jsonify(_entitlement_payload(entitlement, token, include_runtime_key=True))
+
+
+@app.post("/api/license/refresh")
+def license_refresh():
+    payload = request.get_json(silent=True) or {}
+    device_id = _text(payload.get("deviceId"))
+    token = _text(payload.get("token"))
+    device_name = _text(payload.get("deviceName"))
+    if not token or not device_id:
+        return jsonify({"success": False, "message": "token and deviceId are required."}), 400
+
+    store = _get_store()
+    if not store:
+        data, status = _store_problem()
+        return jsonify(data), status
+
+    entitlement, _, error = _validate_token_and_license(device_id, token)
+    if not entitlement:
+        return jsonify({"success": False, "message": error}), 401
+
+    store.touch_activation(entitlement["licenseId"], device_id, device_name=device_name)
+    doc = store.get_license_by_id(entitlement["licenseId"])
+    if not doc:
+        return jsonify({"success": False, "message": "License not found."}), 404
+    refreshed = store.build_entitlement(doc)
+    if refreshed["status"] != "active":
+        return jsonify({"success": False, "message": "License is inactive."}), 403
+
+    next_token = _mint_license_token(refreshed["licenseId"], store.hash_device(device_id))
+    return jsonify(_entitlement_payload(refreshed, next_token, include_runtime_key=True))
+
+
+@app.get("/api/license/status")
+def license_status():
+    device_id = _text(request.args.get("deviceId"))
+    token = _text(request.args.get("token"))
+    if not device_id or not token:
+        return jsonify({"success": False, "message": "token and deviceId are required."}), 400
+
+    entitlement, _, error = _validate_token_and_license(device_id, token)
+    if not entitlement:
+        return jsonify({"success": False, "message": error}), 401
+    return jsonify({"success": True, "entitlement": entitlement})
+
+
+@app.post("/api/license/consume")
+def license_consume():
+    payload = request.get_json(silent=True) or {}
+    token = _text(payload.get("token"))
+    device_id = _text(payload.get("deviceId"))
+    session_id = _text(payload.get("sessionId"))
+    mode = _text(payload.get("mode") or "batch")
+    detail = _text(payload.get("detail"))
+    idempotency_key = _text(payload.get("idempotencyKey"))
+    try:
+        chars_used = int(payload.get("charsUsed") or 0)
+    except ValueError:
+        chars_used = 0
+
+    if not token or not device_id or not idempotency_key:
+        return jsonify({"success": False, "message": "token, deviceId and idempotencyKey are required."}), 400
+    if chars_used < 0:
+        return jsonify({"success": False, "message": "charsUsed must be >= 0."}), 400
+
+    entitlement, _, error = _validate_token_and_license(device_id, token)
+    if not entitlement:
+        return jsonify({"success": False, "message": error}), 401
+
+    store = _get_store()
+    if not store:
+        data, status = _store_problem()
+        return jsonify(data), status
+
+    updated, consume_error = store.consume_chars(
+        license_id=entitlement["licenseId"],
+        chars_used=chars_used,
+        mode=mode,
+        session_id=session_id,
+        idempotency_key=idempotency_key,
+        detail=detail,
+    )
+    if not updated:
+        code = 402 if consume_error == "quota_exceeded" else 403
+        message = "Quota exceeded." if consume_error == "quota_exceeded" else "Unable to record usage."
+        return jsonify({"success": False, "message": message, "reason": consume_error}), code
+    return jsonify({"success": True, "entitlement": updated})
+
+
+@app.post("/api/gumroad/webhook")
+def gumroad_webhook():
+    store = _get_store()
+    if not store:
+        data, status = _store_problem()
+        return jsonify(data), status
+
+    payload = request.get_json(silent=True)
+    if payload is None:
+        payload = request.form.to_dict(flat=True)
+    if not isinstance(payload, dict):
+        payload = {}
+
+    event_type = _text(payload.get("event") or payload.get("type") or payload.get("action") or "unknown")
+    sale_id = _text(payload.get("sale_id") or payload.get("saleId"))
+    event_key = _text(payload.get("id") or payload.get("event_id") or payload.get("timestamp"))
+    store.record_webhook_event(event_key=event_key, event_type=event_type, payload=payload)
+
+    lowered = event_type.lower()
+    status = "active"
+    if any(item in lowered for item in ("refund", "chargeback", "cancel", "ended", "revoked", "dispute")):
+        status = "inactive"
+    updates = store.apply_webhook_status_update(sale_id=sale_id, status=status) if sale_id else 0
+    return jsonify({"success": True, "updatedLicenses": updates})
+
+
 @app.get("/api/desktop-bootstrap")
 def desktop_bootstrap():
+    token = _text(request.args.get("token"))
+    device_id = _text(request.args.get("deviceId"))
+    if not token or not device_id:
+        return jsonify({"success": False, "message": "token and deviceId are required."}), 400
+
+    entitlement, _, error = _validate_token_and_license(device_id, token)
+    if not entitlement:
+        return jsonify({"success": False, "message": error}), 401
+    if not entitlement.get("canTranscribe"):
+        return jsonify({"success": False, "message": "License is active but quota is exhausted."}), 402
+
+    live_key = ""
+    if ALLOW_CLIENT_LIVE_KEY:
+        try:
+            live_key = get_mistral_api_key()
+        except RuntimeError:
+            live_key = ""
+    return jsonify(
+        {
+            "success": True,
+            "apiKey": live_key,
+            "model": get_mistral_model(),
+            "license": entitlement,
+        }
+    )
+
+
+@app.post("/api/transcribe")
+def proxy_transcribe():
+    token = _text(request.form.get("token"))
+    device_id = _text(request.form.get("deviceId"))
+    model = _text(request.form.get("model") or get_mistral_model())
+    language = _text(request.form.get("language"))
+    prompt = _text(request.form.get("prompt"))
+    session_id = _text(request.form.get("sessionId"))
+    idempotency_key = _text(request.form.get("idempotencyKey"))
+
+    if not token or not device_id:
+        return jsonify({"success": False, "message": "token and deviceId are required."}), 400
+    if "file" not in request.files:
+        return jsonify({"success": False, "message": "Audio file is required."}), 400
+
+    entitlement, _, error = _validate_token_and_license(device_id, token)
+    if not entitlement:
+        return jsonify({"success": False, "message": error}), 401
+    if entitlement.get("status") != "active":
+        return jsonify({"success": False, "message": "License is inactive."}), 403
+    remaining_before = int(entitlement.get("remainingChars") or 0)
+    if remaining_before <= 0:
+        return jsonify({"success": False, "message": "Quota exhausted.", "reason": "quota_exceeded"}), 402
+
     try:
         api_key = get_mistral_api_key()
     except RuntimeError:
         return jsonify({"success": False, "message": "Mistral API key is not configured."}), 503
 
+    audio_file = request.files["file"]
+    headers = {"Authorization": f"Bearer {api_key}"}
+    files = {"file": (audio_file.filename or "audio.wav", audio_file.stream, audio_file.mimetype or "audio/wav")}
+    data = {"model": model}
+    if language:
+        data["language"] = language
+    if prompt:
+        data["prompt"] = prompt
+
+    try:
+        response = requests.post(
+            "https://api.mistral.ai/v1/audio/transcriptions",
+            headers=headers,
+            data=data,
+            files=files,
+            timeout=60,
+        )
+    except requests.RequestException:
+        return jsonify({"success": False, "message": "Unable to reach transcription provider."}), 502
+
+    if response.status_code != 200:
+        try:
+            detail = response.json()
+            message = detail.get("message") or detail.get("error") or str(detail)
+        except Exception:
+            message = response.text or f"HTTP {response.status_code}"
+        return jsonify({"success": False, "message": f"Provider error [{response.status_code}]: {message}"}), 502
+
+    try:
+        response_payload = response.json()
+    except ValueError:
+        return jsonify({"success": False, "message": "Provider returned invalid JSON."}), 502
+    text = _text(response_payload.get("text"))
+    chars_used = len(text)
+    charge_chars = min(chars_used, max(0, remaining_before))
+    if not idempotency_key:
+        idempotency_key = hashlib.sha256(
+            f"{session_id}:{device_id}:{model}:{chars_used}:{time.time_ns()}".encode("utf-8")
+        ).hexdigest()
+
+    store = _get_store()
+    if not store:
+        data, status = _store_problem()
+        return jsonify(data), status
+
+    updated, consume_error = store.consume_chars(
+        license_id=entitlement["licenseId"],
+        chars_used=charge_chars,
+        mode="batch",
+        session_id=session_id,
+        idempotency_key=idempotency_key,
+        detail="proxy_transcribe",
+    )
+    if not updated:
+        return jsonify({"success": False, "message": "Unable to record usage.", "reason": consume_error}), 500
+
     return jsonify(
         {
             "success": True,
-            "apiKey": api_key,
-            "model": get_mistral_model(),
+            "text": text,
+            "usage": updated,
+            "quotaLimited": bool(chars_used > remaining_before),
         }
     )
 
@@ -548,47 +1058,44 @@ def desktop_bootstrap():
 @app.post("/api/verify-license")
 def verify_license():
     payload = request.get_json(silent=True) or {}
-    license_key = (payload.get("licenseKey") or "").strip()
-    product_id = (payload.get("productId") or os.getenv("GUMROAD_PRODUCT_ID", "")).strip()
-
+    license_key = _text(payload.get("licenseKey"))
+    product_id = _text(payload.get("productId") or os.getenv("GUMROAD_PRODUCT_ID", ""))
+    device_id = _text(payload.get("deviceId") or "legacy-device")
     if not license_key or not product_id:
         return jsonify({"success": False, "message": "licenseKey and productId are required."}), 400
 
-    verify_form = {
-        "product_id": product_id,
-        "license_key": license_key,
-        "increment_uses_count": "false",
-    }
+    gumroad_payload, gumroad_error = _gumroad_verify(license_key, product_id)
+    if not gumroad_payload:
+        return jsonify({"success": False, "active": False, "message": gumroad_error}), 401
+    purchase = gumroad_payload.get("purchase") or {}
 
-    access_token = (os.getenv("GUMROAD_API_ACCESS_TOKEN") or "").strip()
-    if access_token:
-        verify_form["access_token"] = access_token
+    store = _get_store()
+    if not store:
+        data, status = _store_problem()
+        return jsonify(data), status
 
-    try:
-        response = requests.post(GUMROAD_VERIFY_URL, data=verify_form, timeout=15)
-        data = response.json() if response.content else {}
-    except requests.RequestException:
-        return jsonify({"success": False, "message": "Unable to verify license right now."}), 502
-    except ValueError:
-        return jsonify({"success": False, "message": "Unexpected response from Gumroad."}), 502
-
-    if response.status_code != 200 or not data.get("success"):
-        return jsonify({"success": False, "active": False, "message": "Invalid or inactive license."}), 401
-
-    purchase = data.get("purchase") or {}
-    subscription_stopped = bool(
-        purchase.get("subscription_cancelled_at") or purchase.get("subscription_ended_at")
+    entitlement, activation_error = store.activate_from_purchase(
+        license_key=license_key,
+        product_id=product_id,
+        device_id=device_id,
+        device_name=_text(payload.get("deviceName")),
+        purchase=purchase,
     )
+    if not entitlement:
+        return jsonify({"success": False, "active": False, "message": activation_error}), 403
 
+    token = _mint_license_token(entitlement["licenseId"], store.hash_device(device_id))
     return jsonify(
         {
             "success": True,
-            "active": not subscription_stopped,
+            "active": entitlement["status"] == "active",
             "purchaseEmail": purchase.get("email"),
             "saleId": purchase.get("sale_id"),
             "isSubscription": bool(purchase.get("subscription_id")),
             "subscriptionEndedAt": purchase.get("subscription_ended_at"),
             "subscriptionCancelledAt": purchase.get("subscription_cancelled_at"),
+            "token": token,
+            "entitlement": entitlement,
         }
     )
 
@@ -596,36 +1103,41 @@ def verify_license():
 @app.get("/api/app-update")
 def app_update():
     release_info = _load_release_info()
-    current_version = (request.args.get("currentVersion") or "").strip()
-    requested_channel = (request.args.get("channel") or "stable").strip().lower()
-    requested_platform = (request.args.get("platform") or "windows").strip().lower()
+    current_version = _text(request.args.get("currentVersion"))
+    requested_channel = _text(request.args.get("channel") or "stable").lower()
+    requested_platform = _text(request.args.get("platform") or "windows").lower()
 
-    same_channel = requested_channel == (release_info.get("channel") or "stable").lower()
-    same_platform = requested_platform == (release_info.get("platform") or "windows").lower()
+    same_channel = requested_channel == _text(release_info.get("channel") or "stable").lower()
+    same_platform = requested_platform == _text(release_info.get("platform") or "windows").lower()
     candidate_available = same_channel and same_platform and bool(release_info.get("downloadUrl"))
     has_newer = _is_version_newer(current_version, release_info.get("latestVersion", "0.0.0"))
 
-    payload = {
-        "success": True,
-        "app": "sonus-desktop",
-        "channel": release_info.get("channel", "stable"),
-        "platform": release_info.get("platform", "windows"),
-        "latestVersion": release_info.get("latestVersion", "1.0.0"),
-        "downloadUrl": release_info.get("downloadUrl", ""),
-        "notes": release_info.get("notes", ""),
-        "publishedAt": release_info.get("publishedAt", ""),
-        "mandatory": bool(release_info.get("mandatory")),
-        "currentVersion": current_version,
-        "updateAvailable": bool(candidate_available and has_newer),
-    }
-    return jsonify(payload)
+    return jsonify(
+        {
+            "success": True,
+            "app": "sonus-desktop",
+            "channel": release_info.get("channel", "stable"),
+            "platform": release_info.get("platform", "windows"),
+            "latestVersion": release_info.get("latestVersion", "1.0.0"),
+            "downloadUrl": release_info.get("downloadUrl", ""),
+            "notes": release_info.get("notes", ""),
+            "publishedAt": release_info.get("publishedAt", ""),
+            "mandatory": bool(release_info.get("mandatory")),
+            "assetType": release_info.get("assetType", "exe"),
+            "sha256": release_info.get("sha256", ""),
+            "installerArgs": release_info.get("installerArgs", ""),
+            "restartRequired": bool(release_info.get("restartRequired", True)),
+            "currentVersion": current_version,
+            "updateAvailable": bool(candidate_available and has_newer),
+        }
+    )
 
 
 @app.get("/api/runtime-config")
 def runtime_config():
-    requested_channel = (request.args.get("channel") or "stable").strip().lower()
-    requested_platform = (request.args.get("platform") or "windows").strip().lower()
-    device_id = (request.args.get("deviceId") or "").strip()
+    requested_channel = _text(request.args.get("channel") or "stable").lower()
+    requested_platform = _text(request.args.get("platform") or "windows").lower()
+    device_id = _text(request.args.get("deviceId"))
 
     channel, channel_data = _resolve_channel_runtime(requested_channel)
     rollout_percent = int(channel_data.get("rolloutPercent") or 100)
@@ -640,7 +1152,7 @@ def runtime_config():
             "rolloutPercent": rollout_percent,
             "featureFlags": channel_data.get("featureFlags", {}),
             "runtime": channel_data.get("runtime", {}),
-            "updatedAt": datetime.now(timezone.utc).isoformat(),
+            "updatedAt": _utc_now().isoformat(),
         }
     )
 
@@ -648,23 +1160,26 @@ def runtime_config():
 @app.post("/api/reliability-event")
 def reliability_event():
     payload = request.get_json(silent=True) or {}
-    session_id = (payload.get("sessionId") or "").strip()
-    mode = (payload.get("mode") or "").strip().lower()
-    source = (payload.get("source") or "").strip().lower()
-    event_type = (payload.get("eventType") or "").strip().lower()
+    session_id = _text(payload.get("sessionId"))
+    mode = _text(payload.get("mode")).lower()
+    source = _text(payload.get("source")).lower()
+    event_type = _text(payload.get("eventType")).lower()
 
     if not session_id or not mode or not source or not event_type:
         return jsonify({"success": False, "message": "sessionId, mode, source and eventType are required."}), 400
+
+    latency_raw = str(payload.get("latencyMs") or "").strip()
+    latency_value = int(latency_raw) if latency_raw.lstrip("-").isdigit() else 0
 
     event = {
         "sessionId": session_id[:80],
         "mode": mode[:32],
         "source": source[:32],
         "eventType": event_type[:64],
-        "latencyMs": int(payload.get("latencyMs") or 0) if str(payload.get("latencyMs", "")).strip("-").isdigit() else 0,
-        "errorCode": (payload.get("errorCode") or "").strip().lower()[:64],
-        "detail": (payload.get("detail") or "").strip()[:240],
-        "timestamp": (payload.get("timestamp") or datetime.now(timezone.utc).isoformat()),
+        "latencyMs": latency_value,
+        "errorCode": _text(payload.get("errorCode")).lower()[:64],
+        "detail": _text(payload.get("detail"))[:240],
+        "timestamp": _text(payload.get("timestamp")) or _utc_now().isoformat(),
     }
     _append_reliability_event(event)
     return jsonify({"success": True})
