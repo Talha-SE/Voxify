@@ -50,6 +50,14 @@
       <h2>Active Devices</h2>
       <p class="status-value">{{ license_summary.activeDevices }}</p>
     </article>
+    <article class="status-card">
+      <h2>Total Chars Used</h2>
+      <p class="status-value">{{ license_summary.totalCharsUsed }}</p>
+    </article>
+    <article class="status-card">
+      <h2>Total Words Used</h2>
+      <p class="status-value">{{ license_summary.totalWordsUsed }}</p>
+    </article>
   </div>
 
   <div class="dashboard-grid">
@@ -194,7 +202,10 @@
             <td>{{ row.plan }}</td>
             <td>{{ row.status }}</td>
             <td>{{ row.activeSeats }} / {{ row.seatLimit }}</td>
-            <td>{{ row.usedChars }} / {{ row.quotaChars + row.bonusChars }}</td>
+            <td>
+              <p class="table-primary">{{ row.usedChars }} / {{ row.quotaChars + row.bonusChars }} chars</p>
+              <p class="table-meta">{{ row.usedWords }} words</p>
+            </td>
             <td>
               <form method="post" class="table-actions">
                 <input type="hidden" name="form_type" value="license_action">

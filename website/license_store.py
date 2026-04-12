@@ -42,6 +42,14 @@ def _sha256(value: str) -> str:
     return hashlib.sha256((value or "").encode("utf-8")).hexdigest()
 
 
+def _estimate_words_from_chars(chars: int) -> int:
+    charge = max(0, _safe_int(chars, 0))
+    if charge <= 0:
+        return 0
+    # Light fallback for live streams that report chars without raw transcript text.
+    return max(1, int(round(charge / 5.0)))
+
+
 @dataclass(frozen=True)
 class PlanSpec:
     code: str
@@ -169,6 +177,7 @@ class MongoLicenseStore:
                 "$set": {
                     "cycleKey": current_cycle,
                     "usedChars": 0,
+                    "usedWords": 0,
                     "cycleStartedAt": now,
                     "updatedAt": now,
                 }
@@ -180,6 +189,7 @@ class MongoLicenseStore:
     def build_entitlement(self, doc: dict[str, Any]) -> dict[str, Any]:
         doc = self._monthly_reset_if_needed(doc)
         used_chars = max(0, _safe_int(doc.get("usedChars"), 0))
+        used_words = max(0, _safe_int(doc.get("usedWords"), 0))
         quota_chars = max(0, _safe_int(doc.get("quotaChars"), 0))
         bonus_chars = max(0, _safe_int(doc.get("bonusChars"), 0))
         total_chars = quota_chars + bonus_chars
@@ -187,7 +197,9 @@ class MongoLicenseStore:
         seats = self.activations.count_documents({"licenseId": doc["_id"], "revokedAt": None})
         seat_limit = max(1, _safe_int(doc.get("seatLimit"), 1))
         status = _normalize_text(doc.get("status")).lower() or "active"
-        can_transcribe = status == "active" and remaining_chars > 0 and seats <= seat_limit
+        seat_limit_reached = seats > seat_limit
+        # Existing activated seats can continue; limit applies to additional activations.
+        can_transcribe = status == "active" and remaining_chars > 0
         return {
             "licenseId": str(doc["_id"]),
             "status": status,
@@ -196,9 +208,11 @@ class MongoLicenseStore:
             "quotaChars": quota_chars,
             "bonusChars": bonus_chars,
             "usedChars": used_chars,
+            "usedWords": used_words,
             "remainingChars": remaining_chars,
             "seatLimit": seat_limit,
             "activeSeats": int(seats),
+            "seatLimitReached": bool(seat_limit_reached),
             "cycleType": _normalize_text(doc.get("cycleType")) or "monthly",
             "cycleKey": _normalize_text(doc.get("cycleKey")) or _month_key(_utc_now()),
             "commercial": bool(doc.get("commercial", False)),
@@ -248,6 +262,7 @@ class MongoLicenseStore:
         create_fields = {
             "createdAt": now,
             "usedChars": 0,
+            "usedWords": 0,
             "bonusChars": 0,
             "cycleKey": _month_key(now),
             "cycleStartedAt": now,
@@ -329,12 +344,16 @@ class MongoLicenseStore:
         self,
         license_id: str,
         chars_used: int,
+        words_used: int,
         mode: str,
         session_id: str,
         idempotency_key: str,
         detail: str = "",
     ) -> tuple[dict[str, Any] | None, str]:
         charge = max(0, _safe_int(chars_used, 0))
+        words_charge = max(0, _safe_int(words_used, 0))
+        if charge > 0 and words_charge <= 0:
+            words_charge = _estimate_words_from_chars(charge)
         if charge <= 0:
             doc = self.get_license_by_id(license_id)
             return (self.build_entitlement(doc), "") if doc else (None, "license_not_found")
@@ -350,28 +369,49 @@ class MongoLicenseStore:
             return None, "quota_exceeded"
 
         now = _utc_now()
+        usage_key = _normalize_text(idempotency_key)[:160]
         usage_doc = {
             "licenseId": doc["_id"],
             "charsUsed": charge,
+            "wordsUsed": words_charge,
             "mode": _normalize_text(mode).lower()[:32],
             "sessionId": _normalize_text(session_id)[:96],
-            "idempotencyKey": _normalize_text(idempotency_key)[:160],
+            "idempotencyKey": usage_key,
             "detail": _normalize_text(detail)[:240],
             "createdAt": now,
         }
         try:
-            self.usage.insert_one(usage_doc)
+            inserted = self.usage.insert_one(usage_doc)
         except DuplicateKeyError:
             refreshed = self.get_license_by_id(license_id)
             return (self.build_entitlement(refreshed), "") if refreshed else (None, "license_not_found")
 
+        total_chars = int(entitlement["quotaChars"]) + int(entitlement["bonusChars"])
+        max_used_before = max(0, total_chars - charge)
+        update_filter: dict[str, Any] = {
+            "_id": doc["_id"],
+            "status": "active",
+            "revokedAt": None,
+            "usedChars": {"$lte": max_used_before},
+        }
+        if _normalize_text(doc.get("cycleType")) == "monthly":
+            update_filter["cycleKey"] = entitlement["cycleKey"]
         updated = self.licenses.find_one_and_update(
-            {"_id": doc["_id"]},
-            {"$inc": {"usedChars": charge}, "$set": {"updatedAt": now}},
+            update_filter,
+            {"$inc": {"usedChars": charge, "usedWords": words_charge}, "$set": {"updatedAt": now}},
             return_document=ReturnDocument.AFTER,
         )
         if not updated:
-            return None, "license_not_found"
+            self.usage.delete_one({"_id": inserted.inserted_id})
+            refreshed = self.get_license_by_id(license_id)
+            if not refreshed:
+                return None, "license_not_found"
+            refreshed_entitlement = self.build_entitlement(refreshed)
+            if refreshed_entitlement["status"] != "active":
+                return None, "license_inactive"
+            if charge > int(refreshed_entitlement["remainingChars"]):
+                return None, "quota_exceeded"
+            return None, "usage_conflict"
         return self.build_entitlement(updated), ""
 
     def list_licenses(self, limit: int = 100, query: str = "") -> list[dict[str, Any]]:
@@ -401,6 +441,7 @@ class MongoLicenseStore:
                     "plan": ent["plan"],
                     "status": ent["status"],
                     "usedChars": ent["usedChars"],
+                    "usedWords": ent["usedWords"],
                     "quotaChars": ent["quotaChars"],
                     "bonusChars": ent["bonusChars"],
                     "remainingChars": ent["remainingChars"],
@@ -419,19 +460,28 @@ class MongoLicenseStore:
         active_devices = self.activations.count_documents({"revokedAt": None})
 
         usage_pipeline = [
-            {"$group": {"_id": None, "total": {"$sum": "$charsUsed"}}},
+            {
+                "$group": {
+                    "_id": None,
+                    "totalChars": {"$sum": "$charsUsed"},
+                    "totalWords": {"$sum": "$wordsUsed"},
+                }
+            },
         ]
-        usage_total = 0
+        usage_total_chars = 0
+        usage_total_words = 0
         usage_result = list(self.usage.aggregate(usage_pipeline))
         if usage_result:
-            usage_total = _safe_int(usage_result[0].get("total"), 0)
+            usage_total_chars = _safe_int(usage_result[0].get("totalChars"), 0)
+            usage_total_words = _safe_int(usage_result[0].get("totalWords"), 0)
 
         return {
             "totalLicenses": int(total_licenses),
             "activeLicenses": int(active_licenses),
             "revokedLicenses": int(revoked_licenses),
             "activeDevices": int(active_devices),
-            "totalCharsUsed": int(usage_total),
+            "totalCharsUsed": int(usage_total_chars),
+            "totalWordsUsed": int(usage_total_words),
         }
 
     def set_revoke_state(self, license_id: str, revoked: bool, reason: str = "") -> bool:
@@ -483,16 +533,134 @@ class MongoLicenseStore:
         except DuplicateKeyError:
             return False
 
-    def apply_webhook_status_update(self, sale_id: str, status: str) -> int:
-        clean_sale_id = _normalize_text(sale_id)
-        clean_status = _normalize_text(status).lower()
-        if not clean_sale_id:
+    def apply_webhook_purchase_update(
+        self,
+        payload: dict[str, Any],
+        event_type: str = "",
+        fallback_status: str = "active",
+    ) -> int:
+        if not isinstance(payload, dict):
             return 0
-        if clean_status not in {"active", "inactive", "revoked"}:
-            clean_status = "inactive"
+
         now = _utc_now()
-        result = self.licenses.update_many(
-            {"saleId": clean_sale_id},
-            {"$set": {"status": clean_status, "updatedAt": now}},
+        clean_event = _normalize_text(event_type).lower()
+        clean_status = _normalize_text(payload.get("status") or fallback_status).lower() or "active"
+        if clean_status in {"cancelled", "canceled", "ended", "refunded", "refund", "chargeback", "disputed"}:
+            clean_status = "inactive"
+        if clean_status not in {"active", "inactive", "revoked"}:
+            clean_status = "active"
+        if bool(payload.get("refunded")) or bool(payload.get("chargebacked")):
+            clean_status = "inactive"
+        if any(item in clean_event for item in ("refund", "chargeback", "cancel", "ended", "dispute")):
+            clean_status = "inactive"
+        if "revoke" in clean_event:
+            clean_status = "revoked"
+
+        purchase_payload = payload.get("purchase") if isinstance(payload.get("purchase"), dict) else {}
+        sale_id = _normalize_text(
+            payload.get("sale_id") or payload.get("saleId") or purchase_payload.get("sale_id")
         )
-        return int(result.modified_count)
+        license_key = _normalize_text(
+            payload.get("license_key") or payload.get("licenseKey") or purchase_payload.get("license_key")
+        )
+        product_id = _normalize_text(
+            payload.get("product_id") or payload.get("productId") or purchase_payload.get("product_id")
+        )
+        purchase_email = _normalize_text(
+            payload.get("email")
+            or payload.get("purchase_email")
+            or payload.get("purchaseEmail")
+            or purchase_payload.get("email")
+        )
+        subscription_id = _normalize_text(
+            payload.get("subscription_id") or payload.get("subscriptionId") or purchase_payload.get("subscription_id")
+        )
+        subscription_ended_at = _normalize_text(
+            payload.get("subscription_ended_at")
+            or payload.get("subscriptionEndedAt")
+            or purchase_payload.get("subscription_ended_at")
+        )
+        subscription_cancelled_at = _normalize_text(
+            payload.get("subscription_cancelled_at")
+            or payload.get("subscriptionCancelledAt")
+            or purchase_payload.get("subscription_cancelled_at")
+        )
+        if subscription_cancelled_at or subscription_ended_at:
+            clean_status = "inactive"
+
+        touched = 0
+        license_hash = self.hash_license(license_key) if license_key else ""
+        plan: PlanSpec | None = None
+        if product_id:
+            plan = self.resolve_plan(product_id)
+
+        has_subscription_id = any(
+            key in payload or key in purchase_payload for key in ("subscription_id", "subscriptionId")
+        )
+        has_subscription_ended = any(
+            key in payload or key in purchase_payload for key in ("subscription_ended_at", "subscriptionEndedAt")
+        )
+        has_subscription_cancelled = any(
+            key in payload or key in purchase_payload
+            for key in ("subscription_cancelled_at", "subscriptionCancelledAt")
+        )
+
+        shared_updates: dict[str, Any] = {
+            "status": clean_status,
+            "updatedAt": now,
+            "lastVerifiedAt": now,
+        }
+        if has_subscription_id:
+            shared_updates["isSubscription"] = bool(subscription_id)
+        if has_subscription_ended:
+            shared_updates["subscriptionEndedAt"] = subscription_ended_at
+        if has_subscription_cancelled:
+            shared_updates["subscriptionCancelledAt"] = subscription_cancelled_at
+        if sale_id:
+            shared_updates["saleId"] = sale_id
+        if purchase_email:
+            shared_updates["purchaseEmail"] = purchase_email
+        if product_id:
+            shared_updates["productId"] = product_id
+        if plan:
+            shared_updates["planCode"] = plan.code
+            shared_updates["quotaChars"] = int(plan.quota_chars)
+            shared_updates["seatLimit"] = int(plan.seat_limit)
+            shared_updates["cycleType"] = plan.cycle_type
+            shared_updates["commercial"] = bool(plan.commercial)
+
+        if license_hash:
+            create_fields = {
+                "createdAt": now,
+                "usedChars": 0,
+                "usedWords": 0,
+                "bonusChars": 0,
+                "cycleKey": _month_key(now),
+                "cycleStartedAt": now,
+                "revokedAt": None,
+                "revokedReason": "",
+                "licenseHint": f"***{license_key[-4:]}",
+                "licenseHash": license_hash,
+            }
+            one_result = self.licenses.update_one(
+                {"licenseHash": license_hash},
+                {"$set": shared_updates, "$setOnInsert": create_fields},
+                upsert=True,
+            )
+            touched += int(one_result.matched_count) + (1 if one_result.upserted_id else 0)
+
+        if sale_id:
+            extra_filter: dict[str, Any] = {"saleId": sale_id}
+            if license_hash:
+                extra_filter["licenseHash"] = {"$ne": license_hash}
+            many_result = self.licenses.update_many(extra_filter, {"$set": shared_updates})
+            touched += int(many_result.matched_count)
+
+        return touched
+
+    def apply_webhook_status_update(self, sale_id: str, status: str) -> int:
+        return self.apply_webhook_purchase_update(
+            payload={"sale_id": sale_id, "status": status},
+            event_type="status_sync",
+            fallback_status=status,
+        )

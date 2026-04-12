@@ -71,6 +71,7 @@ class LicenseEntitlement:
     quota_chars: int
     bonus_chars: int
     used_chars: int
+    used_words: int
     remaining_chars: int
     seat_limit: int
     active_seats: int
@@ -108,6 +109,7 @@ def _parse_entitlement(raw: dict[str, Any]) -> LicenseEntitlement:
         quota_chars=int(raw.get("quotaChars") or 0),
         bonus_chars=int(raw.get("bonusChars") or 0),
         used_chars=int(raw.get("usedChars") or 0),
+        used_words=int(raw.get("usedWords") or 0),
         remaining_chars=int(raw.get("remainingChars") or 0),
         seat_limit=int(raw.get("seatLimit") or 1),
         active_seats=int(raw.get("activeSeats") or 0),
@@ -177,12 +179,16 @@ def refresh_license(
     token: str,
     device_id: str,
     device_name: str = "",
+    license_key: str = "",
+    product_id: str = "",
     base_url: str | None = None,
 ) -> LicenseSession:
     payload = {
         "token": (token or "").strip(),
         "deviceId": (device_id or "").strip(),
         "deviceName": (device_name or "").strip(),
+        "licenseKey": (license_key or "").strip(),
+        "productId": (product_id or "").strip(),
     }
     try:
         response = requests.post(
@@ -234,6 +240,7 @@ def consume_license_usage(
     token: str,
     device_id: str,
     chars_used: int,
+    words_used: int,
     mode: str,
     session_id: str,
     idempotency_key: str,
@@ -244,6 +251,7 @@ def consume_license_usage(
         "token": (token or "").strip(),
         "deviceId": (device_id or "").strip(),
         "charsUsed": max(0, int(chars_used or 0)),
+        "wordsUsed": max(0, int(words_used or 0)),
         "mode": (mode or "batch").strip().lower(),
         "sessionId": (session_id or "").strip(),
         "idempotencyKey": (idempotency_key or "").strip(),

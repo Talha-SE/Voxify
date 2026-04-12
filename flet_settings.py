@@ -555,6 +555,7 @@ def main(page: ft.Page) -> None:
         license_plan_text.value = f"Plan: {entitlement.plan}"
         license_quota_text.value = (
             f"Usage: {_fmt_chars(entitlement.used_chars)} / {_fmt_chars(entitlement.quota_chars + entitlement.bonus_chars)} chars"
+            f" | {_fmt_chars(entitlement.used_words)} words"
             f" | Remaining {_fmt_chars(entitlement.remaining_chars)}"
         )
         license_seat_text.value = f"Seats: {entitlement.active_seats} / {entitlement.seat_limit}"
@@ -610,6 +611,7 @@ def main(page: ft.Page) -> None:
                         "quotaChars": session_data.entitlement.quota_chars,
                         "bonusChars": session_data.entitlement.bonus_chars,
                         "usedChars": session_data.entitlement.used_chars,
+                        "usedWords": session_data.entitlement.used_words,
                         "remainingChars": session_data.entitlement.remaining_chars,
                         "seatLimit": session_data.entitlement.seat_limit,
                         "activeSeats": session_data.entitlement.active_seats,
@@ -641,6 +643,8 @@ def main(page: ft.Page) -> None:
                     token=token,
                     device_id=device_id,
                     device_name=f"{app_info.APP_NAME}-{app_info.APP_PLATFORM}",
+                    license_key=(state.get("licenseKey") or "").strip(),
+                    product_id=(product_id_field.value or "").strip(),
                 )
                 license_cache.save_state(
                     token=session_data.token,
@@ -652,6 +656,7 @@ def main(page: ft.Page) -> None:
                         "quotaChars": session_data.entitlement.quota_chars,
                         "bonusChars": session_data.entitlement.bonus_chars,
                         "usedChars": session_data.entitlement.used_chars,
+                        "usedWords": session_data.entitlement.used_words,
                         "remainingChars": session_data.entitlement.remaining_chars,
                         "seatLimit": session_data.entitlement.seat_limit,
                         "activeSeats": session_data.entitlement.active_seats,
@@ -1245,6 +1250,7 @@ def main(page: ft.Page) -> None:
                 quota_chars=int(raw_ent.get("quotaChars") or 0),
                 bonus_chars=int(raw_ent.get("bonusChars") or 0),
                 used_chars=int(raw_ent.get("usedChars") or 0),
+                used_words=int(raw_ent.get("usedWords") or 0),
                 remaining_chars=int(raw_ent.get("remainingChars") or 0),
                 seat_limit=int(raw_ent.get("seatLimit") or 1),
                 active_seats=int(raw_ent.get("activeSeats") or 0),

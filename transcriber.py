@@ -86,6 +86,7 @@ class TranscriptionClient:
                 self.last_usage = {
                     "remainingChars": proxy_result.usage.remaining_chars,
                     "usedChars": proxy_result.usage.used_chars,
+                    "usedWords": proxy_result.usage.used_words,
                     "quotaChars": proxy_result.usage.quota_chars,
                 }
                 return proxy_result.text.strip()

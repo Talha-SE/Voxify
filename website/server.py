@@ -171,6 +171,13 @@ def _text(value: Any) -> str:
     return str(value or "").strip()
 
 
+def _word_count(value: str) -> int:
+    text = _text(value)
+    if not text:
+        return 0
+    return len(re.findall(r"\b[\w']+\b", text, flags=re.UNICODE))
+
+
 def _get_store() -> MongoLicenseStore | None:
     global _store
     global _store_error
@@ -570,6 +577,7 @@ def admin_dashboard():
         "revokedLicenses": 0,
         "activeDevices": 0,
         "totalCharsUsed": 0,
+        "totalWordsUsed": 0,
     }
 
     if request.method == "POST":
@@ -743,6 +751,7 @@ def admin_export_licenses():
             "activeSeats",
             "seatLimit",
             "usedChars",
+            "usedWords",
             "quotaChars",
             "bonusChars",
             "remainingChars",
@@ -837,6 +846,26 @@ def license_refresh():
     if not entitlement:
         return jsonify({"success": False, "message": error}), 401
 
+    sync_key = _text(payload.get("licenseKey"))
+    sync_product_id = _text(payload.get("productId"))
+    if sync_key and sync_product_id:
+        gumroad_payload, gumroad_error = _gumroad_verify(sync_key, sync_product_id)
+        if gumroad_payload:
+            purchase = gumroad_payload.get("purchase") or {}
+            synced_entitlement, synced_error = store.activate_from_purchase(
+                license_key=sync_key,
+                product_id=sync_product_id,
+                device_id=device_id,
+                device_name=device_name,
+                purchase=purchase,
+            )
+            if synced_entitlement:
+                entitlement = synced_entitlement
+            elif synced_error == "license_inactive":
+                return jsonify({"success": False, "message": "License is inactive."}), 403
+        elif "invalid or inactive" in gumroad_error.lower():
+            return jsonify({"success": False, "message": "License is inactive."}), 403
+
     store.touch_activation(entitlement["licenseId"], device_id, device_name=device_name)
     doc = store.get_license_by_id(entitlement["licenseId"])
     if not doc:
@@ -875,11 +904,17 @@ def license_consume():
         chars_used = int(payload.get("charsUsed") or 0)
     except ValueError:
         chars_used = 0
+    try:
+        words_used = int(payload.get("wordsUsed") or 0)
+    except ValueError:
+        words_used = 0
 
     if not token or not device_id or not idempotency_key:
         return jsonify({"success": False, "message": "token, deviceId and idempotencyKey are required."}), 400
     if chars_used < 0:
         return jsonify({"success": False, "message": "charsUsed must be >= 0."}), 400
+    if words_used < 0:
+        return jsonify({"success": False, "message": "wordsUsed must be >= 0."}), 400
 
     entitlement, _, error = _validate_token_and_license(device_id, token)
     if not entitlement:
@@ -893,6 +928,7 @@ def license_consume():
     updated, consume_error = store.consume_chars(
         license_id=entitlement["licenseId"],
         chars_used=chars_used,
+        words_used=words_used,
         mode=mode,
         session_id=session_id,
         idempotency_key=idempotency_key,
@@ -921,13 +957,17 @@ def gumroad_webhook():
     event_type = _text(payload.get("event") or payload.get("type") or payload.get("action") or "unknown")
     sale_id = _text(payload.get("sale_id") or payload.get("saleId"))
     event_key = _text(payload.get("id") or payload.get("event_id") or payload.get("timestamp"))
-    store.record_webhook_event(event_key=event_key, event_type=event_type, payload=payload)
+    is_new_event = store.record_webhook_event(event_key=event_key, event_type=event_type, payload=payload)
+    if not is_new_event:
+        return jsonify({"success": True, "updatedLicenses": 0, "duplicate": True})
 
     lowered = event_type.lower()
     status = "active"
     if any(item in lowered for item in ("refund", "chargeback", "cancel", "ended", "revoked", "dispute")):
         status = "inactive"
-    updates = store.apply_webhook_status_update(sale_id=sale_id, status=status) if sale_id else 0
+    updates = store.apply_webhook_purchase_update(payload=payload, event_type=event_type, fallback_status=status)
+    if updates <= 0 and sale_id:
+        updates = store.apply_webhook_status_update(sale_id=sale_id, status=status)
     return jsonify({"success": True, "updatedLicenses": updates})
 
 
@@ -941,6 +981,8 @@ def desktop_bootstrap():
     entitlement, _, error = _validate_token_and_license(device_id, token)
     if not entitlement:
         return jsonify({"success": False, "message": error}), 401
+    if entitlement.get("status") != "active":
+        return jsonify({"success": False, "message": "License is inactive."}), 403
     if not entitlement.get("canTranscribe"):
         return jsonify({"success": False, "message": "License is active but quota is exhausted."}), 402
 
@@ -1023,7 +1065,11 @@ def proxy_transcribe():
         return jsonify({"success": False, "message": "Provider returned invalid JSON."}), 502
     text = _text(response_payload.get("text"))
     chars_used = len(text)
+    words_used = _word_count(text)
     charge_chars = min(chars_used, max(0, remaining_before))
+    charge_words = words_used
+    if chars_used > 0 and charge_chars < chars_used and words_used > 0:
+        charge_words = max(1, int(round(words_used * (charge_chars / float(chars_used)))))
     if not idempotency_key:
         idempotency_key = hashlib.sha256(
             f"{session_id}:{device_id}:{model}:{chars_used}:{time.time_ns()}".encode("utf-8")
@@ -1037,6 +1083,7 @@ def proxy_transcribe():
     updated, consume_error = store.consume_chars(
         license_id=entitlement["licenseId"],
         chars_used=charge_chars,
+        words_used=charge_words,
         mode="batch",
         session_id=session_id,
         idempotency_key=idempotency_key,

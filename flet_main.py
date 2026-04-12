@@ -149,6 +149,7 @@ class SonusApp:
         self._live_type_lock = threading.Lock()
         self._last_live_typed_char = ""
         self._live_session_chars = 0
+        self._live_session_words = 0
         self._is_minimized = False
         self._auto_minimize_timer: Optional[threading.Timer] = None
 
@@ -951,6 +952,7 @@ class SonusApp:
                     quota_chars=int(raw_entitlement.get("quotaChars") or 0),
                     bonus_chars=int(raw_entitlement.get("bonusChars") or 0),
                     used_chars=int(raw_entitlement.get("usedChars") or 0),
+                    used_words=int(raw_entitlement.get("usedWords") or 0),
                     remaining_chars=int(raw_entitlement.get("remainingChars") or 0),
                     seat_limit=int(raw_entitlement.get("seatLimit") or 1),
                     active_seats=int(raw_entitlement.get("activeSeats") or 0),
@@ -1007,6 +1009,7 @@ class SonusApp:
             "quotaChars": ent.quota_chars,
             "bonusChars": ent.bonus_chars,
             "usedChars": ent.used_chars,
+            "usedWords": ent.used_words,
             "remainingChars": ent.remaining_chars,
             "seatLimit": ent.seat_limit,
             "activeSeats": ent.active_seats,
@@ -1030,17 +1033,19 @@ class SonusApp:
         if not token:
             raise website_client.WebsiteAPIError("License is not activated. Open Settings and activate your Gumroad key.")
 
+        cached_key = (state.get("licenseKey") or "").strip()
+        product_id = self._license_product_id()
         try:
             session_data = website_client.refresh_license(
                 token=token,
                 device_id=self._device_id,
                 device_name=f"{app_info.APP_NAME}-{app_info.APP_PLATFORM}",
+                license_key=cached_key,
+                product_id=product_id,
             )
         except Exception:
-            cached_key = (state.get("licenseKey") or "").strip()
             if not cached_key:
                 raise
-            product_id = self._license_product_id()
             if not product_id:
                 raise website_client.WebsiteAPIError("License product ID is missing. Set it in Settings.")
             session_data = website_client.activate_license(
@@ -1387,6 +1392,7 @@ class SonusApp:
         self._live_retry_count = 0
         self._last_live_typed_char = ""
         self._live_session_chars = 0
+        self._live_session_words = 0
         self._live_source_candidates = [preferred_source]
         if bool(self.cfg.get("auto_fallback_enabled", True)) and self._current_feature_flag("autoFallback", True):
             alt = "system" if preferred_source == "mic" else "mic"
@@ -1594,6 +1600,8 @@ class SonusApp:
         self._is_recording = False
         self._stop_status_animation()
         self._live_text_buffer.clear()
+        self._live_session_chars = 0
+        self._live_session_words = 0
         self._set_aux_chip("", False)
         self._set_status("Ready", MUTED)
         self._set_action("Start", ACCENT, ACCENT, TEXT, self._on_action_click)
@@ -1666,6 +1674,7 @@ class SonusApp:
                 if ok and payload:
                     self._last_live_typed_char = payload[-1]
                     self._live_session_chars += len(payload)
+                    self._live_session_words += len([part for part in payload.split() if part])
 
             if not ok:
                 self.page.run_thread(self._handle_typing_failure, raw_chunk)
@@ -1675,14 +1684,16 @@ class SonusApp:
         self._live_paste_job = None
 
     def _sync_live_usage(self) -> None:
-        if self._live_session_chars <= 0:
+        if self._live_session_chars <= 0 and self._live_session_words <= 0:
             return
         if not self._license_token:
             return
         chars = int(self._live_session_chars)
+        words = int(self._live_session_words)
         self._live_session_chars = 0
+        self._live_session_words = 0
         idempotency_key = hashlib.sha256(
-            f"{self._session_id}:live:{chars}:{time.time_ns()}".encode("utf-8")
+            f"{self._session_id}:live:{chars}:{words}:{time.time_ns()}".encode("utf-8")
         ).hexdigest()
 
         def _worker() -> None:
@@ -1691,6 +1702,7 @@ class SonusApp:
                     token=self._license_token,
                     device_id=self._device_id,
                     chars_used=chars,
+                    words_used=words,
                     mode="live",
                     session_id=self._session_id,
                     idempotency_key=idempotency_key,
