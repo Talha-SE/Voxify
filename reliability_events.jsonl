@@ -111,3 +111,6 @@
 {"sessionId": "ea173fa46f2f48afacfad865188a78d5", "mode": "live", "source": "system", "eventType": "api_check_ok", "latencyMs": 0, "errorCode": "", "detail": "", "timestamp": "2026-04-12T18:13:38.227924+00:00"}
 {"sessionId": "ea173fa46f2f48afacfad865188a78d5", "mode": "live", "source": "system", "eventType": "target_selected", "latencyMs": 0, "errorCode": "", "detail": "", "timestamp": "2026-04-12T18:13:39.704559+00:00"}
 {"sessionId": "ea173fa46f2f48afacfad865188a78d5", "mode": "live", "source": "system", "eventType": "live_started", "latencyMs": 0, "errorCode": "", "detail": "", "timestamp": "2026-04-12T18:13:39.716041+00:00"}
+{"sessionId": "307e2bc70b6e4a7184bd57642ddc9d2c", "mode": "live", "source": "system", "eventType": "api_check_ok", "latencyMs": 0, "errorCode": "", "detail": "", "timestamp": "2026-04-13T07:36:25.755233+00:00"}
+{"sessionId": "307e2bc70b6e4a7184bd57642ddc9d2c", "mode": "live", "source": "system", "eventType": "target_selected", "latencyMs": 0, "errorCode": "", "detail": "", "timestamp": "2026-04-13T07:36:42.985373+00:00"}
+{"sessionId": "307e2bc70b6e4a7184bd57642ddc9d2c", "mode": "live", "source": "system", "eventType": "live_started", "latencyMs": 0, "errorCode": "", "detail": "", "timestamp": "2026-04-13T07:36:42.992063+00:00"}
