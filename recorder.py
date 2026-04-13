@@ -11,6 +11,7 @@ Usage:
 
 import io
 import os
+import sys
 import tempfile
 import threading
 import time
@@ -37,6 +38,120 @@ except ImportError:
 
 AudioSource = Literal["mic", "system"]
 ReliabilityMode = Literal["balanced", "latency", "accuracy"]
+
+
+def _system_capture_keywords() -> tuple[str, ...]:
+    return (
+        "loopback",
+        "stereo mix",
+        "monitor",
+        "what u hear",
+        "blackhole",
+        "soundflower",
+        "vb-cable",
+        "virtual audio",
+    )
+
+
+def _score_system_device_name(name: str) -> int:
+    label = (name or "").lower()
+    score = 0
+    for keyword in _system_capture_keywords():
+        if keyword in label:
+            score += 2
+    if "default" in label:
+        score += 1
+    return score
+
+
+def _system_audio_setup_hint() -> str:
+    if sys.platform == "darwin":
+        return (
+            "No system-audio loopback device found on macOS. "
+            "Install and route output through a virtual device like BlackHole, Loopback, "
+            "or Soundflower, then select System source again."
+        )
+    if sys.platform.startswith("linux"):
+        return (
+            "No system-audio monitor source found on Linux. "
+            "Enable a PulseAudio/PipeWire monitor source (usually '*monitor') and retry."
+        )
+    return "No system-audio loopback source found. Enable Stereo Mix/loopback and retry."
+
+
+def _system_channel_candidates(preferred_channels: int) -> tuple[int, ...]:
+    base = max(1, int(preferred_channels or 1))
+    candidates: list[int] = [base]
+    for fallback in (2, 1):
+        if fallback not in candidates:
+            candidates.append(fallback)
+    return tuple(candidates)
+
+
+def _resolve_system_microphone():
+    """Resolve the best available loopback/system capture microphone for this OS."""
+    if not _SC_OK:
+        raise RuntimeError("soundcard not installed.")
+
+    # Windows: default speaker loopback is usually reliable.
+    default_speaker_name = ""
+    if sys.platform.startswith("win"):
+        try:
+            default_speaker = sc.default_speaker()
+            if default_speaker:
+                default_speaker_name = str(default_speaker.name).lower()
+                return sc.get_microphone(id=str(default_speaker.name), include_loopback=True)
+        except Exception:
+            pass
+
+    try:
+        microphones = list(sc.all_microphones(include_loopback=True))
+    except Exception:
+        microphones = []
+
+    if microphones:
+        if default_speaker_name:
+            for microphone in microphones:
+                mic_name = str(getattr(microphone, "name", "")).lower()
+                if default_speaker_name and default_speaker_name in mic_name:
+                    return microphone
+
+        ranked = sorted(
+            microphones,
+            key=lambda m: _score_system_device_name(getattr(m, "name", "")),
+            reverse=True,
+        )
+        best = ranked[0]
+        if _score_system_device_name(getattr(best, "name", "")) > 0:
+            return best
+
+    # macOS/Linux may expose virtual loopback as a normal input device.
+    if sys.platform == "darwin" or sys.platform.startswith("linux"):
+        try:
+            normal_mics = list(sc.all_microphones(include_loopback=False))
+        except Exception:
+            normal_mics = []
+        if normal_mics:
+            ranked = sorted(
+                normal_mics,
+                key=lambda m: _score_system_device_name(getattr(m, "name", "")),
+                reverse=True,
+            )
+            best = ranked[0]
+            if _score_system_device_name(getattr(best, "name", "")) > 0:
+                return best
+
+    if microphones:
+        return microphones[0]
+
+    try:
+        speakers = list(sc.all_speakers())
+        if speakers:
+            return sc.get_microphone(id=str(speakers[0].name), include_loopback=True)
+    except Exception:
+        pass
+
+    raise RuntimeError(_system_audio_setup_hint())
 
 
 def adaptive_trim_silence(
@@ -102,6 +217,7 @@ class Recorder:
         self._frames: list[np.ndarray] = []
         self._recording = False
         self._thread: threading.Thread | None = None
+        self._thread_error: Exception | None = None
 
     # ── Public API ──────────────────────────────────────────────────────────
 
@@ -110,12 +226,29 @@ class Recorder:
         if self._recording:
             return
         self._frames.clear()
+        self._thread_error = None
         self._recording = True
         target = (
             self._record_mic if self.source == "mic" else self._record_system
         )
-        self._thread = threading.Thread(target=target, daemon=True)
+
+        def _runner() -> None:
+            try:
+                target()
+            except Exception as exc:
+                self._thread_error = exc
+                self._recording = False
+
+        self._thread = threading.Thread(target=_runner, daemon=True)
         self._thread.start()
+
+        # Surface immediate startup failures to the caller so fallback logic can engage.
+        time.sleep(0.12)
+        if self._thread_error is not None and (not self._thread or not self._thread.is_alive()):
+            error = self._thread_error
+            self._thread = None
+            self._recording = False
+            raise RuntimeError(str(error)) from error
 
     def stop(self) -> str:
         """Stop recording and return path to a temp WAV file."""
@@ -125,6 +258,8 @@ class Recorder:
             self._thread = None
 
         if not self._frames:
+            if self._thread_error is not None:
+                raise RuntimeError(str(self._thread_error)) from self._thread_error
             raise RuntimeError("No audio captured.")
 
         audio = np.concatenate(self._frames, axis=0)
@@ -183,31 +318,25 @@ class Recorder:
         if not _SC_OK:
             raise RuntimeError("soundcard not installed.")
 
-        # Get default loopback device (what's playing on speakers)
-        try:
-            mic = sc.get_microphone(
-                id=str(sc.default_speaker().name), include_loopback=True
-            )
-        except Exception:
-            # Fallback: first loopback device available
-            loopbacks = [
-                m for m in sc.all_microphones(include_loopback=True)
-                if "loopback" in m.name.lower() or "stereo mix" in m.name.lower()
-            ]
-            if not loopbacks:
-                # Last resort: use default output as loopback
-                mic = sc.get_microphone(
-                    id=str(sc.all_speakers()[0].name), include_loopback=True
-                )
-            else:
-                mic = loopbacks[0]
+        mic = _resolve_system_microphone()
 
         chunk = max(256, int(self.sample_rate * 0.05))
+        last_exc: Exception | None = None
 
-        with mic.recorder(samplerate=self.sample_rate, channels=self.channels) as m:
-            while self._recording:
-                data = m.record(numframes=chunk)
-                self._frames.append(data.copy())
+        for channel_count in _system_channel_candidates(self.channels):
+            try:
+                with mic.recorder(samplerate=self.sample_rate, channels=channel_count) as m:
+                    while self._recording:
+                        data = m.record(numframes=chunk)
+                        self._frames.append(data.copy())
+                return
+            except Exception as exc:
+                last_exc = exc
+                if self._frames:
+                    return
+
+        if last_exc is not None:
+            raise RuntimeError(f"System audio capture failed: {last_exc}") from last_exc
 
 
 def list_input_devices() -> list[dict]:
@@ -224,6 +353,10 @@ def list_input_devices() -> list[dict]:
         try:
             for m in sc.all_microphones(include_loopback=True):
                 devices.append({"name": m.name, "source": "system"})
+            if sys.platform == "darwin" or sys.platform.startswith("linux"):
+                for m in sc.all_microphones(include_loopback=False):
+                    if _score_system_device_name(m.name) > 0:
+                        devices.append({"name": m.name, "source": "system"})
         except Exception:
             pass
     return devices

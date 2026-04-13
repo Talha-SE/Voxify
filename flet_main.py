@@ -1230,6 +1230,9 @@ class VoxifyApp:
             self._set_aux_chip("Open Settings to activate", True)
             self._set_action("Open settings", CARD_SOFT, ACCENT, TEXT, self._open_settings)
             return
+        if self._is_quota_error(normalized):
+            self._set_quota_blocked_state()
+            return
         if (
             "license verification is not configured" in normalized
             or "productid and deviceid are required" in normalized
@@ -1560,6 +1563,24 @@ class VoxifyApp:
             self._set_aux_chip("Typing delayed", True)
             self._set_action("Copy raw", CARD_SOFT, ACCENT, TEXT, self._copy_raw_transcript)
 
+    def _is_quota_error(self, message: str) -> bool:
+        normalized = (message or "").strip().lower()
+        return any(
+            token in normalized
+            for token in (
+                "quota exhausted",
+                "quota exceeded",
+                "quota reached",
+                "license quota exhausted",
+                "quota is exhausted",
+            )
+        )
+
+    def _set_quota_blocked_state(self) -> None:
+        self._set_status("Quota reached", DANGER)
+        self._set_aux_chip("Open Settings > System to upgrade plan", True)
+        self._set_action("Open settings", CARD_SOFT, ACCENT, TEXT, self._open_settings)
+
     def _on_transcription_error(self, err: str) -> None:
         self._stopping = False
         self._set_health_chip("", False)
@@ -1568,8 +1589,14 @@ class VoxifyApp:
             error_code=reliability.normalize_error_code(err),
             detail=err,
         )
-        self.page.snack_bar = ft.SnackBar(content=ft.Text(err, color=TEXT), bgcolor=CARD_SOFT, open=True)
+        display_message = err
+        if self._is_quota_error(err):
+            display_message = "Quota reached. Upgrade or top up from Settings > System."
+        self.page.snack_bar = ft.SnackBar(content=ft.Text(display_message, color=TEXT), bgcolor=CARD_SOFT, open=True)
         self.page.update()
+        if self._is_quota_error(err):
+            self._set_quota_blocked_state()
+            return
         self._reset_to_ready()
 
     def _start_status_animation(self, base: str) -> None:
@@ -1724,6 +1751,10 @@ class VoxifyApp:
                     license_key=(license_cache.load_state().get("licenseKey") or "").strip(),
                     entitlement=self._serialize_entitlement(updated),
                 )
+            except website_client.WebsiteAPIError as exc:
+                message = str(exc)
+                if self._is_quota_error(message):
+                    self.page.run_thread(self._on_transcription_error, message)
             except Exception:
                 pass
 

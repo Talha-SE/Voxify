@@ -23,6 +23,8 @@ import asyncio
 import threading
 from typing import Callable, Optional
 
+import recorder as rec_module
+
 REALTIME_MODEL   = "voxtral-mini-transcribe-realtime-2602"
 DEFAULT_SR       = 16_000
 DEFAULT_CHUNK_MS = 120   # ms per mic chunk
@@ -228,7 +230,6 @@ class RealtimeTranscriber:
     async def _iter_system_audio(self):
         """Capture system/loopback audio via soundcard."""
         try:
-            import soundcard as sc
             import numpy as np
         except ImportError:
             if self.on_error:
@@ -236,36 +237,31 @@ class RealtimeTranscriber:
             return
 
         try:
-            # Get default loopback device
-            try:
-                mic = sc.get_microphone(
-                    id=str(sc.default_speaker().name), include_loopback=True
-                )
-            except Exception:
-                # Fallback: first loopback device available
-                loopbacks = [
-                    m for m in sc.all_microphones(include_loopback=True)
-                    if "loopback" in m.name.lower() or "stereo mix" in m.name.lower()
-                ]
-                if not loopbacks:
-                    mic = sc.get_microphone(
-                        id=str(sc.all_speakers()[0].name), include_loopback=True
-                    )
-                else:
-                    mic = loopbacks[0]
+            mic = rec_module._resolve_system_microphone()
 
             chunk_samples = int(self.sample_rate * self.chunk_duration_ms / 1000)
             loop = asyncio.get_running_loop()
 
-            with mic.recorder(samplerate=self.sample_rate, channels=1) as recorder:
-                while not self._stop_flag.is_set():
-                    # Run blocking read off-thread
-                    data = await loop.run_in_executor(
-                        None, recorder.record, chunk_samples
-                    )
-                    # Convert float32 to int16 PCM
-                    audio_int16 = (data.flatten() * 32767).astype(np.int16)
-                    yield audio_int16.tobytes()
+            last_exc: Exception | None = None
+            for channel_count in rec_module._system_channel_candidates(1):
+                try:
+                    with mic.recorder(samplerate=self.sample_rate, channels=channel_count) as recorder:
+                        while not self._stop_flag.is_set():
+                            # Run blocking read off-thread
+                            data = await loop.run_in_executor(
+                                None, recorder.record, chunk_samples
+                            )
+                            if getattr(data, "ndim", 1) > 1:
+                                data = data.mean(axis=1)
+                            # Convert float32 to int16 PCM
+                            audio_int16 = (np.clip(data, -1.0, 1.0) * 32767).astype(np.int16)
+                            yield audio_int16.tobytes()
+                    return
+                except Exception as exc:
+                    last_exc = exc
+
+            if last_exc is not None and self.on_error and not self._stop_flag.is_set():
+                self.on_error(f"System audio error: {last_exc}")
         except Exception as exc:
             if self.on_error and not self._stop_flag.is_set():
                 self.on_error(f"System audio error: {exc}")

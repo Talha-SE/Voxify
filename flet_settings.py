@@ -3,14 +3,18 @@ from __future__ import annotations
 import subprocess
 import sys
 import threading
+import time
 import uuid
 from pathlib import Path
 
 import flet as ft
+import numpy as np
+from scipy.io import wavfile
 
 import app_info
 import config
 import license_cache
+import recorder as rec_module
 import website_client
 
 APP_TITLE = "Voxify Settings"
@@ -25,6 +29,12 @@ TEXT = "#F8FBFF"
 MUTED = "#94A3B8"
 MUTED_SOFT = "#64748B"
 SUCCESS = "#22C55E"
+WARNING = "#F59E0B"
+
+DEFAULT_MEMBERSHIP_URL = "https://brevios.gumroad.com/l/voxify-membership"
+DEFAULT_ONETIME_URL = "https://brevios.gumroad.com/l/voxify"
+DEFAULT_GUMROAD_URL = "https://brevios.gumroad.com"
+DEFAULT_WEBSITE_URL = "https://voxify.brevios.com"
 
 THEME_PALETTES: dict[str, dict[str, str]] = {
     "dark": {
@@ -445,6 +455,30 @@ def main(page: ft.Page) -> None:
         ),
     )
 
+    audio_diag_hint = ft.Text(
+        "Run a 2-second capture test for Mic and System sources.",
+        size=10,
+        color=MUTED,
+    )
+    audio_diag_mic_text = ft.Text("Mic: not tested", size=10, color=MUTED)
+    audio_diag_system_text = ft.Text("System: not tested", size=10, color=MUTED)
+    run_audio_diag_button = ft.FilledButton("Run 2s Mic + System test", icon=ft.Icons.GRAPHIC_EQ)
+
+    membership_link_button = ft.OutlinedButton("Open Membership Plan", icon=ft.Icons.OPEN_IN_NEW)
+    onetime_link_button = ft.OutlinedButton("Open One-Time Plan", icon=ft.Icons.OPEN_IN_NEW)
+    gumroad_link_button = ft.OutlinedButton("Open Gumroad Store", icon=ft.Icons.OPEN_IN_NEW)
+    website_link_button = ft.OutlinedButton("Open Voxify Website", icon=ft.Icons.LANGUAGE)
+
+    link_button_style = ft.ButtonStyle(
+        color=TEXT,
+        side=ft.BorderSide(1, BORDER),
+        shape=ft.RoundedRectangleBorder(radius=10),
+    )
+    membership_link_button.style = link_button_style
+    onetime_link_button.style = link_button_style
+    gumroad_link_button.style = link_button_style
+    website_link_button.style = link_button_style
+
     async def _close_window_async() -> None:
         try:
             await page.window.close()
@@ -520,14 +554,20 @@ def main(page: ft.Page) -> None:
             license_seat_text.value = "Seats: -"
             page.update()
             return
-        license_status_text.value = f"Status: {(entitlement.status or '').capitalize()}"
-        license_status_text.color = SUCCESS if entitlement.status == "active" else MUTED
+        quota_exhausted = (not entitlement.can_transcribe) or int(entitlement.remaining_chars) <= 0
+        if quota_exhausted:
+            license_status_text.value = "Status: Quota reached"
+            license_status_text.color = WARNING
+        else:
+            license_status_text.value = f"Status: {(entitlement.status or '').capitalize()}"
+            license_status_text.color = SUCCESS if entitlement.status == "active" else MUTED
         license_plan_text.value = f"Plan: {(entitlement.plan or '').title() or '-'}"
         license_cycle_text.value = f"Billing cycle: {_format_billing_cycle(entitlement.billing_cycle)}"
         license_quota_text.value = (
             f"Usage: {_fmt_chars(entitlement.used_chars)} / {_fmt_chars(entitlement.quota_chars + entitlement.bonus_chars)} chars"
             f" | {_fmt_chars(entitlement.used_words)} words"
             f" | Remaining {_fmt_chars(entitlement.remaining_chars)}"
+            f"{' | Top up required' if quota_exhausted else ''}"
         )
         license_seat_text.value = f"Seats: {entitlement.active_seats} / {entitlement.seat_limit}"
         page.update()
@@ -539,6 +579,87 @@ def main(page: ft.Page) -> None:
             open=True,
         )
         page.update()
+
+    def _open_external_url(url: str) -> None:
+        try:
+            page.launch_url(url)
+        except Exception as exc:
+            _show_snack(f"Unable to open link: {exc}")
+
+    def _diagnostic_probe(source: str, label: str) -> tuple[bool, str]:
+        wav_path = ""
+        try:
+            sample_rate = int(config.load().get("sample_rate", 16000))
+            probe = rec_module.Recorder(
+                source=source,
+                sample_rate=sample_rate,
+                silence_trim_enabled=False,
+                reliability_mode="latency",
+            )
+            probe.start()
+            time.sleep(2.0)
+            wav_path = probe.stop()
+
+            _, audio = wavfile.read(wav_path)
+            raw = np.asarray(audio)
+            if raw.size == 0:
+                return False, f"{label}: no audio frames captured"
+
+            source_is_int = np.issubdtype(raw.dtype, np.integer)
+            if raw.ndim > 1:
+                raw = raw.astype(np.float32).mean(axis=1)
+            normalized = raw.astype(np.float32)
+            if source_is_int:
+                max_value = float(np.iinfo(audio.dtype).max) or 1.0
+                normalized = normalized / max_value
+            else:
+                normalized = np.clip(normalized, -1.0, 1.0)
+
+            rms = float(np.sqrt(np.mean(np.square(normalized)))) if normalized.size else 0.0
+            peak = float(np.max(np.abs(normalized))) if normalized.size else 0.0
+            verdict = "signal detected" if (rms >= 0.010 or peak >= 0.080) else "low signal"
+            return True, f"{label}: RMS {rms:.4f} | Peak {peak:.4f} | {verdict}"
+        except Exception as exc:
+            return False, f"{label}: {exc}"
+        finally:
+            if wav_path:
+                try:
+                    Path(wav_path).unlink(missing_ok=True)
+                except Exception:
+                    pass
+
+    def _set_diag_line(source: str, message: str, ok: bool) -> None:
+        target = audio_diag_mic_text if source == "mic" else audio_diag_system_text
+        target.value = message
+        target.color = SUCCESS if ok else WARNING
+        page.update()
+
+    def _finish_diagnostic(all_signals_ok: bool) -> None:
+        run_audio_diag_button.disabled = False
+        status_text.value = "Audio diagnostic complete" if all_signals_ok else "Audio diagnostic found issues"
+        status_text.color = SUCCESS if all_signals_ok else WARNING
+        page.update()
+
+    def _run_audio_diagnostic(_event: ft.ControlEvent | None = None) -> None:
+        run_audio_diag_button.disabled = True
+        status_text.value = "Running audio diagnostic..."
+        status_text.color = MUTED
+        audio_diag_mic_text.value = "Mic: testing..."
+        audio_diag_mic_text.color = MUTED
+        audio_diag_system_text.value = "System: testing..."
+        audio_diag_system_text.color = MUTED
+        page.update()
+
+        def _worker() -> None:
+            signal_ok = True
+            for source, label in (("mic", "Mic"), ("system", "System")):
+                ok, message = _diagnostic_probe(source, label)
+                if "low signal" in message.lower() or not ok:
+                    signal_ok = False
+                page.run_thread(_set_diag_line, source, message, ok)
+            page.run_thread(_finish_diagnostic, signal_ok)
+
+        threading.Thread(target=_worker, daemon=True).start()
 
     def on_theme_toggle(_event: ft.ControlEvent) -> None:
         nonlocal preview_theme
@@ -887,6 +1008,11 @@ def main(page: ft.Page) -> None:
     activate_license_button.on_click = _activate_license
     refresh_license_button.on_click = _refresh_license
     clear_license_button.on_click = _clear_license
+    run_audio_diag_button.on_click = _run_audio_diagnostic
+    membership_link_button.on_click = lambda _e: _open_external_url(DEFAULT_MEMBERSHIP_URL)
+    onetime_link_button.on_click = lambda _e: _open_external_url(DEFAULT_ONETIME_URL)
+    gumroad_link_button.on_click = lambda _e: _open_external_url(DEFAULT_GUMROAD_URL)
+    website_link_button.on_click = lambda _e: _open_external_url(DEFAULT_WEBSITE_URL)
 
     delay_slider.on_change = on_delay_change
     minimize_timeout_slider.on_change = on_timeout_change
@@ -946,6 +1072,16 @@ def main(page: ft.Page) -> None:
                     _setting_row("Always on top", always_on_top_switch),
                 ],
             ),
+            _card(
+                "Audio Diagnostic",
+                ft.Icons.GRAPHIC_EQ,
+                [
+                    audio_diag_hint,
+                    run_audio_diag_button,
+                    audio_diag_mic_text,
+                    audio_diag_system_text,
+                ],
+            ),
         ],
     )
 
@@ -977,6 +1113,17 @@ def main(page: ft.Page) -> None:
                     license_cycle_text,
                     license_quota_text,
                     license_seat_text,
+                ],
+            ),
+            _card(
+                "Purchase & Links",
+                ft.Icons.LINK,
+                [
+                    ft.Text("Upgrade or manage plans quickly.", size=10, color=MUTED),
+                    membership_link_button,
+                    onetime_link_button,
+                    gumroad_link_button,
+                    website_link_button,
                 ],
             ),
             _card(

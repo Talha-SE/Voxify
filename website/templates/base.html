@@ -30,14 +30,29 @@
         <span class="brand-dot"></span>
         <span>Voxify</span>
       </a>
-      <nav class="nav-links" aria-label="Primary">
+      <nav class="nav-links" id="nav-links" aria-label="Primary">
         <a href="{{ url_for('home') }}">Home</a>
         <a href="{{ url_for('privacy_policy') }}">Privacy</a>
         <a href="{{ url_for('terms_and_conditions') }}">Terms</a>
       </nav>
-      <div class="header-cta">
-        <a href="#plans" class="btn-cta">Get Started</a>
+      <div class="header-right">
+        <div class="header-cta desktop-only">
+          <a href="#plans" class="btn-cta">Get Started</a>
+        </div>
+        <button class="mobile-menu-toggle" aria-label="Toggle Menu" aria-expanded="false" id="menu-toggle">
+          <span class="hamburger"></span>
+        </button>
       </div>
+    </div>
+    
+    <!-- Mobile Menu Overlay -->
+    <div class="mobile-menu" id="mobile-menu">
+      <nav class="mobile-nav-links">
+        <a href="{{ url_for('home') }}">Home</a>
+        <a href="{{ url_for('privacy_policy') }}">Privacy</a>
+        <a href="{{ url_for('terms_and_conditions') }}">Terms</a>
+        <a href="#plans" class="mobile-cta">Get Started</a>
+      </nav>
     </div>
   </header>
 

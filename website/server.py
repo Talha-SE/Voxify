@@ -951,7 +951,11 @@ def license_consume():
     )
     if not updated:
         code = 402 if consume_error == "quota_exceeded" else 403
-        message = "Quota exceeded." if consume_error == "quota_exceeded" else "Unable to record usage."
+        message = (
+            "Quota reached for this cycle. Upgrade or top up to continue."
+            if consume_error == "quota_exceeded"
+            else "Unable to record usage."
+        )
         return jsonify({"success": False, "message": message, "reason": consume_error}), code
     return jsonify({"success": True, "entitlement": updated})
 
@@ -999,7 +1003,7 @@ def desktop_bootstrap():
     if entitlement.get("status") != "active":
         return jsonify({"success": False, "message": "License is inactive."}), 403
     if not entitlement.get("canTranscribe"):
-        return jsonify({"success": False, "message": "License is active but quota is exhausted."}), 402
+        return jsonify({"success": False, "message": "Quota reached for this cycle. Upgrade or top up to continue."}), 402
 
     live_key = ""
     if ALLOW_CLIENT_LIVE_KEY:
@@ -1039,7 +1043,13 @@ def proxy_transcribe():
         return jsonify({"success": False, "message": "License is inactive."}), 403
     remaining_before = int(entitlement.get("remainingChars") or 0)
     if remaining_before <= 0:
-        return jsonify({"success": False, "message": "Quota exhausted.", "reason": "quota_exceeded"}), 402
+        return jsonify(
+            {
+                "success": False,
+                "message": "Quota reached for this cycle. Upgrade or top up to continue.",
+                "reason": "quota_exceeded",
+            }
+        ), 402
 
     try:
         api_key = get_mistral_api_key()
