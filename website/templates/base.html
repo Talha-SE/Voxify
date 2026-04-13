@@ -14,6 +14,8 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="icon" type="image/png" href="{{ url_for('static', filename='img/voxify-logo.png') }}">
+  <link rel="apple-touch-icon" href="{{ url_for('static', filename='img/voxify-logo.png') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
   {% block extra_head %}{% endblock %}
 </head>
@@ -27,8 +29,8 @@
   <header class="site-header">
     <div class="header-inner">
       <a class="brand" href="{{ url_for('home') }}">
-        <span class="brand-dot"></span>
-        <span>Voxify</span>
+        <img class="brand-logo" src="{{ url_for('static', filename='img/voxify-logo.png') }}" alt="Voxify logo" width="28" height="28">
+        <span class="brand-text">Voxify</span>
       </a>
       <nav class="nav-links" id="nav-links" aria-label="Primary">
         <a href="{{ url_for('home') }}">Home</a>
@@ -65,8 +67,8 @@
       <div class="footer-main">
         <div class="footer-brand">
           <a class="brand" href="{{ url_for('home') }}">
-            <span class="brand-dot"></span>
-            <span>Voxify</span>
+            <img class="brand-logo" src="{{ url_for('static', filename='img/voxify-logo.png') }}" alt="Voxify logo" width="28" height="28">
+            <span class="brand-text">Voxify</span>
           </a>
           <p class="footer-tagline">Elite desktop voice AI. Private, secure, and built for your professional workflow.</p>
         </div>

@@ -1,7 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 from PyInstaller.utils.hooks import collect_all
 
-datas = [('config.json', '.')]
+datas = [('config.json', '.'), ('assets/voxify-logo.png', 'assets')]
 binaries = []
 hiddenimports = ['flet_settings', 'customtkinter', 'sounddevice', 'soundcard', 'scipy', 'numpy', 'pyperclip', 'pyautogui', 'requests']
 tmp_ret = collect_all('flet')

@@ -5,7 +5,7 @@ a = Analysis(
     ['app.py'],
     pathex=[],
     binaries=[],
-    datas=[('config.json', '.')],
+    datas=[('config.json', '.'), ('assets/voxify-logo.png', 'assets')],
     hiddenimports=['customtkinter', 'sounddevice', 'soundcard', 'scipy', 'numpy', 'pyperclip', 'pyautogui', 'requests'],
     hookspath=[],
     hooksconfig={},

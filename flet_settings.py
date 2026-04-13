@@ -12,6 +12,7 @@ import numpy as np
 from scipy.io import wavfile
 
 import app_info
+import branding
 import config
 import license_cache
 import recorder as rec_module
@@ -227,8 +228,20 @@ def _card(title: str, icon: str, controls: list[ft.Control]) -> ft.Container:
     )
 
 
+def _logo_widget(logo_base64: str | None, size: int, fallback_icon: str = ft.Icons.MIC) -> ft.Control:
+    if logo_base64:
+        return ft.Image(
+            src_base64=logo_base64,
+            width=size,
+            height=size,
+            fit=ft.ImageFit.CONTAIN,
+        )
+    return ft.Icon(fallback_icon, size=size, color=ACCENT)
+
+
 def main(page: ft.Page) -> None:
     cfg = config.load()
+    logo_base64 = branding.load_logo_base64()
     device_id = _get_or_create_device_id(cfg)
     license_state = license_cache.load_state()
     selected_theme = (cfg.get("theme", "dark") or "dark").strip().lower()
@@ -254,6 +267,12 @@ def main(page: ft.Page) -> None:
     page.window.max_width = 500
     page.window.min_height = 650
     page.window.max_height = 650
+    try:
+        logo_path = branding.resolve_logo_path()
+        if logo_path is not None:
+            page.window.icon = str(logo_path)
+    except Exception:
+        pass
 
     def _on_window_event(event) -> None:
         nonlocal preview_theme
@@ -1170,7 +1189,7 @@ def main(page: ft.Page) -> None:
                                     spacing=8,
                                     vertical_alignment=ft.CrossAxisAlignment.CENTER,
                                     controls=[
-                                        ft.Icon(ft.Icons.MIC, size=22, color=ACCENT),
+                                        _logo_widget(logo_base64, 22),
                                         ft.Text("Voxify", size=16, color=TEXT, weight=ft.FontWeight.W_900),
                                     ],
                                 ),
@@ -1289,11 +1308,18 @@ def main(page: ft.Page) -> None:
                         alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                         vertical_alignment=ft.CrossAxisAlignment.CENTER,
                         controls=[
-                            ft.Column(
-                                spacing=2,
+                            ft.Row(
+                                spacing=8,
+                                vertical_alignment=ft.CrossAxisAlignment.CENTER,
                                 controls=[
-                                    ft.Text("Voxify", size=16, weight=ft.FontWeight.W_900, color=TEXT),
-                                    ft.Text("Command Center", size=9, color=MUTED, weight=ft.FontWeight.W_700),
+                                    _logo_widget(logo_base64, 18),
+                                    ft.Column(
+                                        spacing=2,
+                                        controls=[
+                                            ft.Text("Voxify", size=16, weight=ft.FontWeight.W_900, color=TEXT),
+                                            ft.Text("Command Center", size=9, color=MUTED, weight=ft.FontWeight.W_700),
+                                        ],
+                                    ),
                                 ],
                             ),
                             ft.IconButton(

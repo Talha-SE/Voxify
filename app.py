@@ -26,6 +26,7 @@ try:
 except ImportError as exc:
     raise RuntimeError("customtkinter is required. Install dependencies with pip install -r requirements.txt") from exc
 
+import branding
 import config
 import output_handler
 import recorder as rec_module
@@ -409,6 +410,7 @@ class FloatingApp(ctk.CTk):
 
         # ── Window chrome ────────────────────────────────────────────────────
         self.title(APP_NAME)
+        self._apply_window_icon()
         cfg = config.load()
         x, y = cfg.get("window_x", 100), cfg.get("window_y", 100)
         self.geometry(f"{WIN_W}x{WIN_H}+{x}+{y}")
@@ -445,6 +447,16 @@ class FloatingApp(ctk.CTk):
         # ── Apply rounded corners (Windows 10/11) ───────────────────────────
         self.after(100, self._apply_rounded_corners)
         self.after(60, lambda: self._fade_to_alpha(0.98))
+
+    def _apply_window_icon(self) -> None:
+        logo_path = branding.resolve_logo_path()
+        if logo_path is None:
+            return
+        try:
+            self._icon_photo = tk.PhotoImage(file=str(logo_path))
+            self.iconphoto(True, self._icon_photo)
+        except Exception:
+            pass
 
     def _apply_rounded_corners(self) -> None:
         """Apply rounded corners to the window using Windows DWM API."""

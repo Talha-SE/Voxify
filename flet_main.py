@@ -15,6 +15,7 @@ import flet as ft
 
 import config
 import app_info
+import branding
 import dictation_features
 import license_cache
 import output_handler
@@ -118,6 +119,7 @@ class VoxifyApp:
     def __init__(self, page: ft.Page) -> None:
         self.page = page
         self.cfg = config.load()
+        self._logo_base64 = branding.load_logo_base64()
 
         self._recorder: Optional[rec_module.Recorder] = None
         self._rt_transcriber: Optional[rt_module.RealtimeTranscriber] = None
@@ -284,6 +286,12 @@ class VoxifyApp:
         self.page.window.frameless = True
         self.page.window.always_on_top = bool(self.cfg.get("always_on_top", True))
         self.page.window.movable = True
+        try:
+            logo_path = branding.resolve_logo_path()
+            if logo_path is not None:
+                self.page.window.icon = str(logo_path)
+        except Exception:
+            pass
 
         def _on_window_event(event) -> None:
             event_type = str(getattr(event, "type", "")).lower()
@@ -381,6 +389,17 @@ class VoxifyApp:
             pass
 
     def _build_ui(self) -> None:
+        brand_controls: list[ft.Control] = []
+        if self._logo_base64:
+            brand_controls.append(
+                ft.Image(
+                    src_base64=self._logo_base64,
+                    width=14,
+                    height=14,
+                    fit=ft.ImageFit.CONTAIN,
+                )
+            )
+
         self.title_text = ft.Text(
             "Voxify",
             size=10,
@@ -562,7 +581,7 @@ class VoxifyApp:
                 ft.Row(
                     spacing=4,
                     vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                    controls=[self.title_text, self.mode_badge],
+                    controls=[*brand_controls, self.title_text, self.mode_badge],
                 ),
                 self.status_text,
                 self.aux_chip,
