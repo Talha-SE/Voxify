@@ -63,9 +63,24 @@ def _zip_path(version: str, platform_name: str) -> Path:
     return RELEASE_DIR / f"Voxify-v{version}-{platform_name}.zip"
 
 
+def _ensure_artifact_is_packagable(artifact_path: Path, target_zip: Path) -> None:
+    artifact_resolved = artifact_path.resolve()
+    target_resolved = target_zip.resolve()
+
+    if artifact_resolved == target_resolved:
+        raise RuntimeError("Refusing to package a release zip into itself.")
+    if artifact_path.suffix.lower() == ".zip":
+        raise RuntimeError(
+            f"Expected a built binary/app artifact but got a zip file: {artifact_path}. "
+            "Build the application first and retry packaging."
+        )
+
+
 def _add_path_to_zip(handle: zipfile.ZipFile, artifact_path: Path) -> None:
     if artifact_path.is_dir():
-        base_dir = artifact_path.parent
+        # Keep macOS app bundles intact but flatten generic build directories.
+        keep_top_level_dir = artifact_path.suffix.lower() == ".app"
+        base_dir = artifact_path.parent if keep_top_level_dir else artifact_path
         for item in artifact_path.rglob("*"):
             if item.is_file():
                 handle.write(item, item.relative_to(base_dir))
@@ -78,6 +93,7 @@ def package_release(platform_name: str, version: str) -> Path:
     artifact = _resolve_artifact(platform_name)
     RELEASE_DIR.mkdir(parents=True, exist_ok=True)
     target_zip = _zip_path(version, platform_name)
+    _ensure_artifact_is_packagable(artifact, target_zip)
 
     with zipfile.ZipFile(target_zip, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
         _add_path_to_zip(archive, artifact)

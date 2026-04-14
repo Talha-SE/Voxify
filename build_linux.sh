@@ -19,7 +19,9 @@ python3 -m PyInstaller \
   --add-data "config.json:." \
   --add-data "assets/voxify-logo.png:assets" \
   --collect-all flet \
+  --collect-all flet_desktop \
   --hidden-import flet_settings \
+  --hidden-import flet_desktop \
   --hidden-import customtkinter \
   --hidden-import sounddevice \
   --hidden-import soundcard \

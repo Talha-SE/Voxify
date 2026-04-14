@@ -1,7 +1,8 @@
 # UI
 customtkinter>=5.2.2
 Pillow>=10.0.0
-flet>=0.25.0
+flet==0.84.0
+flet-desktop==0.84.0
 
 # Audio capture
 sounddevice>=0.4.6

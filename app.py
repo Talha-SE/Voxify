@@ -13,7 +13,7 @@ import sys
 import threading
 import time
 import ctypes
-import importlib.util
+import importlib
 import subprocess
 import tempfile
 import tkinter as tk
@@ -1021,8 +1021,13 @@ class FloatingApp(ctk.CTk):
 
     def _open_settings(self) -> None:
         settings_script = Path(__file__).with_name("flet_settings.py")
+        flet_runtime_ready = True
+        try:
+            _ensure_flet_runtime()
+        except RuntimeError:
+            flet_runtime_ready = False
 
-        if settings_script.exists() and importlib.util.find_spec("flet") is not None:
+        if settings_script.exists() and flet_runtime_ready:
             try:
                 subprocess.Popen([sys.executable, str(settings_script)], cwd=str(settings_script.parent))
                 return
@@ -1037,8 +1042,25 @@ class FloatingApp(ctk.CTk):
         config.set_value("window_y", self.winfo_y())
         self.destroy()
 
+
+def _ensure_flet_runtime() -> None:
+    missing_packages: list[str] = []
+    required = (("flet", "flet"), ("flet-desktop", "flet_desktop"))
+    for package_name, module_name in required:
+        try:
+            importlib.import_module(module_name)
+        except Exception:
+            missing_packages.append(package_name)
+
+    if missing_packages:
+        joined = ", ".join(missing_packages)
+        raise RuntimeError(
+            f"Missing required desktop packages: {joined}. "
+            "Run: python -m pip install -r requirements.txt"
+        )
+
+
 def main() -> None:
-    import flet as ft
     is_settings_mode = "--settings" in sys.argv
     if not is_settings_mode:
         if not _MAIN_INSTANCE_LOCK.acquire():
@@ -1054,6 +1076,9 @@ def main() -> None:
         atexit.register(_MAIN_INSTANCE_LOCK.release)
 
     try:
+        _ensure_flet_runtime()
+        import flet as ft
+
         if is_settings_mode:
             import flet_settings
 
@@ -1072,7 +1097,9 @@ def main() -> None:
                 print(message)
         else:
             print(message)
-        raise
+        if os.getenv("VOXIFY_RERAISE_STARTUP_ERRORS", "").strip() == "1":
+            raise
+        return
     finally:
         if not is_settings_mode:
             _MAIN_INSTANCE_LOCK.release()
