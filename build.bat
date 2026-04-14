@@ -12,8 +12,7 @@ python -m PyInstaller ^
     --name "Voxify" ^
     --add-data "config.json;." ^
     --add-data "assets\voxify-logo.png;assets" ^
-    --collect-all flet ^
-    --collect-all flet_desktop ^
+    --additional-hooks-dir "pyinstaller-hooks" ^
     --hidden-import flet_settings ^
     --hidden-import flet_desktop ^
     --hidden-import customtkinter ^

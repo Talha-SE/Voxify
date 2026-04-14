@@ -1,13 +1,8 @@
 # -*- mode: python ; coding: utf-8 -*-
-from PyInstaller.utils.hooks import collect_all
 
 datas = [('config.json', '.'), ('assets\\voxify-logo.png', 'assets')]
 binaries = []
 hiddenimports = ['flet_settings', 'flet_desktop', 'customtkinter', 'sounddevice', 'soundcard', 'scipy', 'numpy', 'pyperclip', 'pyautogui', 'requests']
-tmp_ret = collect_all('flet')
-datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
-tmp_ret = collect_all('flet_desktop')
-datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 
 
 a = Analysis(
@@ -16,7 +11,7 @@ a = Analysis(
     binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,
-    hookspath=[],
+    hookspath=['pyinstaller-hooks'],
     hooksconfig={},
     runtime_hooks=[],
     excludes=[],
