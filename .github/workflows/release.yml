@@ -67,6 +67,9 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Install PortAudio
+        run: brew install portaudio
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
