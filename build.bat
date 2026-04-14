@@ -2,8 +2,7 @@
 echo Building Voxify standalone EXE...
 echo.
 
-if exist dist\SONUS.exe del /q dist\SONUS.exe
-if exist dist\BreviosChipVoxtral.exe del /q dist\BreviosChipVoxtral.exe
+if exist dist\Voxify.exe del /q dist\Voxify.exe
 
 python -m pip install pyinstaller -q
 
@@ -25,6 +24,32 @@ python -m PyInstaller ^
     --hidden-import requests ^
     app.py
 
+if errorlevel 1 goto :build_failed
+
+if not "%SIGN_PFX_PATH%"=="" (
+    echo.
+    echo Signing Windows executable...
+    where signtool >nul 2>&1
+    if errorlevel 1 (
+        echo signtool.exe not found. Install Windows SDK or remove SIGN_PFX_PATH.
+        goto :build_failed
+    )
+    signtool sign /fd SHA256 /f "%SIGN_PFX_PATH%" /p "%SIGN_PFX_PASSWORD%" /tr http://timestamp.digicert.com /td SHA256 dist\Voxify.exe
+    if errorlevel 1 goto :build_failed
+)
+
+python package_release.py --platform windows
+
+if errorlevel 1 goto :build_failed
+
 echo.
-echo Done! Executable is in: dist\Voxify.exe
+echo Done! Windows artifact is in: dist\Voxify.exe
+echo Release package is in: release\Voxify-v^<version^>-windows.zip
 pause
+exit /b 0
+
+:build_failed
+echo.
+echo Build failed.
+pause
+exit /b 1

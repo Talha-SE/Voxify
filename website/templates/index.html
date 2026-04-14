@@ -1,9 +1,9 @@
 {% extends 'base.html' %}
 
-{% block title %}Voxify | Private Desktop Voice AI for Mac & Windows{% endblock %}
-{% block meta_description %}Affordable Gumroad membership and one-time plans for private desktop voice AI. Works on Windows and macOS. Live mode, batch mode, and meeting audio transcription.{% endblock %}
-{% block og_title %}Voxify | Voice AI for Mac & Windows{% endblock %}
-{% block og_description %}Use Voxify anywhere on Mac or Windows with private, fast transcription in live and batch workflows.{% endblock %}
+{% block title %}Voxify | Private Desktop Voice AI for Windows, macOS, Linux{% endblock %}
+{% block meta_description %}Affordable Gumroad membership and one-time plans for private desktop voice AI. Works on Windows, macOS, and Linux. Live mode, batch mode, and meeting audio transcription.{% endblock %}
+{% block og_title %}Voxify | Voice AI for Desktop{% endblock %}
+{% block og_description %}Use Voxify on Windows, macOS, or Linux with private, fast transcription in live and batch workflows.{% endblock %}
 
 {% block extra_head %}
 <script type="application/ld+json">
@@ -11,7 +11,7 @@
   "@context": "https://schema.org",
   "@type": "SoftwareApplication",
   "name": "Voxify",
-  "operatingSystem": "Windows, macOS",
+  "operatingSystem": "Windows, macOS, Linux",
   "applicationCategory": "BusinessApplication",
   "offers": [
     {
@@ -44,28 +44,31 @@
 <section class="hero reveal">
   <div class="hero-copy">
     <div class="eyebrow-wrapper">
-      <span class="eyebrow">Windows & macOS</span>
+      <span class="eyebrow">Windows, macOS, Linux</span>
       <span class="eyebrow-dot"></span>
       <span class="eyebrow-sub">Private by Design</span>
     </div>
     <h1 class="text-gradient">Transcribe anywhere on desktop, <span class="accent-gradient">instantly.</span></h1>
     <p>
-      Voxify bridges the gap between your voice and your workflow on <strong>Windows and macOS</strong>. 
+      Voxify bridges the gap between your voice and your workflow on <strong>Windows, macOS, and Linux</strong>. 
       Zero-latency microphone dictation, meeting audio capture, and rapid batch transcription 
       wrapped in a private-first architecture. <strong>No signup required.</strong>
     </p>
     <div class="hero-actions">
-      <a class="btn btn-primary border-beam" href="#plans" data-magnetic>
-        <span>Explore Plans</span>
+      <a class="btn btn-primary border-beam" href="{{ url_for('download_page') }}" data-magnetic>
+        <span>Download App</span>
       </a>
       <a class="btn btn-outline" href="{{ membership_url }}" target="_blank" rel="noopener noreferrer" data-magnetic>
         <span>Join via Gumroad</span>
+      </a>
+      <a class="btn btn-outline" href="#plans" data-magnetic>
+        <span>Explore Plans</span>
       </a>
       <a class="btn btn-ghost" href="{{ url_for('privacy_policy') }}">
         <span>Privacy Promise</span>
       </a>
     </div>
-    <p class="hero-note">Enterprise-grade encryption for local processing on your Mac or PC.</p>
+    <p class="hero-note">Enterprise-grade encryption for local processing on desktop.</p>
   </div>
   <div class="hero-visual" aria-hidden="true">
     <div class="hero-app-preview">
@@ -83,7 +86,7 @@
           <span></span><span></span><span></span><span></span><span></span>
         </div>
         <div class="app-preview-footer-row">
-          <span class="app-preview-chip">Mac + Win</span>
+          <span class="app-preview-chip">Win + Mac + Linux</span>
           <span class="app-preview-chip">Batch</span>
           <span class="app-preview-chip">Private</span>
         </div>
@@ -96,25 +99,42 @@
 <section id="plans" class="plans-section reveal">
   <div class="section-head">
     <h2>Affordable pricing for every desktop user</h2>
-    <p>Checkout is handled with Gumroad. One license works across your Windows and Mac devices.</p>
+    <p>Checkout is handled with Gumroad. One license works across your Windows, macOS, and Linux devices.</p>
   </div>
 
-  <div class="plans-grid">
-    {% for tier in membership_tiers %}
-      <article class="plan-card plan-membership">
-        <p class="plan-tag">{{ tier.tag }}</p>
-        <h3>{{ tier.name }}</h3>
-        <p class="price"><span>{{ tier.price }}</span> {{ tier.period }}</p>
-        <p class="plan-cap">{{ tier.characters }}</p>
-        <ul>
-          {% for item in tier.benefits %}
-            <li>{{ item }}</li>
-          {% endfor %}
-        </ul>
-        <a class="btn btn-primary" href="{{ membership_url }}" target="_blank" rel="noopener noreferrer">Start on Gumroad</a>
-      </article>
-    {% endfor %}
+  <div class="pricing-toggle-wrapper">
+    <div class="billing-toggle" role="tablist" aria-label="Billing options">
+      <div class="toggle-slider" aria-hidden="true"></div>
+      <button class="billing-toggle-btn is-active" type="button" data-billing-target="monthly" aria-pressed="true">Monthly</button>
+      <button class="billing-toggle-btn" type="button" data-billing-target="lifetime" aria-pressed="false">Lifetime</button>
+    </div>
+  </div>
 
+  <div class="plans-panel is-active" data-billing-panel="monthly">
+    <div class="plans-grid">
+      {% for tier in membership_tiers %}
+        <article class="plan-card plan-membership">
+          <p class="plan-tag">{{ tier.tag }}</p>
+          <h3>{{ tier.name }}</h3>
+          <p class="price"><span>{{ tier.price }}</span> {{ tier.period }}</p>
+          <p class="plan-cap">{{ tier.characters }}</p>
+          <ul>
+            {% for item in tier.benefits %}
+              <li>{{ item }}</li>
+            {% endfor %}
+          </ul>
+          <a class="btn btn-primary" href="{{ membership_url }}" target="_blank" rel="noopener noreferrer">Start on Gumroad</a>
+        </article>
+      {% endfor %}
+    </div>
+
+    <p class="plan-note">
+      Membership plans refresh quota each billing cycle and are best for regular usage.
+    </p>
+  </div>
+
+  <div class="plans-panel" data-billing-panel="lifetime" hidden>
+    <div class="plans-grid plans-grid-single">
     <article class="plan-card plan-onetime">
       <p class="plan-tag plan-tag-alt">One-Time</p>
       <h3>{{ one_time_offer.name }}</h3>
@@ -127,12 +147,26 @@
       </ul>
       <a class="btn btn-outline" href="{{ onetime_url }}" target="_blank" rel="noopener noreferrer">Buy One-Time on Gumroad</a>
     </article>
+    </div>
+
+    <p class="plan-note">
+      Lifetime is a non-recurring plan with a one-time quota pool for occasional power users.
+    </p>
   </div>
 
-  <p class="plan-note">
-    After purchase, users receive a license key from Gumroad and enter it in the desktop app.
-    The app validates membership with your server endpoint and automatically syncs plan changes on refresh.
-  </p>
+</section>
+
+<section class="privacy-focus reveal">
+  <div class="privacy-focus-card glass-strong">
+    <p class="eyebrow">Privacy First</p>
+    <h2>We do not store or sell your voice data.</h2>
+    <p>
+      Voxify is built for privacy: audio is used only to transcribe and return text.
+      We do not persist raw voice recordings or transcript content on this website.
+      License and quota data are stored only for entitlement and usage control using license-linked identifiers.
+    </p>
+    <a class="btn btn-outline" href="{{ url_for('privacy_policy') }}">Read Privacy Policy</a>
+  </div>
 </section>
 
 <section class="features-bento reveal">
@@ -175,9 +209,8 @@
       <div class="bento-content">
         <div class="bento-icon">⚡</div>
         <h4>Cross-Platform</h4>
-        <p>No complex setup. Enter your key and start transcribing in under 60 seconds. Works natively on Windows and macOS with optimized resource usage.</p>
+        <p>No complex setup. Enter your key and start transcribing in under 60 seconds. Works natively on Windows, macOS, and Linux with optimized resource usage.</p>
       </div>
-      <div class="bento-badge">Optimized for Mac & Win</div>
     </article>
 
     <article class="bento-card glass">

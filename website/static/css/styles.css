@@ -595,6 +595,83 @@ main {
 /* Pricing Grid */
 .plans-section { margin-top: 6rem; }
 
+.pricing-toggle-wrapper {
+  display: flex;
+  justify-content: center;
+  margin: 0 auto 3rem;
+  padding: 0 1.5rem;
+}
+
+.billing-toggle {
+  position: relative;
+  display: flex;
+  padding: 4px;
+  background: rgba(255, 255, 255, 0.04);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 100px;
+  width: 100%;
+  max-width: 320px;
+  box-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.3);
+}
+
+.toggle-slider {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  width: calc(50% - 4px);
+  height: calc(100% - 8px);
+  background: var(--line-strong);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 100px;
+  transition: transform 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+  z-index: 1;
+}
+
+.billing-toggle-btn {
+  position: relative;
+  flex: 1;
+  padding: 0.8rem 1rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-dim);
+  background: transparent;
+  border: none;
+  border-radius: 100px;
+  cursor: pointer;
+  z-index: 2;
+  transition: color 0.3s ease;
+  white-space: nowrap;
+}
+
+.billing-toggle-btn.is-active {
+  color: #fff;
+}
+
+.billing-toggle-btn:not(.is-active):hover {
+  color: #fff;
+}
+
+@media (max-width: 480px) {
+  .billing-toggle {
+    max-width: 100%;
+  }
+  .billing-toggle-btn {
+    font-size: 0.8rem;
+    padding: 0.7rem 0.5rem;
+  }
+}
+
+.plans-panel[hidden] {
+  display: none !important;
+}
+
+.plans-grid-single {
+  max-width: 430px;
+  margin: 0 auto;
+}
+
 .section-head {
   text-align: center;
   margin-bottom: 3.5rem;
@@ -706,6 +783,30 @@ main {
 
 .plan-note { text-align: center; margin-top: 2.5rem; color: #666; font-size: 0.95rem; }
 
+.privacy-focus {
+  margin-top: 3rem;
+}
+
+.privacy-focus-card {
+  border-radius: 24px;
+  border: 1px solid var(--line);
+  padding: 2rem 1.4rem;
+  background: linear-gradient(140deg, rgba(14, 20, 34, 0.9), rgba(10, 14, 26, 0.92));
+}
+
+.privacy-focus-card h2 {
+  margin: 0.4rem 0 0.9rem;
+  font-size: clamp(1.4rem, 3vw, 2rem);
+}
+
+.privacy-focus-card p {
+  margin-bottom: 1rem;
+}
+
+.privacy-focus-card .btn {
+  width: auto;
+}
+
 
 /* Bento Grid Features */
 .features-bento { margin-top: 10rem; }
@@ -813,6 +914,124 @@ main {
 .compare-table th, .compare-table td { text-align: left; padding: 1.2rem 1rem; border-bottom: 1px solid var(--line); }
 .compare-table th { color: #fff; font-family: "Outfit", sans-serif; font-weight: 600; font-size: 1.1rem; background: rgba(255, 255, 255, 0.02); }
 .compare-table td { color: #aaa; font-size: 1rem; }
+
+/* Download Page */
+.download-hero {
+  margin-top: 2rem;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 2rem;
+}
+
+.download-hero-copy {
+  padding: 2rem;
+  border-radius: 24px;
+  border: 1px solid var(--line);
+  background: linear-gradient(145deg, rgba(13, 13, 13, 0.75), rgba(21, 23, 34, 0.85));
+  backdrop-filter: blur(18px);
+}
+
+.download-hero-copy h1 {
+  margin: 0.6rem 0 1rem;
+}
+
+.download-hero-copy p {
+  margin-bottom: 1.2rem;
+}
+
+.download-license-cta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.9rem;
+}
+
+.download-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 1rem;
+}
+
+.download-card {
+  border-radius: 20px;
+  padding: 1.3rem;
+  border: 1px solid var(--line);
+}
+
+.download-pill {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 0.25rem 0.65rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--accent);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  border: 1px solid rgba(94, 252, 232, 0.35);
+  background: rgba(94, 252, 232, 0.08);
+}
+
+.download-card h3 {
+  margin-top: 0.7rem;
+  font-size: 1.4rem;
+}
+
+.download-meta {
+  color: var(--text-dim);
+  margin: 0.35rem 0 1rem;
+}
+
+.download-footnote {
+  margin-top: 0.75rem;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+.download-availability {
+  margin: 0 0 0.8rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.download-availability.is-ready {
+  color: #7cf4cf;
+}
+
+.download-availability.is-pending {
+  color: #ffd08a;
+}
+
+.btn.is-disabled,
+.btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+.download-steps {
+  margin-top: 3rem;
+  padding: 2rem 1.3rem;
+  border-radius: 24px;
+  border: 1px solid var(--line);
+  background: rgba(14, 14, 14, 0.7);
+}
+
+.steps-list {
+  margin: 0;
+  padding-left: 1.2rem;
+  display: grid;
+  gap: 0.8rem;
+}
+
+.steps-list li {
+  color: var(--text-dim);
+}
+
+.download-note {
+  margin-top: 1rem;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
 
 /* Dashboard / Admin */
 .admin-card { padding: 2rem 1.5rem; margin-top: 2rem; }
@@ -1123,6 +1342,22 @@ main {
 
   .legal-page, .simple-page { padding: 4rem; }
   .compare-table-wrap { padding: 1rem; }
+
+  .download-hero {
+    grid-template-columns: 1.2fr 1fr;
+    gap: 1.4rem;
+    align-items: stretch;
+  }
+  .download-grid {
+    grid-template-columns: 1fr;
+  }
+  .download-steps {
+    padding: 2.6rem;
+  }
+
+  .privacy-focus-card {
+    padding: 2.6rem;
+  }
 
   .status-grid { grid-template-columns: repeat(3, 1fr); }
   .dashboard-grid { grid-template-columns: 1fr 1.15fr; align-items: start; }

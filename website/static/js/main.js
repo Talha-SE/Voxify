@@ -75,3 +75,40 @@ if (header) {
     }
   });
 }
+
+// Pricing Billing Toggle
+const billingButtons = document.querySelectorAll('[data-billing-target]');
+const billingPanels = document.querySelectorAll('[data-billing-panel]');
+const toggleSlider = document.querySelector('.toggle-slider');
+
+if (billingButtons.length > 0 && billingPanels.length > 0) {
+  const setBillingPanel = (target) => {
+    billingButtons.forEach((button) => {
+      const isActive = button.dataset.billingTarget === target;
+      button.classList.toggle('is-active', isActive);
+      button.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+      
+      if (isActive && toggleSlider) {
+        // Move slider based on target
+        if (target === 'monthly') {
+          toggleSlider.style.transform = 'translateX(0)';
+        } else {
+          toggleSlider.style.transform = 'translateX(100%)';
+        }
+      }
+    });
+
+    billingPanels.forEach((panel) => {
+      const shouldShow = panel.dataset.billingPanel === target;
+      panel.hidden = !shouldShow;
+      panel.classList.toggle('is-active', shouldShow);
+    });
+  };
+
+  billingButtons.forEach((button) => {
+    button.addEventListener('click', () => setBillingPanel(button.dataset.billingTarget));
+  });
+
+  const activeButton = document.querySelector('[data-billing-target].is-active');
+  setBillingPanel(activeButton?.dataset.billingTarget || 'monthly');
+}

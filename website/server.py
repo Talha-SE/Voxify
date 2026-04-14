@@ -40,7 +40,7 @@ except ImportError:
 load_dotenv()
 
 app = Flask(__name__)
-app.config["SECRET_KEY"] = os.getenv("FLASK_SECRET_KEY", "replace-me-in-production")
+app.config["SECRET_KEY"] = (os.getenv("FLASK_SECRET_KEY") or "").strip() or secrets.token_urlsafe(48)
 app.config["SESSION_COOKIE_HTTPONLY"] = True
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 app.config["SESSION_COOKIE_SECURE"] = os.getenv("SESSION_SECURE_COOKIE", "false").lower() == "true"
@@ -53,6 +53,7 @@ GUMROAD_VERIFY_URL = "https://api.gumroad.com/v2/licenses/verify"
 RELEASE_INFO_FILE = Path(__file__).with_name("release_info.json")
 RUNTIME_CONFIG_FILE = Path(__file__).with_name("runtime_config.json")
 RELIABILITY_EVENTS_FILE = Path(__file__).with_name("reliability_events.jsonl")
+RELEASES_DIR = Path(__file__).resolve().parent.parent / "release"
 
 LICENSE_TOKEN_MAX_AGE_SEC = max(3600, int(os.getenv("VOXIFY_LICENSE_TOKEN_MAX_AGE_SEC") or os.getenv("SONUS_LICENSE_TOKEN_MAX_AGE_SEC", "604800")))
 LICENSE_REFRESH_INTERVAL_SEC = max(600, int(os.getenv("VOXIFY_LICENSE_REFRESH_INTERVAL_SEC") or os.getenv("SONUS_LICENSE_REFRESH_INTERVAL_SEC", "21600")))
@@ -94,7 +95,7 @@ MEMBERSHIP_TIERS = [
         "characters": "2,000,000 characters",
         "tag": "Scale",
         "benefits": [
-            "Up to 5 desktop seats",
+            "Unlimited desktop seats",
             "Centralized team access",
             "Built for meetings and operations",
         ],
@@ -105,7 +106,7 @@ ONE_TIME_OFFER = {
     "name": "One-Time Lifetime",
     "price": "$39",
     "period": " once",
-    "characters": "No recurring billing",
+    "characters": "3,000,000 lifetime characters",
     "benefits": [
         "Lifetime desktop unlock",
         "Live + Batch core features",
@@ -121,10 +122,22 @@ DEFAULT_RELEASE_INFO = {
     "publishedAt": "",
     "channel": "stable",
     "platform": "windows",
-    "assetType": "exe",
+    "assetType": "zip",
     "sha256": "",
     "installerArgs": "/S",
     "restartRequired": True,
+    "windowsDownloadUrl": "",
+    "macDownloadUrl": "",
+    "linuxDownloadUrl": "",
+    "windowsAssetType": "zip",
+    "macAssetType": "dmg",
+    "linuxAssetType": "zip",
+    "windowsSha256": "",
+    "macSha256": "",
+    "linuxSha256": "",
+    "windowsFileName": "Voxify-v1.0.0-windows.zip",
+    "macFileName": "Voxify-v1.0.0-macos.zip",
+    "linuxFileName": "Voxify-v1.0.0-linux.zip",
 }
 
 DEFAULT_RUNTIME_CONFIG = {
@@ -260,6 +273,180 @@ def _save_release_info(data: dict) -> None:
     merged = {**DEFAULT_RELEASE_INFO, **data}
     with RELEASE_INFO_FILE.open("w", encoding="utf-8") as handle:
         json.dump(merged, handle, indent=2)
+
+
+def _normalize_platform_name(value: str, default: str = "windows") -> str:
+    normalized = _text(value).lower()
+    if normalized in {"windows", "win", "win32"}:
+        return "windows"
+    if normalized in {"mac", "macos", "osx", "darwin"}:
+        return "macos"
+    if normalized in {"linux", "linux2", "linux-gnu", "gnu/linux", "ubuntu", "debian"}:
+        return "linux"
+    return default
+
+
+def _release_file_candidates(platform: str, version: str, configured_name: str = "") -> list[str]:
+    candidates: list[str] = []
+    if configured_name:
+        candidates.append(Path(configured_name).name)
+
+    version_tag = _text(version)
+    if platform == "windows":
+        candidates.extend(
+            [
+                f"Voxify-v{version_tag}-windows.zip",
+                f"SONUS-v{version_tag}-windows.zip",
+                "SONUS-v1.0.0-windows.zip",
+            ]
+        )
+    elif platform == "macos":
+        candidates.extend(
+            [
+                f"Voxify-v{version_tag}-macos.zip",
+                f"Voxify-v{version_tag}-mac.zip",
+                f"SONUS-v{version_tag}-macos.zip",
+            ]
+        )
+    else:
+        candidates.extend(
+            [
+                f"Voxify-v{version_tag}-linux.zip",
+                f"Voxify-v{version_tag}-linux-x86_64.zip",
+                f"Voxify-v{version_tag}-linux.tar.gz",
+                f"SONUS-v{version_tag}-linux.zip",
+                "SONUS-v1.0.0-linux.zip",
+            ]
+        )
+
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for item in candidates:
+        clean = Path(_text(item)).name
+        if not clean or clean in seen:
+            continue
+        seen.add(clean)
+        deduped.append(clean)
+    return deduped
+
+
+def _infer_asset_type(filename: str, fallback: str) -> str:
+    lowered = _text(filename).lower()
+    if lowered.endswith(".tar.gz"):
+        return "tar.gz"
+
+    ext = Path(filename).suffix.lower().lstrip(".")
+    if ext in {"exe", "msi", "zip", "dmg", "pkg", "appimage", "deb", "rpm", "bin"}:
+        return ext
+    return fallback
+
+
+def _build_download_entry(platform: str, release_info: dict) -> dict[str, Any]:
+    normalized_platform = _normalize_platform_name(platform)
+    platform_meta = {
+        "windows": {
+            "label": "Windows",
+            "download_url_key": "windowsDownloadUrl",
+            "file_name_key": "windowsFileName",
+            "asset_key": "windowsAssetType",
+            "sha_key": "windowsSha256",
+            "default_asset": "zip",
+            "env_download": ("VOXIFY_WINDOWS_DOWNLOAD_URL", "SONUS_WINDOWS_DOWNLOAD_URL"),
+            "env_file": ("VOXIFY_WINDOWS_RELEASE_FILE", "SONUS_WINDOWS_RELEASE_FILE"),
+        },
+        "macos": {
+            "label": "macOS",
+            "download_url_key": "macDownloadUrl",
+            "file_name_key": "macFileName",
+            "asset_key": "macAssetType",
+            "sha_key": "macSha256",
+            "default_asset": "dmg",
+            "env_download": ("VOXIFY_MAC_DOWNLOAD_URL", "SONUS_MAC_DOWNLOAD_URL"),
+            "env_file": ("VOXIFY_MAC_RELEASE_FILE", "SONUS_MAC_RELEASE_FILE"),
+        },
+        "linux": {
+            "label": "Linux",
+            "download_url_key": "linuxDownloadUrl",
+            "file_name_key": "linuxFileName",
+            "asset_key": "linuxAssetType",
+            "sha_key": "linuxSha256",
+            "default_asset": "zip",
+            "env_download": ("VOXIFY_LINUX_DOWNLOAD_URL", "SONUS_LINUX_DOWNLOAD_URL"),
+            "env_file": ("VOXIFY_LINUX_RELEASE_FILE", "SONUS_LINUX_RELEASE_FILE"),
+        },
+    }
+    meta = platform_meta.get(normalized_platform, platform_meta["windows"])
+    release_platform = _normalize_platform_name(release_info.get("platform") or "windows")
+
+    env_url = _text(os.getenv(meta["env_download"][0]) or os.getenv(meta["env_download"][1], ""))
+    configured_url = _text(release_info.get(meta["download_url_key"]))
+    legacy_url = _text(release_info.get("downloadUrl")) if release_platform == normalized_platform else ""
+    external_url = env_url or configured_url or legacy_url
+
+    configured_file_name = _text(
+        release_info.get(meta["file_name_key"])
+        or os.getenv(meta["env_file"][0])
+        or os.getenv(meta["env_file"][1], "")
+    )
+    configured_asset = _text(release_info.get(meta["asset_key"])).lower()
+    fallback_asset = _text(release_info.get("assetType") or meta["default_asset"]).lower()
+    configured_sha = _text(release_info.get(meta["sha_key"])).lower()
+    fallback_sha = _text(release_info.get("sha256")).lower()
+
+    if external_url.startswith("http://") or external_url.startswith("https://"):
+        return {
+            "platform": normalized_platform,
+            "label": meta["label"],
+            "available": True,
+            "mode": "external",
+            "externalUrl": external_url,
+            "fileName": "",
+            "assetType": configured_asset or fallback_asset,
+            "sha256": configured_sha or fallback_sha,
+        }
+
+    candidates = _release_file_candidates(
+        platform=normalized_platform,
+        version=_text(release_info.get("latestVersion") or "1.0.0"),
+        configured_name=configured_file_name,
+    )
+    existing_file = ""
+    for candidate in candidates:
+        if (RELEASES_DIR / candidate).exists():
+            existing_file = candidate
+            break
+
+    if existing_file:
+        inferred_asset = _infer_asset_type(existing_file, configured_asset or fallback_asset)
+        return {
+            "platform": normalized_platform,
+            "label": meta["label"],
+            "available": True,
+            "mode": "local",
+            "externalUrl": "",
+            "fileName": existing_file,
+            "assetType": inferred_asset,
+            "sha256": configured_sha or fallback_sha,
+        }
+
+    return {
+        "platform": normalized_platform,
+        "label": meta["label"],
+        "available": False,
+        "mode": "unavailable",
+        "externalUrl": "",
+        "fileName": "",
+        "assetType": configured_asset or fallback_asset,
+        "sha256": configured_sha or fallback_sha,
+    }
+
+
+def _collect_download_entries(release_info: dict) -> dict[str, dict[str, Any]]:
+    return {
+        "windows": _build_download_entry("windows", release_info),
+        "macos": _build_download_entry("macos", release_info),
+        "linux": _build_download_entry("linux", release_info),
+    }
 
 
 def _load_runtime_config() -> dict:
@@ -479,6 +666,21 @@ def add_security_headers(response):
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+    response.headers["Cross-Origin-Opener-Policy"] = "same-origin"
+    response.headers["Cross-Origin-Resource-Policy"] = "same-origin"
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; "
+        "img-src 'self' data: https:; "
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+        "font-src 'self' data: https://fonts.gstatic.com; "
+        "script-src 'self' 'unsafe-inline'; "
+        "connect-src 'self'; "
+        "base-uri 'self'; "
+        "form-action 'self'; "
+        "frame-ancestors 'none'"
+    )
+    if request.is_secure:
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
     return response
 
 
@@ -489,6 +691,33 @@ def home():
         membership_tiers=MEMBERSHIP_TIERS,
         one_time_offer=ONE_TIME_OFFER,
     )
+
+
+@app.get("/download")
+def download_page():
+    release_info = _load_release_info()
+    return render_template(
+        "download.html",
+        release_info=release_info,
+        download_entries=_collect_download_entries(release_info),
+        one_time_offer=ONE_TIME_OFFER,
+    )
+
+
+@app.get("/download/<platform>")
+def download_platform(platform: str):
+    release_info = _load_release_info()
+    entry = _build_download_entry(platform, release_info)
+    if not entry.get("available"):
+        return redirect(url_for("download_page"))
+
+    if entry.get("mode") == "external":
+        return redirect(entry.get("externalUrl") or url_for("download_page"))
+
+    file_name = _text(entry.get("fileName"))
+    if not file_name:
+        return redirect(url_for("download_page"))
+    return send_from_directory(str(RELEASES_DIR), file_name, as_attachment=True, download_name=file_name)
 
 
 @app.get("/privacy-policy")
@@ -625,32 +854,71 @@ def admin_dashboard():
             elif form_type == "release":
                 latest_version = _text(request.form.get("latest_version"))
                 download_url = _text(request.form.get("download_url"))
+                windows_download_url = _text(request.form.get("windows_download_url"))
+                mac_download_url = _text(request.form.get("mac_download_url"))
+                linux_download_url = _text(request.form.get("linux_download_url"))
                 notes = _text(request.form.get("release_notes"))
                 mandatory = _text(request.form.get("mandatory_update")).lower() == "on"
                 channel = _text(request.form.get("channel") or "stable").lower() or "stable"
                 platform = _text(request.form.get("platform") or "windows").lower() or "windows"
-                asset_type = _text(request.form.get("asset_type") or "exe").lower() or "exe"
+                asset_type = _text(request.form.get("asset_type") or "zip").lower() or "zip"
+                windows_asset_type = _text(request.form.get("windows_asset_type") or "zip").lower() or "zip"
+                mac_asset_type = _text(request.form.get("mac_asset_type") or "dmg").lower() or "dmg"
+                linux_asset_type = _text(request.form.get("linux_asset_type") or "zip").lower() or "zip"
                 sha256_value = _text(request.form.get("sha256"))
+                windows_sha256 = _text(request.form.get("windows_sha256"))
+                mac_sha256 = _text(request.form.get("mac_sha256"))
+                linux_sha256 = _text(request.form.get("linux_sha256"))
+                windows_file_name = Path(_text(request.form.get("windows_file_name") or "Voxify-v1.0.0-windows.zip")).name
+                mac_file_name = Path(_text(request.form.get("mac_file_name") or "Voxify-v1.0.0-macos.zip")).name
+                linux_file_name = Path(_text(request.form.get("linux_file_name") or "Voxify-v1.0.0-linux.zip")).name
                 installer_args = _text(request.form.get("installer_args") or "/S")
                 restart_required = _text(request.form.get("restart_required")).lower() == "on"
+                allowed_asset_types = {"exe", "msi", "zip", "dmg", "pkg", "tar.gz", "appimage", "deb", "rpm", "bin"}
+                if asset_type not in allowed_asset_types:
+                    asset_type = "zip"
+                if windows_asset_type not in allowed_asset_types:
+                    windows_asset_type = "zip"
+                if mac_asset_type not in allowed_asset_types:
+                    mac_asset_type = "dmg"
+                if linux_asset_type not in allowed_asset_types:
+                    linux_asset_type = "zip"
 
                 if not re.match(r"^\d+\.\d+\.\d+$", latest_version):
                     dashboard_error = "Version must be in semantic format, e.g. 1.4.2"
                 elif download_url and not (download_url.startswith("http://") or download_url.startswith("https://")):
                     dashboard_error = "Download URL must start with http:// or https://"
+                elif windows_download_url and not (windows_download_url.startswith("http://") or windows_download_url.startswith("https://")):
+                    dashboard_error = "Windows download URL must start with http:// or https://"
+                elif mac_download_url and not (mac_download_url.startswith("http://") or mac_download_url.startswith("https://")):
+                    dashboard_error = "macOS download URL must start with http:// or https://"
+                elif linux_download_url and not (linux_download_url.startswith("http://") or linux_download_url.startswith("https://")):
+                    dashboard_error = "Linux download URL must start with http:// or https://"
                 else:
                     release_info = {
                         "latestVersion": latest_version,
-                        "downloadUrl": download_url,
+                        "downloadUrl": download_url or windows_download_url or mac_download_url or linux_download_url,
                         "notes": notes,
                         "mandatory": mandatory,
                         "publishedAt": _utc_now().isoformat(),
                         "channel": channel,
                         "platform": platform,
-                        "assetType": asset_type if asset_type in {"exe", "msi", "zip"} else "exe",
+                        "assetType": asset_type,
                         "sha256": sha256_value.lower(),
                         "installerArgs": installer_args,
                         "restartRequired": restart_required,
+                        "windowsDownloadUrl": windows_download_url,
+                        "macDownloadUrl": mac_download_url,
+                        "linuxDownloadUrl": linux_download_url,
+                        "windowsAssetType": windows_asset_type,
+                        "macAssetType": mac_asset_type,
+                        "linuxAssetType": linux_asset_type,
+                        "windowsSha256": windows_sha256.lower(),
+                        "macSha256": mac_sha256.lower(),
+                        "linuxSha256": linux_sha256.lower(),
+                        "windowsFileName": windows_file_name,
+                        "macFileName": mac_file_name,
+                        "linuxFileName": linux_file_name,
                     }
                     _save_release_info(release_info)
                     dashboard_message = "Release metadata updated successfully."
@@ -1179,11 +1447,18 @@ def app_update():
     release_info = _load_release_info()
     current_version = _text(request.args.get("currentVersion"))
     requested_channel = _text(request.args.get("channel") or "stable").lower()
-    requested_platform = _text(request.args.get("platform") or "windows").lower()
+    requested_platform = _normalize_platform_name(request.args.get("platform") or "windows")
 
     same_channel = requested_channel == _text(release_info.get("channel") or "stable").lower()
-    same_platform = requested_platform == _text(release_info.get("platform") or "windows").lower()
-    candidate_available = same_channel and same_platform and bool(release_info.get("downloadUrl"))
+    download_entry = _build_download_entry(requested_platform, release_info)
+    if download_entry.get("mode") == "external":
+        resolved_download_url = _text(download_entry.get("externalUrl"))
+    elif download_entry.get("mode") == "local" and _text(download_entry.get("fileName")):
+        resolved_download_url = url_for("download_platform", platform=requested_platform, _external=True)
+    else:
+        resolved_download_url = ""
+
+    candidate_available = same_channel and bool(resolved_download_url)
     has_newer = _is_version_newer(current_version, release_info.get("latestVersion", "0.0.0"))
 
     return jsonify(
@@ -1191,14 +1466,14 @@ def app_update():
             "success": True,
             "app": "voxify-desktop",
             "channel": release_info.get("channel", "stable"),
-            "platform": release_info.get("platform", "windows"),
+            "platform": requested_platform,
             "latestVersion": release_info.get("latestVersion", "1.0.0"),
-            "downloadUrl": release_info.get("downloadUrl", ""),
+            "downloadUrl": resolved_download_url,
             "notes": release_info.get("notes", ""),
             "publishedAt": release_info.get("publishedAt", ""),
             "mandatory": bool(release_info.get("mandatory")),
-            "assetType": release_info.get("assetType", "exe"),
-            "sha256": release_info.get("sha256", ""),
+            "assetType": download_entry.get("assetType") or release_info.get("assetType", "zip"),
+            "sha256": download_entry.get("sha256") or release_info.get("sha256", ""),
             "installerArgs": release_info.get("installerArgs", ""),
             "restartRequired": bool(release_info.get("restartRequired", True)),
             "currentVersion": current_version,

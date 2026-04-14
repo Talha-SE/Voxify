@@ -18,6 +18,29 @@ import license_cache
 import recorder as rec_module
 import website_client
 
+IMAGE_FIT_CONTAIN = getattr(
+    getattr(ft, "ImageFit", None),
+    "CONTAIN",
+    getattr(getattr(ft, "BoxFit", None), "CONTAIN", "contain"),
+)
+
+
+def _logo_image(logo_base64: str, size: int) -> ft.Image:
+    try:
+        return ft.Image(
+            src_base64=logo_base64,
+            width=size,
+            height=size,
+            fit=IMAGE_FIT_CONTAIN,
+        )
+    except TypeError:
+        return ft.Image(
+            src=f"data:image/png;base64,{logo_base64}",
+            width=size,
+            height=size,
+            fit=IMAGE_FIT_CONTAIN,
+        )
+
 APP_TITLE = "Voxify Settings"
 ACCENT = "#00B3FF"
 ACCENT_ALT = "#0066FF"
@@ -230,12 +253,7 @@ def _card(title: str, icon: str, controls: list[ft.Control]) -> ft.Container:
 
 def _logo_widget(logo_base64: str | None, size: int, fallback_icon: str = ft.Icons.MIC) -> ft.Control:
     if logo_base64:
-        return ft.Image(
-            src_base64=logo_base64,
-            width=size,
-            height=size,
-            fit=ft.ImageFit.CONTAIN,
-        )
+        return _logo_image(logo_base64, size)
     return ft.Icon(fallback_icon, size=size, color=ACCENT)
 
 
@@ -268,9 +286,9 @@ def main(page: ft.Page) -> None:
     page.window.min_height = 650
     page.window.max_height = 650
     try:
-        logo_path = branding.resolve_logo_path()
+        logo_path = branding.resolve_window_icon_path()
         if logo_path is not None:
-            page.window.icon = str(logo_path)
+            page.window.icon = str(logo_path.resolve())
     except Exception:
         pass
 

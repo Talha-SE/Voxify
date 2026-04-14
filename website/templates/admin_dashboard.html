@@ -65,13 +65,43 @@
       <input type="hidden" name="form_type" value="release">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <h2>Publish App Update</h2>
-      <p class="dashboard-sub">Desktop checks this metadata for download, install, and restart flow.</p>
+      <p class="dashboard-sub">Desktop checks this metadata for Windows, macOS, and Linux download, install, and restart flow.</p>
 
       <label for="latest_version">Latest Version</label>
       <input id="latest_version" name="latest_version" type="text" value="{{ release_info.latestVersion }}" placeholder="e.g. 1.2.0" required>
 
       <label for="download_url">Download URL</label>
-      <input id="download_url" name="download_url" type="url" value="{{ release_info.downloadUrl }}" placeholder="https://.../Voxify-setup.exe" required>
+      <input id="download_url" name="download_url" type="url" value="{{ release_info.downloadUrl }}" placeholder="Optional legacy fallback URL">
+
+      <div class="release-form-row">
+        <div>
+          <label for="windows_download_url">Windows Download URL</label>
+          <input id="windows_download_url" name="windows_download_url" type="url" value="{{ release_info.windowsDownloadUrl or '' }}" placeholder="https://.../Voxify-windows.zip">
+        </div>
+        <div>
+          <label for="mac_download_url">macOS Download URL</label>
+          <input id="mac_download_url" name="mac_download_url" type="url" value="{{ release_info.macDownloadUrl or '' }}" placeholder="https://.../Voxify-macos.dmg">
+        </div>
+        <div>
+          <label for="linux_download_url">Linux Download URL</label>
+          <input id="linux_download_url" name="linux_download_url" type="url" value="{{ release_info.linuxDownloadUrl or '' }}" placeholder="https://.../Voxify-linux.tar.gz">
+        </div>
+      </div>
+
+      <div class="release-form-row">
+        <div>
+          <label for="windows_file_name">Windows Local File Name</label>
+          <input id="windows_file_name" name="windows_file_name" type="text" value="{{ release_info.windowsFileName or 'Voxify-v1.0.0-windows.zip' }}" placeholder="Voxify-v1.0.0-windows.zip">
+        </div>
+        <div>
+          <label for="mac_file_name">macOS Local File Name</label>
+          <input id="mac_file_name" name="mac_file_name" type="text" value="{{ release_info.macFileName or 'Voxify-v1.0.0-macos.zip' }}" placeholder="Voxify-v1.0.0-macos.zip">
+        </div>
+        <div>
+          <label for="linux_file_name">Linux Local File Name</label>
+          <input id="linux_file_name" name="linux_file_name" type="text" value="{{ release_info.linuxFileName or 'Voxify-v1.0.0-linux.zip' }}" placeholder="Voxify-v1.0.0-linux.zip">
+        </div>
+      </div>
 
       <div class="release-form-row">
         <div>
@@ -91,6 +121,8 @@
             <option value="exe" {% if release_info.assetType == 'exe' %}selected{% endif %}>exe</option>
             <option value="msi" {% if release_info.assetType == 'msi' %}selected{% endif %}>msi</option>
             <option value="zip" {% if release_info.assetType == 'zip' %}selected{% endif %}>zip</option>
+            <option value="dmg" {% if release_info.assetType == 'dmg' %}selected{% endif %}>dmg</option>
+            <option value="pkg" {% if release_info.assetType == 'pkg' %}selected{% endif %}>pkg</option>
           </select>
         </div>
         <div>
@@ -99,8 +131,53 @@
         </div>
       </div>
 
+      <div class="release-form-row">
+        <div>
+          <label for="windows_asset_type">Windows Asset Type</label>
+          <select id="windows_asset_type" name="windows_asset_type">
+            <option value="exe" {% if release_info.windowsAssetType == 'exe' %}selected{% endif %}>exe</option>
+            <option value="msi" {% if release_info.windowsAssetType == 'msi' %}selected{% endif %}>msi</option>
+            <option value="zip" {% if release_info.windowsAssetType == 'zip' %}selected{% endif %}>zip</option>
+          </select>
+        </div>
+        <div>
+          <label for="mac_asset_type">macOS Asset Type</label>
+          <select id="mac_asset_type" name="mac_asset_type">
+            <option value="dmg" {% if release_info.macAssetType == 'dmg' %}selected{% endif %}>dmg</option>
+            <option value="pkg" {% if release_info.macAssetType == 'pkg' %}selected{% endif %}>pkg</option>
+            <option value="zip" {% if release_info.macAssetType == 'zip' %}selected{% endif %}>zip</option>
+          </select>
+        </div>
+        <div>
+          <label for="linux_asset_type">Linux Asset Type</label>
+          <select id="linux_asset_type" name="linux_asset_type">
+            <option value="appimage" {% if release_info.linuxAssetType == 'appimage' %}selected{% endif %}>appimage</option>
+            <option value="deb" {% if release_info.linuxAssetType == 'deb' %}selected{% endif %}>deb</option>
+            <option value="rpm" {% if release_info.linuxAssetType == 'rpm' %}selected{% endif %}>rpm</option>
+            <option value="tar.gz" {% if release_info.linuxAssetType == 'tar.gz' %}selected{% endif %}>tar.gz</option>
+            <option value="zip" {% if release_info.linuxAssetType == 'zip' %}selected{% endif %}>zip</option>
+            <option value="bin" {% if release_info.linuxAssetType == 'bin' %}selected{% endif %}>bin</option>
+          </select>
+        </div>
+      </div>
+
       <label for="sha256">SHA-256 (optional)</label>
       <input id="sha256" name="sha256" type="text" value="{{ release_info.sha256 or '' }}" placeholder="checksum for package validation">
+
+      <div class="release-form-row">
+        <div>
+          <label for="windows_sha256">Windows SHA-256 (optional)</label>
+          <input id="windows_sha256" name="windows_sha256" type="text" value="{{ release_info.windowsSha256 or '' }}" placeholder="windows package checksum">
+        </div>
+        <div>
+          <label for="mac_sha256">macOS SHA-256 (optional)</label>
+          <input id="mac_sha256" name="mac_sha256" type="text" value="{{ release_info.macSha256 or '' }}" placeholder="mac package checksum">
+        </div>
+        <div>
+          <label for="linux_sha256">Linux SHA-256 (optional)</label>
+          <input id="linux_sha256" name="linux_sha256" type="text" value="{{ release_info.linuxSha256 or '' }}" placeholder="linux package checksum">
+        </div>
+      </div>
 
       <label for="release_notes">Release Notes</label>
       <textarea id="release_notes" name="release_notes" rows="4" placeholder="What changed in this version?">{{ release_info.notes }}</textarea>

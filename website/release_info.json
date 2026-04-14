@@ -5,5 +5,21 @@
   "mandatory": false,
   "publishedAt": "",
   "channel": "stable",
-  "platform": "windows"
+  "platform": "windows",
+  "assetType": "zip",
+  "sha256": "",
+  "installerArgs": "/S",
+  "restartRequired": true,
+  "windowsDownloadUrl": "",
+  "macDownloadUrl": "",
+  "linuxDownloadUrl": "",
+  "windowsAssetType": "zip",
+  "macAssetType": "dmg",
+  "linuxAssetType": "zip",
+  "windowsSha256": "",
+  "macSha256": "",
+  "linuxSha256": "",
+  "windowsFileName": "Voxify-v1.0.0-windows.zip",
+  "macFileName": "Voxify-v1.0.0-macos.zip",
+  "linuxFileName": "Voxify-v1.0.0-linux.zip"
 }

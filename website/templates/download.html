@@ -1,0 +1,110 @@
+{% extends 'base.html' %}
+
+{% block title %}Download Voxify | Windows, macOS, Linux{% endblock %}
+{% block meta_description %}Download Voxify for Windows, macOS, or Linux. Install in minutes and activate with your Gumroad membership or lifetime license key.{% endblock %}
+{% block og_title %}Download Voxify{% endblock %}
+{% block og_description %}Get Voxify on desktop, install fast, and activate with your Gumroad license key.{% endblock %}
+
+{% block content %}
+<section class="download-hero reveal">
+  <div class="download-hero-copy">
+    <p class="eyebrow">Desktop Download</p>
+    <h1 class="text-gradient">Install Voxify in minutes on <span class="accent-gradient">Windows, macOS, or Linux.</span></h1>
+    <p>
+      Download the app, run the installer, then paste your Gumroad license key inside Voxify Settings.
+      Keep your workflow private with fast live and batch transcription.
+    </p>
+    <div class="download-license-cta">
+      <a class="btn btn-outline" href="{{ membership_url }}" target="_blank" rel="noopener noreferrer">Get Membership Key</a>
+      <a class="btn btn-ghost" href="{{ onetime_url }}" target="_blank" rel="noopener noreferrer">Buy Lifetime Key</a>
+    </div>
+  </div>
+
+  <div class="download-grid" aria-label="Platform downloads">
+    <article class="download-card glass-strong">
+      <p class="download-pill">Windows</p>
+      <h3>Voxify for Windows</h3>
+      <p class="download-meta">Version {{ release_info.latestVersion }}</p>
+      <p class="download-availability {{ 'is-ready' if download_entries.windows.available else 'is-pending' }}">
+        {{ 'Ready to download' if download_entries.windows.available else 'Build not uploaded yet' }}
+      </p>
+      {% if download_entries.windows.available %}
+        <a class="btn btn-primary" href="{{ url_for('download_platform', platform='windows') }}">Download for Windows</a>
+      {% else %}
+        <button class="btn btn-outline is-disabled" type="button" disabled>Windows build unavailable</button>
+      {% endif %}
+      <p class="download-footnote">
+        {% if download_entries.windows.mode == 'local' %}
+          Direct file from this server.
+        {% elif download_entries.windows.mode == 'external' %}
+          Secure redirect to your Windows build host.
+        {% else %}
+          Add a Windows build file to release folder or set VOXIFY_WINDOWS_DOWNLOAD_URL.
+        {% endif %}
+      </p>
+    </article>
+
+    <article class="download-card glass">
+      <p class="download-pill">macOS</p>
+      <h3>Voxify for macOS</h3>
+      <p class="download-meta">Version {{ release_info.latestVersion }}</p>
+      <p class="download-availability {{ 'is-ready' if download_entries.macos.available else 'is-pending' }}">
+        {{ 'Ready to download' if download_entries.macos.available else 'Build not uploaded yet' }}
+      </p>
+      {% if download_entries.macos.available %}
+        <a class="btn btn-primary" href="{{ url_for('download_platform', platform='macos') }}">Download for macOS</a>
+      {% else %}
+        <button class="btn btn-outline is-disabled" type="button" disabled>macOS build unavailable</button>
+      {% endif %}
+      <p class="download-footnote">
+        {% if download_entries.macos.mode == 'local' %}
+          Direct file from this server.
+        {% elif download_entries.macos.mode == 'external' %}
+          Secure redirect to your macOS build host.
+        {% else %}
+          Add a macOS build file to release folder or set VOXIFY_MAC_DOWNLOAD_URL.
+        {% endif %}
+      </p>
+    </article>
+
+    <article class="download-card glass">
+      <p class="download-pill">Linux</p>
+      <h3>Voxify for Linux</h3>
+      <p class="download-meta">Version {{ release_info.latestVersion }}</p>
+      <p class="download-availability {{ 'is-ready' if download_entries.linux.available else 'is-pending' }}">
+        {{ 'Ready to download' if download_entries.linux.available else 'Build not uploaded yet' }}
+      </p>
+      {% if download_entries.linux.available %}
+        <a class="btn btn-primary" href="{{ url_for('download_platform', platform='linux') }}">Download for Linux</a>
+      {% else %}
+        <button class="btn btn-outline is-disabled" type="button" disabled>Linux build unavailable</button>
+      {% endif %}
+      <p class="download-footnote">
+        {% if download_entries.linux.mode == 'local' %}
+          Direct file from this server.
+        {% elif download_entries.linux.mode == 'external' %}
+          Secure redirect to your Linux build host.
+        {% else %}
+          Add a Linux build file to release folder or set VOXIFY_LINUX_DOWNLOAD_URL.
+        {% endif %}
+      </p>
+    </article>
+  </div>
+</section>
+
+<section class="download-steps reveal">
+  <div class="section-head">
+    <h2>Simple Setup Flow</h2>
+    <p>Short and clear setup for every user.</p>
+  </div>
+  <ol class="steps-list">
+    <li><strong>Buy a plan on Gumroad:</strong> membership or one-time lifetime.</li>
+    <li><strong>Download the app:</strong> choose Windows, macOS, or Linux above.</li>
+    <li><strong>Run installer / open app:</strong> finish first launch setup.</li>
+    <li><strong>Paste your license key in Settings:</strong> app verifies and starts transcription.</li>
+  </ol>
+  <p class="download-note">
+    Windows, macOS, and Linux use separate native builds. Lifetime purchases use a non-recurring quota model (default 3,000,000 characters), and membership plans refresh by billing cycle.
+  </p>
+</section>
+{% endblock %}

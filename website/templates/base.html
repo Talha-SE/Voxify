@@ -34,12 +34,14 @@
       </a>
       <nav class="nav-links" id="nav-links" aria-label="Primary">
         <a href="{{ url_for('home') }}">Home</a>
+        <a href="{{ url_for('home') }}#plans">Pricing</a>
+        <a href="{{ url_for('download_page') }}">Download</a>
         <a href="{{ url_for('privacy_policy') }}">Privacy</a>
         <a href="{{ url_for('terms_and_conditions') }}">Terms</a>
       </nav>
       <div class="header-right">
         <div class="header-cta desktop-only">
-          <a href="#plans" class="btn-cta">Get Started</a>
+          <a href="{{ url_for('download_page') }}" class="btn-cta">Download App</a>
         </div>
         <button class="mobile-menu-toggle" aria-label="Toggle Menu" aria-expanded="false" id="menu-toggle">
           <span class="hamburger"></span>
@@ -51,9 +53,11 @@
     <div class="mobile-menu" id="mobile-menu">
       <nav class="mobile-nav-links">
         <a href="{{ url_for('home') }}">Home</a>
+        <a href="{{ url_for('home') }}#plans">Pricing</a>
+        <a href="{{ url_for('download_page') }}">Download</a>
         <a href="{{ url_for('privacy_policy') }}">Privacy</a>
         <a href="{{ url_for('terms_and_conditions') }}">Terms</a>
-        <a href="#plans" class="mobile-cta">Get Started</a>
+        <a href="{{ url_for('download_page') }}" class="mobile-cta">Download App</a>
       </nav>
     </div>
   </header>
@@ -76,7 +80,8 @@
           <div class="footer-nav">
             <h4>Product</h4>
             <a href="{{ url_for('home') }}">Home</a>
-            <a href="#plans">Pricing</a>
+            <a href="{{ url_for('download_page') }}">Download</a>
+            <a href="{{ url_for('home') }}#plans">Pricing</a>
             <a href="{{ url_for('home') }}">Features</a>
           </div>
           <div class="footer-nav">
@@ -89,9 +94,6 @@
       <div class="footer-bottom">
         <div class="footer-copyright">
           &copy; {{ current_year }} Voxify by <a href="https://brevios.com" target="_blank" rel="noopener">Brevios.com</a>
-        </div>
-        <div class="footer-admin">
-          <a class="admin-hint" href="{{ url_for('admin_login') }}">Admin Access</a>
         </div>
       </div>
     </div>

@@ -87,3 +87,25 @@ If a subscription is inactive or invalid, it returns `active: false`.
 - Change `FLASK_SECRET_KEY` in `.env` before production deployment.
 - Regenerate `ADMIN_PASSWORD_HASH` with your own password.
 - Keep `.env` private and never commit it.
+
+## Desktop download delivery
+
+The website supports separate platform downloads:
+
+- `/download/windows`
+- `/download/macos`
+- `/download/linux`
+
+Recommended local release artifact names:
+
+- `release/Voxify-v<version>-windows.zip`
+- `release/Voxify-v<version>-macos.zip`
+- `release/Voxify-v<version>-linux.zip`
+
+Optional hosted URL overrides (if files are not served locally):
+
+```env
+VOXIFY_WINDOWS_DOWNLOAD_URL=https://your-cdn.example.com/Voxify-v1.0.0-windows.zip
+VOXIFY_MAC_DOWNLOAD_URL=https://your-cdn.example.com/Voxify-v1.0.0-macos.zip
+VOXIFY_LINUX_DOWNLOAD_URL=https://your-cdn.example.com/Voxify-v1.0.0-linux.zip
+```
