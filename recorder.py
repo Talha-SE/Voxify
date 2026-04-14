@@ -79,6 +79,23 @@ def _system_audio_setup_hint() -> str:
     return "No system-audio loopback source found. Enable Stereo Mix/loopback and retry."
 
 
+def system_audio_support_status() -> tuple[bool, str]:
+    try:
+        import numpy as _np
+    except Exception:
+        return False, "NumPy is unavailable."
+
+    major_text = str(getattr(_np, "__version__", "0")).split(".", 1)[0]
+    try:
+        major = int(major_text)
+    except Exception:
+        major = 0
+
+    if major >= 2:
+        return False, f"System audio capture requires NumPy < 2.0, but NumPy {_np.__version__} is installed."
+    return True, ""
+
+
 def _system_channel_candidates(preferred_channels: int) -> tuple[int, ...]:
     base = max(1, int(preferred_channels or 1))
     candidates: list[int] = [base]

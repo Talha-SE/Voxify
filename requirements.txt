@@ -7,7 +7,7 @@ flet-desktop==0.84.0
 # Audio capture
 sounddevice>=0.4.6
 soundcard>=0.4.2
-numpy>=1.26.0
+numpy>=1.26.0,<2.0
 scipy>=1.11.0
 
 # Mistral API (batch + realtime)

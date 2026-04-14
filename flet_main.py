@@ -1336,6 +1336,15 @@ class VoxifyApp:
         endpointing_mode = self.cfg.get("reliability_mode", "balanced")
         if runtime_cfg and runtime_cfg.in_rollout:
             endpointing_mode = runtime_cfg.endpointing_mode or endpointing_mode
+        if preferred_source == "system":
+            supported, reason = rec_module.system_audio_support_status()
+            if not supported:
+                preferred_source = "mic"
+                self._set_aux_chip("System audio unavailable; using mic", True)
+                self._log_reliability_event(
+                    "fallback_used",
+                    detail=f"batch:mic:{reason}",
+                )
         candidates = [preferred_source]
         if bool(self.cfg.get("auto_fallback_enabled", True)) and self._current_feature_flag("autoFallback", True):
             alt = "system" if preferred_source == "mic" else "mic"
@@ -1388,6 +1397,15 @@ class VoxifyApp:
             self._on_transcription_error("Live mode key is unavailable. Refresh license from Settings and retry.")
             return
         preferred_source = self.cfg.get("source", "mic")
+        if preferred_source == "system":
+            supported, reason = rec_module.system_audio_support_status()
+            if not supported:
+                preferred_source = "mic"
+                self._set_aux_chip("System audio unavailable; using mic", True)
+                self._log_reliability_event(
+                    "fallback_used",
+                    detail=f"live:mic:{reason}",
+                )
         self._live_text_buffer.clear()
         self._live_retry_count = 0
         self._last_live_typed_char = ""
