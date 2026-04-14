@@ -68,7 +68,11 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install PortAudio
-        run: brew install portaudio
+        run: |
+          brew install portaudio
+          echo "PKG_CONFIG_PATH=$(brew --prefix portaudio)/lib/pkgconfig" >> "$GITHUB_ENV"
+          echo "CPPFLAGS=-I$(brew --prefix portaudio)/include" >> "$GITHUB_ENV"
+          echo "LDFLAGS=-L$(brew --prefix portaudio)/lib" >> "$GITHUB_ENV"
 
       - name: Set up Python
         uses: actions/setup-python@v5
