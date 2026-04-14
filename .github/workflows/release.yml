@@ -20,6 +20,9 @@ jobs:
   build-windows:
     name: Build Windows release
     runs-on: windows-latest
+    env:
+      WINDOWS_SIGN_PFX_B64: ${{ secrets.WINDOWS_SIGN_PFX_B64 }}
+      WINDOWS_SIGN_PFX_PASSWORD: ${{ secrets.WINDOWS_SIGN_PFX_PASSWORD }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -35,13 +38,13 @@ jobs:
         run: python -m pip install --upgrade pip; python -m pip install -r requirements.txt
 
       - name: Prepare Windows signing certificate
-        if: ${{ secrets.WINDOWS_SIGN_PFX_B64 != '' && secrets.WINDOWS_SIGN_PFX_PASSWORD != '' }}
+        if: ${{ env.WINDOWS_SIGN_PFX_B64 != '' && env.WINDOWS_SIGN_PFX_PASSWORD != '' }}
         shell: pwsh
         run: |
           $pfxPath = Join-Path $env:RUNNER_TEMP 'voxify-signing.pfx'
-          [IO.File]::WriteAllBytes($pfxPath, [Convert]::FromBase64String('${{ secrets.WINDOWS_SIGN_PFX_B64 }}'))
+          [IO.File]::WriteAllBytes($pfxPath, [Convert]::FromBase64String($env:WINDOWS_SIGN_PFX_B64))
           Add-Content -Path $env:GITHUB_ENV -Value "SIGN_PFX_PATH=$pfxPath"
-          Add-Content -Path $env:GITHUB_ENV -Value "SIGN_PFX_PASSWORD=${{ secrets.WINDOWS_SIGN_PFX_PASSWORD }}"
+          Add-Content -Path $env:GITHUB_ENV -Value "SIGN_PFX_PASSWORD=$env:WINDOWS_SIGN_PFX_PASSWORD"
 
       - name: Build Windows package
         shell: cmd
@@ -57,6 +60,9 @@ jobs:
   build-macos:
     name: Build macOS release
     runs-on: macos-latest
+    env:
+      MACOS_CERT_BASE64: ${{ secrets.MACOS_CERT_BASE64 }}
+      MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -71,14 +77,14 @@ jobs:
         run: python3 -m pip install --upgrade pip && python3 -m pip install -r requirements.txt
 
       - name: Import macOS signing certificate
-        if: ${{ secrets.MACOS_CERT_BASE64 != '' && secrets.MACOS_CERT_PASSWORD != '' }}
+        if: ${{ env.MACOS_CERT_BASE64 != '' && env.MACOS_CERT_PASSWORD != '' }}
         uses: apple-actions/import-codesign-certs@v3
         with:
-          p12-file-base64: ${{ secrets.MACOS_CERT_BASE64 }}
-          p12-password: ${{ secrets.MACOS_CERT_PASSWORD }}
+          p12-file-base64: ${{ env.MACOS_CERT_BASE64 }}
+          p12-password: ${{ env.MACOS_CERT_PASSWORD }}
 
       - name: Detect macOS signing identity
-        if: ${{ secrets.MACOS_CERT_BASE64 != '' && secrets.MACOS_CERT_PASSWORD != '' }}
+        if: ${{ env.MACOS_CERT_BASE64 != '' && env.MACOS_CERT_PASSWORD != '' }}
         shell: bash
         run: |
           IDENTITY="$(security find-identity -v -p codesigning | awk -F'"' 'NR==1 {print $2}')"
