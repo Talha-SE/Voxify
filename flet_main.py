@@ -237,14 +237,11 @@ class VoxifyApp:
         self.aux_chip.border = ft.Border.all(1, ft.Colors.with_opacity(0.55, AUX_BORDER))
 
         self.settings_icon.color = ft.Colors.with_opacity(0.8, SETTINGS_ICON)
-        self.close_icon.color = ft.Colors.with_opacity(0.9, CLOSE_ICON)
-        self.minimize_icon.color = ft.Colors.with_opacity(0.9, SETTINGS_ICON)
+        self.minimize_icon.color = ft.Colors.with_opacity(0.9, CLOSE_ICON)
         self.settings_btn.bgcolor = ft.Colors.with_opacity(0.2, CARD_ACTIVE)
         self.settings_btn.border = ft.Border.all(1, ft.Colors.with_opacity(0.2, BORDER))
-        self.minimize_btn.bgcolor = ft.Colors.with_opacity(0.2, CARD_ACTIVE)
-        self.minimize_btn.border = ft.Border.all(1, ft.Colors.with_opacity(0.2, BORDER))
-        self.close_btn.bgcolor = ft.Colors.with_opacity(0.2, CARD_ACTIVE)
-        self.close_btn.border = ft.Border.all(1, ft.Colors.with_opacity(0.2, BORDER))
+        self.minimize_btn.bgcolor = ft.Colors.with_opacity(0.18, DANGER)
+        self.minimize_btn.border = ft.Border.all(1, ft.Colors.with_opacity(0.45, DANGER))
 
         self.controls_group.border = ft.Border.only(left=ft.BorderSide(1, ft.Colors.with_opacity(0.3, ACCENT)))
         self.widget_shell.gradient = ft.LinearGradient(
@@ -347,9 +344,6 @@ class VoxifyApp:
     def _on_widget_hover(self, event: ft.ControlEvent) -> None:
         if str(event.data).lower() == "true":
             self._register_widget_interaction()
-
-    def _toggle_minimized(self, _event) -> None:
-        self._set_minimized(not self._is_minimized)
 
     def _set_minimized(self, minimized: bool) -> None:
         if minimized == self._is_minimized:
@@ -536,28 +530,15 @@ class VoxifyApp:
             ink=True,
         )
 
-        self.minimize_icon = ft.Icon(ft.Icons.REMOVE_ROUNDED, size=14, color=ft.Colors.with_opacity(0.9, SETTINGS_ICON))
+        self.minimize_icon = ft.Icon(ft.Icons.CLOSE_ROUNDED, size=14, color=ft.Colors.with_opacity(0.9, CLOSE_ICON))
         self.minimize_btn = ft.Container(
             width=28,
             height=28,
             border_radius=14,
             alignment=ft.Alignment(0, 0),
-            bgcolor=ft.Colors.with_opacity(0.2, CARD_ACTIVE),
-            border=ft.Border.all(1, ft.Colors.with_opacity(0.2, BORDER)),
+            bgcolor=ft.Colors.with_opacity(0.18, DANGER),
+            border=ft.Border.all(1, ft.Colors.with_opacity(0.45, DANGER)),
             content=self.minimize_icon,
-            on_click=self._toggle_minimized,
-            ink=True,
-        )
-
-        self.close_icon = ft.Icon(ft.Icons.CLOSE_ROUNDED, size=14, color=ft.Colors.with_opacity(0.9, CLOSE_ICON))
-        self.close_btn = ft.Container(
-            width=28,
-            height=28,
-            border_radius=14,
-            alignment=ft.Alignment(0, 0),
-            bgcolor=ft.Colors.with_opacity(0.2, CARD_ACTIVE),
-            border=ft.Border.all(1, ft.Colors.with_opacity(0.2, BORDER)),
-            content=self.close_icon,
             on_click=self._close_app,
             ink=True,
         )
@@ -583,7 +564,7 @@ class VoxifyApp:
             content=ft.Row(
                 spacing=4,
                 vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                controls=[self.action_button, self.settings_btn, self.minimize_btn, self.close_btn],
+                controls=[self.action_button, self.settings_btn, self.minimize_btn],
             ),
         )
 
