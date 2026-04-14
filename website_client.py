@@ -13,7 +13,7 @@ from typing import Any
 
 import requests
 
-DEFAULT_WEBSITE_URL = os.getenv("VOXIFY_WEBSITE_URL") or os.getenv("SONUS_WEBSITE_URL", "http://127.0.0.1:5050")
+DEFAULT_WEBSITE_URL = os.getenv("VOXIFY_WEBSITE_URL") or os.getenv("SONUS_WEBSITE_URL", "https://voxify.brevios.com")
 STATUS_TIMEOUT = 2.0
 BOOTSTRAP_TIMEOUT = 5.0
 UPDATE_TIMEOUT = 5.0
