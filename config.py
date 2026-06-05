@@ -10,6 +10,7 @@ CONFIG_FILE = Path(__file__).parent / "config.json"
 
 DEFAULT_CONFIG = {
     "model": "voxtral-mini-2507",
+    "api_key": "",
     "language": "",          # kept for runtime compatibility; empty means auto-detect
     "sample_rate": 16000,
     "channels": 1,
@@ -35,8 +36,11 @@ DEFAULT_CONFIG = {
     "runtime_channel": "stable",
     "send_reliability_events": False,
     "device_id": "",
+    "gemini_model": "gemini-3.1-flash-live-preview",
+    "gemini_voice": "Puck",
     "auto_minimize": True,
     "minimize_timeout": 10,
+    "pc_control_enabled": True,
     "auto_install_updates": True,
     "restart_after_update": True,
 }

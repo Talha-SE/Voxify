@@ -32,10 +32,10 @@ from werkzeug.security import check_password_hash
 
 try:
     from .license_store import MongoLicenseStore
-    from .secure_api import get_masked_api_key, get_mistral_api_key, get_mistral_model
+    from .secure_api import get_gemini_api_key, get_gemini_model, get_masked_api_key, get_mistral_api_key, get_mistral_model
 except ImportError:
     from license_store import MongoLicenseStore
-    from secure_api import get_masked_api_key, get_mistral_api_key, get_mistral_model
+    from secure_api import get_gemini_api_key, get_gemini_model, get_masked_api_key, get_mistral_api_key, get_mistral_model
 
 load_dotenv()
 
@@ -1274,16 +1274,29 @@ def desktop_bootstrap():
         return jsonify({"success": False, "message": "Quota reached for this cycle. Upgrade or top up to continue."}), 402
 
     live_key = ""
+    gemini_key = ""
+    gemini_model = ""
     if ALLOW_CLIENT_LIVE_KEY:
         try:
             live_key = get_mistral_api_key()
-        except RuntimeError:
+        except RuntimeError as exc:
+            app.logger.warning(f"Mistral API key retrieval failed for bootstrap: {exc}")
             live_key = ""
+        try:
+            gemini_key = get_gemini_api_key()
+            gemini_model = get_gemini_model()
+            app.logger.info(f"Gemini Live key successfully provided for device: {device_id}")
+        except RuntimeError as exc:
+            app.logger.error(f"Gemini API key MISSING in website/.env! Chat feature will be broken: {exc}")
+            gemini_key = ""
+            gemini_model = ""
     return jsonify(
         {
             "success": True,
             "apiKey": live_key,
             "model": get_mistral_model(),
+            "geminiApiKey": gemini_key,
+            "geminiModel": gemini_model,
             "license": entitlement,
         }
     )

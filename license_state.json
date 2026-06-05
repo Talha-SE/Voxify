@@ -1,19 +1,14 @@
 {
-  "tokenEnc": "dpapi:AQAAANCMnd8BFdERjHoAwE/Cl+sBAAAA0toOMwpX1EOnHqYV0zD8AAAAAAAOAAAAVgBvAHgAaQBmAHkAAAAQZgAAAAEAACAAAACvUdmF7sz6/Pkk4OT9mQt/Kl/QF1GneqdhZ5dWcPD/pgAAAAAOgAAAAAIAACAAAADD3yGqkmBjJhacjZoXThTNDSyjK+opULZSa/w/pZj70LAAAABHwMo//F8vLFCOoZlRAh37gOKAYEMUZacvZfxFGxIgCn10onK7YHptXz1mS9bqY/bZ0r+Vm7DoNMOT2F3XU5VX4G5YrsU1shbjP8mtN9vAg2lhkqfG6+vQgX2/VSNCos9SqgFAIEot6y0kY1yjwexOnWTezm8zpHsURpTyWR/YMSK7zxZxF3POPvndRhDLQf70jURXSvxxyut6Z9f/DStBEZE3VcZ92OFC8jVp8hccikAAAAAtS7xI/OhzTuOHsu6A6owhbQWK5r28FTckZui2YP0/asaQJGG8Z94rqbxvl1F/1E35ySJn8cLiX3f81qy1TTII",
-  "licenseKeyEnc": "dpapi:AQAAANCMnd8BFdERjHoAwE/Cl+sBAAAA0toOMwpX1EOnHqYV0zD8AAAAAAAOAAAAVgBvAHgAaQBmAHkAAAAQZgAAAAEAACAAAACEiy0C9umtwHPopvph5FYcYU/4++NhHvgdNiqRJbv1vQAAAAAOgAAAAAIAACAAAAD6D5Mz1nAlPB2uSGT2TsRzOUWfSN/Ep2+SA5efun4ZRTAAAABvm0ww+SN25BVzOs4aSxlH0bqIi1OR8BshSDPdknawIZRIsi79BeCwSrDUGWsUbf5AAAAA8XmwYUm16K4WAOTToCBtzbCZFpuB+iDHv/iTlxWf1AZY2+8vG1tKdflOLd4ZrjFZa22a959jz8f4Pn9AhH8iAw==",
+  "tokenEnc": "dpapi:AQAAANCMnd8BFdERjHoAwE/Cl+sBAAAAGyFirYhDeE6A110HaXKSCgAAAAAOAAAAVgBvAHgAaQBmAHkAAAAQZgAAAAEAACAAAABRV/+slH2PSAfyZ1uzIPs1yRx2TlMkUCIyf+jU+Xf01QAAAAAOgAAAAAIAACAAAACjI9vmc5pHpNKjRsXMfaz/HIMiL4boRmqZemexeScty7AAAADvS1ABltJ31SOWhdn6sFzlBwtizktwITIprtZQnhFE4qCezoEsvsTykJkffSJMhi92jTSq2fyxcHE9UEBUiaab0oghDq47mWJcfpQFg17v45faOWBbPdZBNwSSt3IYX72w98PKShFcvJMkB1l4R3Lnf2XhBvZDdyPfjQ/XwTDhqZLFWx4cF/vRB1LLDwIMj7P/Yedozg+i++Vk/jkHG1emAOhWJmYQI1buUM5MYKJ430AAAABdnHQuIfZODdO8M8eXHbOvRRQWtaIGhUTpsr2lfZIa+3Cd0JVk/wpNNQquP6oZb3QqTghiNUcUozD67dC9Bznb",
+  "licenseKeyEnc": "dpapi:AQAAANCMnd8BFdERjHoAwE/Cl+sBAAAAGyFirYhDeE6A110HaXKSCgAAAAAOAAAAVgBvAHgAaQBmAHkAAAAQZgAAAAEAACAAAADwAXjKo0vF1WFXoXLaFnxDh+/+x1o6wFvyCgyR3fausgAAAAAOgAAAAAIAACAAAAB1U/C+29Ki0hZDezb2A2UKIL1lfdyUspyPMd8L+VaPLDAAAABxl48TCHkuzZ1W27T1Fx9O8HLRMp2aYOhCRhrl7HVZZUgo8QamUcWTCfx+A2hLJIpAAAAAimILTWaIzqsDQgO2g7/IlYb4+F/pOd9cCioTzexDxZPClikDPvqju8i5KDc+6DxB2GjfOEEN1Z6JCstTwPrrzQ==",
   "entitlement": {
-    "licenseId": "69dbd764c913c69818a59150",
+    "license_id": "69dbd764c913c69818a59150",
     "status": "active",
     "plan": "starter",
-    "billingCycle": "monthly",
-    "quotaChars": 50000,
-    "bonusChars": 0,
-    "usedChars": 4696,
-    "usedWords": 946,
-    "remainingChars": 45304,
-    "seatLimit": 1,
-    "activeSeats": 1,
-    "isSubscription": true,
-    "canTranscribe": true
+    "billing_cycle": "monthly",
+    "quota_chars": 50000,
+    "used_chars": 14844,
+    "remaining_chars": 35156,
+    "can_transcribe": true
   }
 }

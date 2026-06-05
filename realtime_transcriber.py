@@ -100,10 +100,22 @@ class RealtimeTranscriber:
         finally:
             self._running = False
             try:
+                # Cancel all pending tasks
+                pending = asyncio.all_tasks(loop)
+                for task in pending:
+                    task.cancel()
+                
+                if pending:
+                    # Give tasks a chance to finish cancellation
+                    loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+                
+                # Shutdown async generators and the loop
                 loop.run_until_complete(loop.shutdown_asyncgens())
+                loop.run_until_complete(loop.shutdown_default_executor())
             except Exception:
                 pass
-            loop.close()
+            finally:
+                loop.close()
 
     async def _async_main(self) -> None:
         # ── Import realtime types (requires the realtime dependency) ───
@@ -165,7 +177,7 @@ class RealtimeTranscriber:
 
                 if isinstance(event, RealtimeTranscriptionSessionCreated):
                     if self.on_status:
-                        self.on_status("🔴 Live — speak now…")
+                        self.on_status("Live — speak now")
 
                 elif isinstance(event, TranscriptionStreamTextDelta):
                     if self.on_delta and event.text:

@@ -13,7 +13,7 @@ from typing import Any
 
 import requests
 
-DEFAULT_WEBSITE_URL = os.getenv("VOXIFY_WEBSITE_URL") or os.getenv("SONUS_WEBSITE_URL", "https://voxify.brevios.com")
+DEFAULT_WEBSITE_URL = os.getenv("VOXIFY_WEBSITE_URL") or os.getenv("SONUS_WEBSITE_URL", "http://127.0.0.1:5050")
 STATUS_TIMEOUT = 2.0
 BOOTSTRAP_TIMEOUT = 5.0
 UPDATE_TIMEOUT = 5.0
@@ -33,6 +33,8 @@ class WebsiteAPIError(RuntimeError):
 class DesktopBootstrap:
     api_key: str
     model: str
+    gemini_api_key: str
+    gemini_model: str
     entitlement: dict[str, Any]
 
 
@@ -305,6 +307,8 @@ def get_desktop_bootstrap(token: str, device_id: str, base_url: str | None = Non
     return DesktopBootstrap(
         api_key=(payload.get("apiKey") or "").strip(),
         model=(payload.get("model") or DEFAULT_MODEL).strip(),
+        gemini_api_key=(payload.get("geminiApiKey") or "").strip(),
+        gemini_model=(payload.get("geminiModel") or "gemini-3.1-flash-live-preview").strip(),
         entitlement=entitlement_raw,
     )
 

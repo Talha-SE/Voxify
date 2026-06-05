@@ -30,3 +30,16 @@ def get_masked_api_key() -> str:
     if len(key) < 8:
         return "not-configured"
     return f"{key[:4]}...{key[-4:]}"
+
+
+def get_gemini_api_key() -> str:
+    """Return the private Gemini API key from environment variables."""
+    api_key = (os.getenv("GEMINI_API_KEY") or "").strip()
+    if not api_key:
+        raise RuntimeError("GEMINI_API_KEY is missing in website/.env")
+    return api_key
+
+
+def get_gemini_model() -> str:
+    """Return the default Gemini model for the Live API."""
+    return (os.getenv("GEMINI_MODEL") or "gemini-3.1-flash-live-preview").strip()

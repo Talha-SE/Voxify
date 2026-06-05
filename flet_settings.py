@@ -4,8 +4,10 @@ import subprocess
 import sys
 import threading
 import time
+import tkinter as tk
 import uuid
 from pathlib import Path
+from tkinter import filedialog
 
 import flet as ft
 import numpy as np
@@ -119,7 +121,7 @@ BATCH_MODEL_OPTIONS = [
 TABS: list[tuple[str, str, str]] = [
     ("general", "General", ft.Icons.PALETTE_OUTLINED),
     ("audio", "Audio", ft.Icons.MIC),
-    ("text", "Text", ft.Icons.AUTO_AWESOME),
+    ("assistant", "Assistant", ft.Icons.SMART_TOY_OUTLINED),
     ("system", "System", ft.Icons.MEMORY_OUTLINED),
     ("about", "About", ft.Icons.INFO_OUTLINE),
 ]
@@ -311,6 +313,89 @@ def main(page: ft.Page) -> None:
     except Exception:
         pass
 
+    def _get_current_ui_cfg() -> dict:
+        is_live_mode = (mode_field.value or "Batch").strip().lower() == "live"
+        allowed_options = MODEL_OPTIONS if is_live_mode else BATCH_MODEL_OPTIONS
+        model_value = next((value for label, value in allowed_options if label == model_field.value), allowed_options[0][1])
+        
+        try:
+            retry_limit = int((live_retry_limit_field.value or "2").strip())
+        except ValueError:
+            retry_limit = 2
+
+        return {
+            "api_key": (api_key_field.value or "").strip(),
+            "model": model_value,
+            "gemini_model": gemini_model_field.value or "gemini-3.1-flash-live-preview",
+            "gemini_voice": voice_field.value or "Puck",
+            "auto_type_delay": int(delay_slider.value or 3),
+            "mode": "Live" if is_live_mode else "Batch",
+            "source": (source_field.value or "Mic").lower(),
+            "always_on_top": bool(always_on_top_switch.value),
+            "check_for_updates": bool(check_updates_switch.value),
+            "theme": "dark" if theme_switch.value else "light",
+            "auto_minimize": bool(auto_minimize_switch.value),
+            "minimize_timeout": int(minimize_timeout_slider.value or 10),
+            "pc_control_enabled": bool(pc_control_switch.value),
+            "live_retry_limit": max(0, min(10, retry_limit)),
+            "voice_commands_enabled": bool(voice_commands_switch.value),
+            "command_prefix": (command_prefix_field.value or "command").strip().lower() or "command",
+            "auto_fallback_enabled": bool(auto_fallback_switch.value),
+            "silence_trim_enabled": bool(silence_trim_switch.value),
+            "send_reliability_events": bool(reliability_events_switch.value),
+            "auto_install_updates": bool(auto_install_updates_switch.value),
+            "restart_after_update": bool(restart_after_update_switch.value),
+            "personal_dictionary": _parse_multiline_list(personal_dictionary_field.value or ""),
+            "text_replacements": _parse_replacements(text_replacements_field.value or ""),
+        }
+
+    def _update_save_button_state(_e=None) -> None:
+        current_ui = _get_current_ui_cfg()
+        
+        keys_to_compare = [
+            "api_key", "model", "gemini_model", "gemini_voice", "auto_type_delay", "mode", "source",
+            "always_on_top", "check_for_updates", "theme", "auto_minimize", "minimize_timeout", "pc_control_enabled",
+            "live_retry_limit", "voice_commands_enabled", "command_prefix", "auto_fallback_enabled",
+            "silence_trim_enabled", "send_reliability_events", "auto_install_updates", "restart_after_update",
+            "personal_dictionary", "text_replacements"
+        ]
+        
+        is_dirty = False
+        for key in keys_to_compare:
+            saved_val = cfg.get(key)
+            current_val = current_ui.get(key)
+            
+            if isinstance(saved_val, (list, dict)):
+                if saved_val != current_val:
+                    is_dirty = True
+                    break
+            else:
+                if str(saved_val).strip().lower() != str(current_val).strip().lower():
+                    if isinstance(saved_val, bool) and saved_val != current_val:
+                        is_dirty = True
+                        break
+                    elif not isinstance(saved_val, bool) and str(saved_val) != str(current_val):
+                        is_dirty = True
+                        break
+
+        if is_dirty:
+            save_button.disabled = False
+            save_button.style.bgcolor = ACCENT_ALT
+            save_button.content.controls[0].name = ft.Icons.SAVE
+            save_button.content.controls[1].value = "Save Changes"
+            status_text.value = "Changes pending..."
+            status_text.color = MUTED
+        else:
+            save_button.disabled = True
+            save_button.style.bgcolor = ft.Colors.with_opacity(0.12, BORDER)
+            save_button.content.controls[0].name = ft.Icons.CHECK_CIRCLE_OUTLINE_ROUNDED
+            save_button.content.controls[1].value = "Saved"
+            status_text.value = "All changes saved"
+            status_text.color = SUCCESS
+            
+        page.update()
+
+    # Create controls without on_change in constructor
     theme_switch = ft.Switch(value=(cfg.get("theme", "dark") == "dark"), active_color=ACCENT_ALT)
     always_on_top_switch = ft.Switch(value=bool(cfg.get("always_on_top", True)), active_color=ACCENT_ALT)
     auto_minimize_switch = ft.Switch(value=bool(cfg.get("auto_minimize", True)), active_color=ACCENT_ALT)
@@ -406,6 +491,238 @@ def main(page: ft.Page) -> None:
     check_updates_switch = ft.Switch(value=bool(cfg.get("check_for_updates", True)), active_color=ACCENT_ALT)
     auto_install_updates_switch = ft.Switch(value=bool(cfg.get("auto_install_updates", True)), active_color=ACCENT_ALT)
     restart_after_update_switch = ft.Switch(value=bool(cfg.get("restart_after_update", True)), active_color=ACCENT_ALT)
+
+    GEMINI_MODEL_OPTIONS: list[tuple[str, str]] = [
+        ("gemini-3.1-flash-live-preview", "Gemini 3.1 Flash Live"),
+        ("gemini-2.5-flash-native-audio-preview-12-2025", "Gemini 2.5 Flash Native Audio"),
+    ]
+
+    gemini_model_field = ft.Dropdown(
+        label="Live Chat Model",
+        value=cfg.get("gemini_model", "gemini-3.1-flash-live-preview"),
+        options=[ft.dropdown.Option(key, text) for key, text in GEMINI_MODEL_OPTIONS],
+        **_field_style(),
+    )
+    pc_control_switch = ft.Switch(value=bool(cfg.get("pc_control_enabled", True)), active_color=ACCENT_ALT)
+
+    GEMINI_VOICES: list[tuple[str, str]] = [
+        ("Achernar", "female"), ("Achird", "male"), ("Algenib", "male"), ("Algieba", "male"),
+        ("Alnilam", "male"), ("Aoede", "female"), ("Autonoe", "female"), ("Callirrhoe", "female"),
+        ("Charon", "male"), ("Despina", "female"), ("Enceladus", "male"), ("Erinome", "female"),
+        ("Fenrir", "male"), ("Gacrux", "female"), ("Iapetus", "male"), ("Kore", "female"),
+        ("Laomedeia", "female"), ("Leda", "female"), ("Orus", "male"), ("Puck", "male"),
+        ("Pulcherrima", "female"), ("Rasalgethi", "male"), ("Sadachbia", "male"), ("Sadaltager", "male"),
+        ("Schedar", "male"), ("Sulafat", "female"), ("Umbriel", "male"), ("Vindemiatrix", "female"),
+        ("Zephyr", "female"), ("Zubenelgenubi", "male"),
+    ]
+
+    GEMINI_GENDER_OPTIONS: list[tuple[str, str]] = [
+        ("all", "All"), ("male", "Male"), ("female", "Female"),
+    ]
+
+    current_gender = "all"
+    current_voice = cfg.get("gemini_voice", "Puck")
+
+    def _build_voice_options(gender: str) -> list[ft.dropdown.Option]:
+        filtered = GEMINI_VOICES if gender == "all" else [v for v in GEMINI_VOICES if v[1] == gender]
+        return [ft.dropdown.Option(name) for name, _ in filtered]
+
+    voice_gender_field = ft.Dropdown(
+        label="Voice Gender",
+        value=current_gender,
+        options=[ft.dropdown.Option(key, text) for key, text in GEMINI_GENDER_OPTIONS],
+        **_field_style(),
+    )
+
+    voice_field = ft.Dropdown(
+        label="Voice",
+        value=current_voice if any(v[0] == current_voice for v in GEMINI_VOICES) else "Puck",
+        options=_build_voice_options(current_gender),
+        **_field_style(),
+    )
+
+    def _on_gender_change(e) -> None:
+        gender = voice_gender_field.value
+        voice_field.options = _build_voice_options(gender)
+        if not any(v[0] == voice_field.value for v in GEMINI_VOICES if gender == "all" or v[1] == gender):
+            voice_field.value = voice_field.options[0].key if voice_field.options else "Puck"
+        _update_save_button_state()
+        voice_gender_field.page.update()
+
+    # Define missing functions before assignment
+    def _sync_model_by_mode() -> None:
+        selected_mode = (mode_field.value or "Batch").strip().lower()
+        is_live_mode = selected_mode == "live"
+        allowed_options = MODEL_OPTIONS if is_live_mode else BATCH_MODEL_OPTIONS
+        allowed_labels = [label for label, _ in allowed_options]
+        if model_field.value not in allowed_labels:
+            model_field.value = allowed_labels[0]
+        model_field.options = _dropdown_options(allowed_options)
+        model_hint_text.value = "Live supports Core and Advanced." if is_live_mode else "Batch supports Core only."
+        model_field.update()
+        model_hint_text.update()
+
+    def on_mode_change(_event: ft.ControlEvent) -> None:
+        _sync_model_by_mode()
+
+    def on_delay_change(_event: ft.ControlEvent) -> None:
+        delay_text.value = f"{int(delay_slider.value)} s"
+        delay_text.update()
+
+    def on_timeout_change(_event: ft.ControlEvent) -> None:
+        minimize_timeout_text.value = f"{int(minimize_timeout_slider.value)} s"
+        minimize_timeout_text.update()
+
+    def on_auto_minimize_toggle(_event: ft.ControlEvent) -> None:
+        timeout_row.visible = bool(auto_minimize_switch.value)
+        timeout_row.update()
+
+    def on_updates_toggle(_event: ft.ControlEvent) -> None:
+        if not check_updates_switch.value:
+            update_notice.visible = False
+            update_status_text.value = f"v{app_info.APP_VERSION} - Updates disabled"
+            update_status_text.color = MUTED
+            page.update()
+            return
+        _check_updates(manual=False)
+
+    def on_theme_toggle(_event: ft.ControlEvent) -> None:
+        nonlocal preview_theme, theme_preview_dirty
+        new_theme = "dark" if theme_switch.value else "light"
+        preview_theme = new_theme
+        theme_preview_dirty = True
+        _apply_theme_constants(new_theme)
+        page.theme_mode = ft.ThemeMode.DARK if new_theme == "dark" else ft.ThemeMode.LIGHT
+        page.bgcolor = BG
+        page.window.bgcolor = BG
+        page.update()
+
+    def on_save(_event: ft.ControlEvent | None = None) -> None:
+        nonlocal cfg, initial_theme, theme_preview_dirty
+        try:
+            status_text.value = "Saving..."
+            status_text.color = MUTED
+            page.update()
+            new_ui_cfg = _get_current_ui_cfg()
+            full_cfg = config.load()
+            full_cfg.update(new_ui_cfg)
+            config.save(full_cfg)
+            cfg = full_cfg
+            initial_theme = cfg.get("theme", "dark")
+            theme_preview_dirty = False
+            page.window.always_on_top = bool(cfg.get("always_on_top", True))
+            _update_save_button_state()
+            _show_snack("Settings saved successfully")
+        except Exception as exc:
+            status_text.value = "Save failed"
+            status_text.color = WARNING
+            _show_snack(f"Save failed: {exc}")
+        page.update()
+
+    def _clear_license(_event: ft.ControlEvent | None = None) -> None:
+        try:
+            license_cache.clear()
+            license_key_field.value = ""
+            nonlocal license_state
+            license_state = {}
+            _render_license_entitlement(None)
+            _show_snack("License cleared from cache")
+        except Exception as exc:
+            _show_snack(f"Failed to clear license: {exc}")
+        page.update()
+
+    def _open_update_download(_e=None):
+        if _latest_update_info and _latest_update_info.download_url:
+            _open_external_url(_latest_update_info.download_url)
+        else:
+            _show_snack("No download URL available")
+
+    def _install_update(_e=None):
+        _show_snack("Installation logic not implemented in this build")
+
+    def _restart_app(_e=None):
+        try:
+            subprocess.Popen([sys.executable] + sys.argv)
+            page.window.destroy()
+        except Exception as exc:
+            _show_snack(f"Failed to restart: {exc}")
+
+    def _ignore_update_version(_e=None):
+        if _latest_update_info:
+            try:
+                c = config.load()
+                c["ignored_update_version"] = _latest_update_info.version
+                config.save(c)
+                update_notice.visible = False
+                _show_snack(f"Ignoring version {_latest_update_info.version}")
+            except Exception as exc:
+                _show_snack(f"Error: {exc}")
+        page.update()
+
+    def _finish_update_check(info: website_client.UpdateInfo | None, manual: bool, ignored_version: str, updates_enabled: bool) -> None:
+        nonlocal _update_check_in_flight, _latest_update_info
+        _update_check_in_flight = False
+        check_now_button.disabled = False
+        
+        if not info or not info.update_available:
+            update_status_text.value = f"v{app_info.APP_VERSION} - Up to date"
+            update_status_text.color = SUCCESS
+            if manual:
+                _show_snack("You have the latest version!")
+            page.update()
+            return
+
+        _latest_update_info = info
+        if info.version == ignored_version and not manual:
+            update_status_text.value = f"v{info.version} available (ignored)"
+            page.update()
+            return
+
+        update_status_text.value = f"New version: v{info.version}"
+        update_status_text.color = WARNING
+        latest_update_text.value = f"Voxify v{info.version} is available"
+        update_note_text.value = info.release_notes or "Stability and feature improvements."
+        update_notice.visible = True
+        update_link_button.visible = bool(info.download_url)
+        install_update_button.visible = False
+        restart_app_button.visible = False
+        page.update()
+
+    def _fail_update_check(error: str, manual: bool) -> None:
+        nonlocal _update_check_in_flight
+        _update_check_in_flight = False
+        check_now_button.disabled = False
+        update_status_text.value = "Update check failed"
+        update_status_text.color = WARNING
+        if manual:
+            _show_snack(f"Update check failed: {error}")
+        page.update()
+
+    # Assign all event handlers as properties AFTER initialization
+    theme_switch.on_change = lambda e: (on_theme_toggle(e), _update_save_button_state(e))
+    always_on_top_switch.on_change = _update_save_button_state
+    auto_minimize_switch.on_change = lambda e: (on_auto_minimize_toggle(e), _update_save_button_state(e))
+    delay_slider.on_change = lambda e: (on_delay_change(e), _update_save_button_state(e))
+    minimize_timeout_slider.on_change = lambda e: (on_timeout_change(e), _update_save_button_state(e))
+    mode_field.on_change = lambda e: (on_mode_change(e), _update_save_button_state(e))
+    source_field.on_change = _update_save_button_state
+    model_field.on_change = _update_save_button_state
+    live_retry_limit_field.on_change = _update_save_button_state
+    voice_commands_switch.on_change = _update_save_button_state
+    auto_fallback_switch.on_change = _update_save_button_state
+    silence_trim_switch.on_change = _update_save_button_state
+    command_prefix_field.on_change = _update_save_button_state
+    personal_dictionary_field.on_change = _update_save_button_state
+    text_replacements_field.on_change = _update_save_button_state
+    reliability_events_switch.on_change = _update_save_button_state
+    check_updates_switch.on_change = lambda e: (on_updates_toggle(e), _update_save_button_state(e))
+    auto_install_updates_switch.on_change = _update_save_button_state
+    restart_after_update_switch.on_change = _update_save_button_state
+    gemini_model_field.on_change = _update_save_button_state
+    pc_control_switch.on_change = _update_save_button_state
+    voice_gender_field.on_change = _on_gender_change
+    voice_field.on_change = _update_save_button_state
+
     status_text = ft.Text("Ready to save", color=MUTED, size=10)
     update_status_text = ft.Text(f"Current version: v{app_info.APP_VERSION}", size=10, color=MUTED)
     latest_update_text = ft.Text("", size=10, color=TEXT, weight=ft.FontWeight.W_600)
@@ -435,6 +752,47 @@ def main(page: ft.Page) -> None:
         password=True,
         can_reveal_password=True,
         **_field_style(),
+    )
+    api_key_field = ft.TextField(
+        label="Private API key",
+        value=(cfg.get("api_key") or "").strip(),
+        password=True,
+        can_reveal_password=True,
+        hint_text="Mistral API key (optional override)",
+        **_field_style(),
+    )
+    api_key_field.on_change = _update_save_button_state
+
+    def _export_api(_e):
+        try:
+            root = tk.Tk()
+            root.withdraw()
+            root.attributes("-topmost", True)
+            file_path = filedialog.asksaveasfilename(
+                parent=root,
+                defaultextension=".txt",
+                filetypes=[("Text files", "*.txt")],
+                initialfile="api.txt",
+                title="Export API Key"
+            )
+            root.destroy()
+            if file_path:
+                key = api_key_field.value or ""
+                with open(file_path, "w", encoding="utf-8") as f:
+                    f.write(key)
+                _show_snack(f"API key exported to {Path(file_path).name}")
+        except Exception as exc:
+            _show_snack(f"Export failed: {exc}")
+
+    export_api_button = ft.OutlinedButton(
+        "Export API",
+        icon=ft.Icons.DOWNLOAD,
+        on_click=_export_api,
+        style=ft.ButtonStyle(
+            color=TEXT,
+            side=ft.BorderSide(1, BORDER),
+            shape=ft.RoundedRectangleBorder(radius=10),
+        ),
     )
     license_status_text = ft.Text("License not activated", size=11, color=MUTED, weight=ft.FontWeight.W_700)
     license_plan_text = ft.Text("", size=10, color=TEXT, weight=ft.FontWeight.W_600)
@@ -492,11 +850,7 @@ def main(page: ft.Page) -> None:
         ),
     )
 
-    audio_diag_hint = ft.Text(
-        "Run a 2-second capture test for Mic and System sources.",
-        size=10,
-        color=MUTED,
-    )
+    audio_diag_hint = ft.Text("Run a 2-second capture test for Mic and System sources.", size=10, color=MUTED)
     audio_diag_mic_text = ft.Text("Mic: not tested", size=10, color=MUTED)
     audio_diag_system_text = ft.Text("System: not tested", size=10, color=MUTED)
     run_audio_diag_button = ft.FilledButton("Run 2s Mic + System test", icon=ft.Icons.GRAPHIC_EQ)
@@ -507,9 +861,7 @@ def main(page: ft.Page) -> None:
     website_link_button = ft.OutlinedButton("Open Voxify Website", icon=ft.Icons.LANGUAGE)
 
     link_button_style = ft.ButtonStyle(
-        color=TEXT,
-        side=ft.BorderSide(1, BORDER),
-        shape=ft.RoundedRectangleBorder(radius=10),
+        color=TEXT, side=ft.BorderSide(1, BORDER), shape=ft.RoundedRectangleBorder(radius=10)
     )
     membership_link_button.style = link_button_style
     onetime_link_button.style = link_button_style
@@ -525,17 +877,13 @@ def main(page: ft.Page) -> None:
             except Exception:
                 pass
 
-    def _persist_theme_preview(theme_name: str) -> None:
-        latest_cfg = config.load()
-        latest_cfg["theme"] = theme_name
-        config.save(latest_cfg)
-
     def _revert_theme_preview_if_needed() -> None:
-        nonlocal preview_theme
-        nonlocal theme_preview_dirty
+        nonlocal preview_theme, theme_preview_dirty
         if theme_preview_dirty and preview_theme != initial_theme:
             try:
-                _persist_theme_preview(initial_theme)
+                latest_cfg = config.load()
+                latest_cfg["theme"] = initial_theme
+                config.save(latest_cfg)
             except Exception:
                 pass
         preview_theme = initial_theme
@@ -544,42 +892,6 @@ def main(page: ft.Page) -> None:
     def _close_window(_event=None) -> None:
         _revert_theme_preview_if_needed()
         page.run_task(_close_window_async)
-
-    def _sync_model_by_mode() -> None:
-        selected_mode = (mode_field.value or "Batch").strip().lower()
-        is_live_mode = selected_mode == "live"
-        allowed_options = MODEL_OPTIONS if is_live_mode else BATCH_MODEL_OPTIONS
-        allowed_labels = [label for label, _ in allowed_options]
-        if model_field.value not in allowed_labels:
-            model_field.value = allowed_labels[0]
-        model_field.options = _dropdown_options(allowed_options)
-        model_hint_text.value = "Live supports Core and Advanced." if is_live_mode else "Batch supports Core only."
-        model_field.update()
-        model_hint_text.update()
-
-    def on_mode_change(_event: ft.ControlEvent) -> None:
-        _sync_model_by_mode()
-
-    def on_delay_change(_event: ft.ControlEvent) -> None:
-        delay_text.value = f"{int(delay_slider.value)} s"
-        delay_text.update()
-
-    def on_timeout_change(_event: ft.ControlEvent) -> None:
-        minimize_timeout_text.value = f"{int(minimize_timeout_slider.value)} s"
-        minimize_timeout_text.update()
-
-    def on_auto_minimize_toggle(_event: ft.ControlEvent) -> None:
-        timeout_row.visible = bool(auto_minimize_switch.value)
-        timeout_row.update()
-
-    def on_updates_toggle(_event: ft.ControlEvent) -> None:
-        if not check_updates_switch.value:
-            update_notice.visible = False
-            update_status_text.value = f"Current version: v{app_info.APP_VERSION} - Disabled"
-            update_status_text.color = MUTED
-            page.update()
-            return
-        _check_updates(manual=False)
 
     def _render_license_entitlement(entitlement: website_client.LicenseEntitlement | None) -> None:
         if not entitlement:
@@ -610,11 +922,7 @@ def main(page: ft.Page) -> None:
         page.update()
 
     def _show_snack(message: str) -> None:
-        page.snack_bar = ft.SnackBar(
-            content=ft.Text(message, color=TEXT),
-            bgcolor=CARD_SOFT,
-            open=True,
-        )
+        page.snack_bar = ft.SnackBar(content=ft.Text(message, color=TEXT), bgcolor=CARD_SOFT, open=True)
         page.update()
 
     def _open_external_url(url: str) -> None:
@@ -627,43 +935,30 @@ def main(page: ft.Page) -> None:
         wav_path = ""
         try:
             sample_rate = int(config.load().get("sample_rate", 16000))
-            probe = rec_module.Recorder(
-                source=source,
-                sample_rate=sample_rate,
-                silence_trim_enabled=False,
-                reliability_mode="latency",
-            )
+            probe = rec_module.Recorder(source=source, sample_rate=sample_rate, silence_trim_enabled=False, reliability_mode="latency")
             probe.start()
             time.sleep(2.0)
             wav_path = probe.stop()
-
             _, audio = wavfile.read(wav_path)
             raw = np.asarray(audio)
-            if raw.size == 0:
-                return False, f"{label}: no audio frames captured"
-
+            if raw.size == 0: return False, f"{label}: no audio frames captured"
             source_is_int = np.issubdtype(raw.dtype, np.integer)
-            if raw.ndim > 1:
-                raw = raw.astype(np.float32).mean(axis=1)
+            if raw.ndim > 1: raw = raw.astype(np.float32).mean(axis=1)
             normalized = raw.astype(np.float32)
             if source_is_int:
                 max_value = float(np.iinfo(audio.dtype).max) or 1.0
                 normalized = normalized / max_value
             else:
                 normalized = np.clip(normalized, -1.0, 1.0)
-
             rms = float(np.sqrt(np.mean(np.square(normalized)))) if normalized.size else 0.0
             peak = float(np.max(np.abs(normalized))) if normalized.size else 0.0
             verdict = "signal detected" if (rms >= 0.010 or peak >= 0.080) else "low signal"
             return True, f"{label}: RMS {rms:.4f} | Peak {peak:.4f} | {verdict}"
-        except Exception as exc:
-            return False, f"{label}: {exc}"
+        except Exception as exc: return False, f"{label}: {exc}"
         finally:
             if wav_path:
-                try:
-                    Path(wav_path).unlink(missing_ok=True)
-                except Exception:
-                    pass
+                try: Path(wav_path).unlink(missing_ok=True)
+                except Exception: pass
 
     def _set_diag_line(source: str, message: str, ok: bool) -> None:
         target = audio_diag_mic_text if source == "mic" else audio_diag_system_text
@@ -686,75 +981,30 @@ def main(page: ft.Page) -> None:
         audio_diag_system_text.value = "System: testing..."
         audio_diag_system_text.color = MUTED
         page.update()
-
         def _worker() -> None:
             signal_ok = True
             for source, label in (("mic", "Mic"), ("system", "System")):
                 ok, message = _diagnostic_probe(source, label)
-                if "low signal" in message.lower() or not ok:
-                    signal_ok = False
+                if "low signal" in message.lower() or not ok: signal_ok = False
                 page.run_thread(_set_diag_line, source, message, ok)
             page.run_thread(_finish_diagnostic, signal_ok)
-
         threading.Thread(target=_worker, daemon=True).start()
-
-    def on_theme_toggle(_event: ft.ControlEvent) -> None:
-        nonlocal preview_theme
-        nonlocal theme_preview_dirty
-        preview_theme = "dark" if theme_switch.value else "light"
-        try:
-            _persist_theme_preview(preview_theme)
-            theme_preview_dirty = preview_theme != initial_theme
-            status_text.value = "Theme preview active (save to keep)"
-            status_text.color = MUTED
-            page.update()
-        except Exception as exc:
-            _show_snack(f"Unable to preview theme: {exc}")
 
     def _activate_license(_event: ft.ControlEvent | None = None) -> None:
         key = (license_key_field.value or "").strip()
         if not key:
-            page.snack_bar = ft.SnackBar(content=ft.Text("License key is required.", color=TEXT), bgcolor=CARD_SOFT, open=True)
-            page.update()
+            _show_snack("License key is required.")
             return
         status_text.value = "Activating license..."
         status_text.color = MUTED
         page.update()
-
         def _worker() -> None:
             try:
-                session_data = website_client.activate_license(
-                    license_key=key,
-                    device_id=device_id,
-                    device_name=f"{app_info.APP_NAME}-{app_info.APP_PLATFORM}",
-                )
-                license_cache.save_state(
-                    token=session_data.token,
-                    license_key=key,
-                    entitlement={
-                        "licenseId": session_data.entitlement.license_id,
-                        "status": session_data.entitlement.status,
-                        "plan": session_data.entitlement.plan,
-                        "quotaChars": session_data.entitlement.quota_chars,
-                        "bonusChars": session_data.entitlement.bonus_chars,
-                        "usedChars": session_data.entitlement.used_chars,
-                        "usedWords": session_data.entitlement.used_words,
-                        "remainingChars": session_data.entitlement.remaining_chars,
-                        "seatLimit": session_data.entitlement.seat_limit,
-                        "activeSeats": session_data.entitlement.active_seats,
-                        "isSubscription": session_data.entitlement.is_subscription,
-                        "canTranscribe": session_data.entitlement.can_transcribe,
-                        "billingCycle": session_data.entitlement.billing_cycle,
-                    },
-                )
-                latest_cfg = config.load()
-                latest_cfg["device_id"] = device_id
-                config.save(latest_cfg)
+                session_data = website_client.activate_license(license_key=key, device_id=device_id, device_name=f"{app_info.APP_NAME}-{app_info.APP_PLATFORM}")
+                license_cache.save_state(token=session_data.token, license_key=key, entitlement=session_data.entitlement.__dict__)
                 page.run_thread(_render_license_entitlement, session_data.entitlement)
                 page.run_thread(_show_snack, "License activated successfully.")
-            except Exception as exc:
-                page.run_thread(_show_snack, str(exc))
-
+            except Exception as exc: page.run_thread(_show_snack, str(exc))
         threading.Thread(target=_worker, daemon=True).start()
 
     def _refresh_license(_event: ft.ControlEvent | None = None) -> None:
@@ -763,498 +1013,94 @@ def main(page: ft.Page) -> None:
         if not token:
             _activate_license(_event)
             return
-
         def _worker() -> None:
             try:
-                session_data = website_client.refresh_license(
-                    token=token,
-                    device_id=device_id,
-                    device_name=f"{app_info.APP_NAME}-{app_info.APP_PLATFORM}",
-                    license_key=(state.get("licenseKey") or "").strip(),
-                )
-                license_cache.save_state(
-                    token=session_data.token,
-                    license_key=(state.get("licenseKey") or "").strip(),
-                    entitlement={
-                        "licenseId": session_data.entitlement.license_id,
-                        "status": session_data.entitlement.status,
-                        "plan": session_data.entitlement.plan,
-                        "quotaChars": session_data.entitlement.quota_chars,
-                        "bonusChars": session_data.entitlement.bonus_chars,
-                        "usedChars": session_data.entitlement.used_chars,
-                        "usedWords": session_data.entitlement.used_words,
-                        "remainingChars": session_data.entitlement.remaining_chars,
-                        "seatLimit": session_data.entitlement.seat_limit,
-                        "activeSeats": session_data.entitlement.active_seats,
-                        "isSubscription": session_data.entitlement.is_subscription,
-                        "canTranscribe": session_data.entitlement.can_transcribe,
-                        "billingCycle": session_data.entitlement.billing_cycle,
-                    },
-                )
+                session_data = website_client.refresh_license(token=token, device_id=device_id, device_name=f"{app_info.APP_NAME}-{app_info.APP_PLATFORM}", license_key=(state.get("licenseKey") or "").strip())
+                license_cache.save_state(token=session_data.token, license_key=(state.get("licenseKey") or "").strip(), entitlement=session_data.entitlement.__dict__)
                 page.run_thread(_render_license_entitlement, session_data.entitlement)
-            except Exception as exc:
-                page.run_thread(_show_snack, str(exc))
-
+            except Exception as exc: page.run_thread(_show_snack, str(exc))
         threading.Thread(target=_worker, daemon=True).start()
-
-    def _clear_license(_event: ft.ControlEvent | None = None) -> None:
-        license_cache.clear_state()
-        license_key_field.value = ""
-        _render_license_entitlement(None)
-
-    def on_save(_event: ft.ControlEvent) -> None:
-        nonlocal initial_theme
-        nonlocal preview_theme
-        nonlocal theme_preview_dirty
-        is_live_mode = (mode_field.value or "Batch").strip().lower() == "live"
-        allowed_options = MODEL_OPTIONS if is_live_mode else BATCH_MODEL_OPTIONS
-        model_value = next((value for label, value in allowed_options if label == model_field.value), allowed_options[0][1])
-        source_value = (source_field.value or "Mic").lower()
-
-        latest_cfg = config.load()
-        latest_cfg.pop("api_key", None)
-        latest_cfg["model"] = model_value
-        latest_cfg["language"] = ""
-        latest_cfg["auto_type_delay"] = int(delay_slider.value or 3)
-        latest_cfg["mode"] = "Live" if is_live_mode else "Batch"
-        latest_cfg["source"] = source_value
-        latest_cfg["always_on_top"] = bool(always_on_top_switch.value)
-        latest_cfg["check_for_updates"] = bool(check_updates_switch.value)
-        latest_cfg["runtime_channel"] = app_info.APP_CHANNEL
-        latest_cfg["theme"] = "dark" if theme_switch.value else "light"
-        latest_cfg["auto_minimize"] = bool(auto_minimize_switch.value)
-        latest_cfg["minimize_timeout"] = int(minimize_timeout_slider.value or 10)
-
-        try:
-            retry_limit = int((live_retry_limit_field.value or "2").strip())
-        except ValueError:
-            retry_limit = 2
-        latest_cfg["live_retry_limit"] = max(0, min(10, retry_limit))
-        latest_cfg["voice_commands_enabled"] = bool(voice_commands_switch.value)
-        latest_cfg["command_prefix"] = (command_prefix_field.value or "command").strip().lower() or "command"
-        latest_cfg["auto_fallback_enabled"] = bool(auto_fallback_switch.value)
-        latest_cfg["silence_trim_enabled"] = bool(silence_trim_switch.value)
-        latest_cfg["send_reliability_events"] = bool(reliability_events_switch.value)
-        latest_cfg["device_id"] = device_id
-        latest_cfg["auto_install_updates"] = bool(auto_install_updates_switch.value)
-        latest_cfg["restart_after_update"] = bool(restart_after_update_switch.value)
-        latest_cfg["personal_dictionary"] = _parse_multiline_list(personal_dictionary_field.value or "")
-        latest_cfg["text_replacements"] = _parse_replacements(text_replacements_field.value or "")
-        config.save(latest_cfg)
-
-        initial_theme = latest_cfg["theme"] if latest_cfg["theme"] in THEME_PALETTES else "dark"
-        preview_theme = initial_theme
-        theme_preview_dirty = False
-
-        status_text.value = "Saved"
-        status_text.color = SUCCESS
-        page.snack_bar = ft.SnackBar(
-            content=ft.Text("Settings saved", color=TEXT),
-            bgcolor=CARD_SOFT,
-            open=True,
-        )
-        page.update()
-
-    def _open_update_download(_event: ft.ControlEvent) -> None:
-        nonlocal _latest_update_info, _downloaded_update_path
-        if not _latest_update_info or not _latest_update_info.download_url:
-            return
-
-        update_status_text.value = f"Current version: v{app_info.APP_VERSION} - Downloading package..."
-        update_status_text.color = MUTED
-        page.update()
-
-        def _worker() -> None:
-            nonlocal _downloaded_update_path
-            try:
-                downloaded = website_client.download_update_asset(_latest_update_info)
-                _downloaded_update_path = downloaded
-                downloaded_update_text.value = f"Downloaded: {downloaded}"
-                update_status_text.value = f"Current version: v{app_info.APP_VERSION} - Package ready"
-                update_status_text.color = SUCCESS
-                page.snack_bar = ft.SnackBar(
-                    content=ft.Text("Update package downloaded.", color=TEXT),
-                    bgcolor=CARD_SOFT,
-                    open=True,
-                )
-                page.update()
-                if bool(auto_install_updates_switch.value):
-                    page.run_thread(_install_update, None)
-            except Exception as exc:
-                update_status_text.value = f"Current version: v{app_info.APP_VERSION} - Download failed"
-                update_status_text.color = MUTED
-                page.snack_bar = ft.SnackBar(
-                    content=ft.Text(str(exc), color=TEXT),
-                    bgcolor=CARD_SOFT,
-                    open=True,
-                )
-                page.update()
-
-        threading.Thread(target=_worker, daemon=True).start()
-
-    def _install_update(_event: ft.ControlEvent) -> None:
-        nonlocal _latest_update_info, _downloaded_update_path
-        if not _latest_update_info:
-            return
-
-        if not _downloaded_update_path:
-            _open_update_download(_event)
-            return
-
-        try:
-            message = website_client.launch_update_installer(_downloaded_update_path, _latest_update_info)
-            status_text.value = "Installer launched"
-            status_text.color = SUCCESS
-            page.snack_bar = ft.SnackBar(
-                content=ft.Text(message, color=TEXT),
-                bgcolor=CARD_SOFT,
-                open=True,
-            )
-            page.update()
-            if bool(restart_after_update_switch.value):
-                _restart_app(_event)
-        except Exception as exc:
-            page.snack_bar = ft.SnackBar(
-                content=ft.Text(str(exc), color=TEXT),
-                bgcolor=CARD_SOFT,
-                open=True,
-            )
-            page.update()
-
-    def _restart_app(_event: ft.ControlEvent) -> None:
-        try:
-            if getattr(sys, "frozen", False):
-                subprocess.Popen([sys.executable], cwd=str(Path(sys.executable).parent))
-            else:
-                app_script = Path(__file__).with_name("app.py")
-                subprocess.Popen([sys.executable, str(app_script)], cwd=str(app_script.parent))
-            _close_window()
-        except Exception as exc:
-            page.snack_bar = ft.SnackBar(
-                content=ft.Text(f"Unable to restart: {exc}", color=TEXT),
-                bgcolor=CARD_SOFT,
-                open=True,
-            )
-            page.update()
-
-    def _ignore_update_version(_event: ft.ControlEvent) -> None:
-        nonlocal _latest_update_info
-        if not _latest_update_info:
-            return
-        latest_cfg = config.load()
-        latest_cfg["ignored_update_version"] = _latest_update_info.latest_version
-        config.save(latest_cfg)
-        update_notice.visible = False
-        status_text.value = f"Ignored v{_latest_update_info.latest_version}"
-        status_text.color = MUTED
-        page.update()
-
-    def _finish_update_check(
-        info: website_client.UpdateInfo,
-        manual: bool,
-        ignored_version: str,
-        updates_enabled: bool,
-    ) -> None:
-        nonlocal _update_check_in_flight, _latest_update_info, _downloaded_update_path
-        _update_check_in_flight = False
-        check_now_button.disabled = False
-
-        is_ignored = ignored_version == info.latest_version and not info.mandatory
-        has_update = info.update_available and bool(info.download_url) and not is_ignored
-
-        if not updates_enabled and not manual:
-            update_notice.visible = False
-            update_status_text.value = f"Current version: v{app_info.APP_VERSION}"
-            page.update()
-            return
-
-        if has_update:
-            _latest_update_info = info
-            _downloaded_update_path = ""
-            downloaded_update_text.value = ""
-            latest_update_text.value = f"New version v{info.latest_version} is available."
-            update_note_text.value = info.notes or "Performance and reliability improvements are ready."
-            update_notice.visible = True
-            update_status_text.value = f"Current version: v{app_info.APP_VERSION} - Update ready"
-            update_status_text.color = SUCCESS
-            if bool(auto_install_updates_switch.value):
-                _open_update_download(None)
-        else:
-            update_notice.visible = False
-            update_status_text.value = f"Current version: v{app_info.APP_VERSION} - Up to date"
-            update_status_text.color = MUTED
-            if manual:
-                page.snack_bar = ft.SnackBar(
-                    content=ft.Text("You are already on the latest version.", color=TEXT),
-                    bgcolor=CARD_SOFT,
-                    open=True,
-                )
-        page.update()
-
-    def _fail_update_check(message: str, manual: bool) -> None:
-        nonlocal _update_check_in_flight
-        _update_check_in_flight = False
-        check_now_button.disabled = False
-        update_status_text.value = f"Current version: v{app_info.APP_VERSION} - Update check unavailable"
-        update_status_text.color = MUTED
-        if manual:
-            page.snack_bar = ft.SnackBar(
-                content=ft.Text(message, color=TEXT),
-                bgcolor=CARD_SOFT,
-                open=True,
-            )
-        page.update()
 
     def _check_updates(manual: bool = False) -> None:
         nonlocal _update_check_in_flight
-        if _update_check_in_flight:
-            return
+        if _update_check_in_flight: return
         _update_check_in_flight = True
         check_now_button.disabled = True
         update_status_text.value = f"Current version: v{app_info.APP_VERSION} - Checking..."
         update_status_text.color = MUTED
         page.update()
-
         def _worker() -> None:
             updates_enabled = bool(check_updates_switch.value)
             ignored_version = (config.load().get("ignored_update_version") or "").strip()
-            if not updates_enabled and not manual:
-                fallback = website_client.UpdateInfo(False, app_info.APP_VERSION, "", "", False, "", "exe", "", "", True)
-                page.run_thread(_finish_update_check, fallback, manual, ignored_version, updates_enabled)
-                return
             try:
-                info = website_client.get_update_info(
-                    current_version=app_info.APP_VERSION,
-                    platform=app_info.APP_PLATFORM,
-                    channel=app_info.APP_CHANNEL,
-                )
+                info = website_client.get_update_info(current_version=app_info.APP_VERSION, platform=app_info.APP_PLATFORM, channel=app_info.APP_CHANNEL)
                 page.run_thread(_finish_update_check, info, manual, ignored_version, updates_enabled)
-            except Exception as exc:
-                page.run_thread(_fail_update_check, str(exc), manual)
-
+            except Exception as exc: page.run_thread(_fail_update_check, str(exc), manual)
         threading.Thread(target=_worker, daemon=True).start()
 
-    def _on_check_now(_event: ft.ControlEvent) -> None:
-        _check_updates(manual=True)
+    def _on_check_now(_event: ft.ControlEvent) -> None: _check_updates(manual=True)
 
-    update_link_button.on_click = _open_update_download
-    install_update_button.on_click = _install_update
-    restart_app_button.on_click = _restart_app
-    ignore_update_button.on_click = _ignore_update_version
+    update_link_button.on_click = lambda e: _open_update_download(e)
+    install_update_button.on_click = lambda e: _install_update(e)
+    restart_app_button.on_click = lambda e: _restart_app(e)
+    ignore_update_button.on_click = lambda e: _ignore_update_version(e)
     check_now_button.on_click = _on_check_now
     activate_license_button.on_click = _activate_license
     refresh_license_button.on_click = _refresh_license
-    clear_license_button.on_click = _clear_license
+    clear_license_button.on_click = lambda e: _clear_license(e)
     run_audio_diag_button.on_click = _run_audio_diagnostic
     membership_link_button.on_click = lambda _e: _open_external_url(DEFAULT_MEMBERSHIP_URL)
     onetime_link_button.on_click = lambda _e: _open_external_url(DEFAULT_ONETIME_URL)
     gumroad_link_button.on_click = lambda _e: _open_external_url(DEFAULT_GUMROAD_URL)
     website_link_button.on_click = lambda _e: _open_external_url(DEFAULT_WEBSITE_URL)
 
-    delay_slider.on_change = on_delay_change
-    minimize_timeout_slider.on_change = on_timeout_change
-    auto_minimize_switch.on_change = on_auto_minimize_toggle
-    check_updates_switch.on_change = on_updates_toggle
-    theme_switch.on_change = on_theme_toggle
-    mode_field.on_change = on_mode_change
-
     general_content = ft.Column(
         spacing=10,
         controls=[
-            _card(
-                "Appearance",
-                ft.Icons.PALETTE_OUTLINED,
-                [
-                    _setting_row("Dark theme", theme_switch),
-                ],
-            ),
-            _card(
-                "Typing",
-                ft.Icons.KEYBOARD,
-                [
-                    ft.Row(
-                        alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-                        controls=[
-                            ft.Text("Auto-type delay", color=MUTED, size=10, weight=ft.FontWeight.W_700),
-                            delay_text,
-                        ],
-                    ),
-                    delay_slider,
-                ],
-            ),
-            _card(
-                "Smart Behavior",
-                ft.Icons.AUTO_AWESOME,
-                [
-                    _setting_row("Auto-minimize to mic", auto_minimize_switch),
-                    timeout_row,
-                ],
-            ),
+            _card("Appearance", ft.Icons.PALETTE_OUTLINED, [_setting_row("Dark theme", theme_switch)]),
+            _card("Typing", ft.Icons.KEYBOARD, [ft.Row(alignment=ft.MainAxisAlignment.SPACE_BETWEEN, controls=[ft.Text("Auto-type delay", color=MUTED, size=10, weight=ft.FontWeight.W_700), delay_text]), delay_slider]),
+            _card("Smart Behavior", ft.Icons.AUTO_AWESOME, [_setting_row("Auto-minimize to mic", auto_minimize_switch), timeout_row]),
+            _card("Text Tools", ft.Icons.AUTO_FIX_HIGH, [personal_dictionary_field, text_replacements_field]),
         ],
     )
 
     audio_content = ft.Column(
         spacing=10,
         controls=[
-            _card(
-                "Mode & Source",
-                ft.Icons.MIC,
-                [
-                    ft.Row(spacing=10, controls=[ft.Container(expand=True, content=mode_field), ft.Container(expand=True, content=source_field)]),
-                    live_retry_limit_field,
-                    _setting_row("Voice commands", voice_commands_switch),
-                    command_prefix_field,
-                    _setting_row("Auto fallback", auto_fallback_switch),
-                    _setting_row("Adaptive trim", silence_trim_switch),
-                    _setting_row("Always on top", always_on_top_switch),
-                ],
-            ),
-            _card(
-                "Audio Diagnostic",
-                ft.Icons.GRAPHIC_EQ,
-                [
-                    audio_diag_hint,
-                    run_audio_diag_button,
-                    audio_diag_mic_text,
-                    audio_diag_system_text,
-                ],
-            ),
+            _card("Mode & Source", ft.Icons.MIC, [ft.Row(spacing=10, controls=[ft.Container(expand=True, content=mode_field), ft.Container(expand=True, content=source_field)]), live_retry_limit_field, _setting_row("Voice commands", voice_commands_switch), command_prefix_field, _setting_row("Auto fallback", auto_fallback_switch), _setting_row("Adaptive trim", silence_trim_switch), _setting_row("Always on top", always_on_top_switch)]),
+            _card("Audio Diagnostic", ft.Icons.GRAPHIC_EQ, [audio_diag_hint, run_audio_diag_button, audio_diag_mic_text, audio_diag_system_text]),
         ],
     )
 
-    text_content = ft.Column(
+    assistant_content = ft.Column(
         spacing=10,
         controls=[
-            _card(
-                "Text Tools",
-                ft.Icons.AUTO_FIX_HIGH,
-                [
-                    personal_dictionary_field,
-                    text_replacements_field,
-                ],
-            ),
+            _card("Gemini Live Chat", ft.Icons.SMART_TOY_OUTLINED, [ft.Text("Select the Gemini model for real-time voice chat.", size=10, color=MUTED), gemini_model_field, _setting_row("Allow AI to control PC", pc_control_switch)]),
+            _card("Voice", ft.Icons.RECORD_VOICE_OVER_OUTLINED, [ft.Text("Choose a voice for the Gemini assistant.", size=10, color=MUTED), voice_gender_field, voice_field]),
         ],
     )
 
     system_content = ft.Column(
         spacing=10,
         controls=[
-            _card(
-                "License & Quota",
-                ft.Icons.VERIFIED_USER,
-                [
-                    license_key_field,
-                    ft.Row(spacing=8, controls=[activate_license_button, refresh_license_button, clear_license_button]),
-                    license_status_text,
-                    license_plan_text,
-                    license_cycle_text,
-                    license_quota_text,
-                    license_seat_text,
-                ],
-            ),
-            _card(
-                "Purchase & Links",
-                ft.Icons.LINK,
-                [
-                    ft.Text("Upgrade or manage plans quickly.", size=10, color=MUTED),
-                    membership_link_button,
-                    onetime_link_button,
-                    gumroad_link_button,
-                    website_link_button,
-                ],
-            ),
-            _card(
-                "Runtime",
-                ft.Icons.MEMORY_OUTLINED,
-                [
-                    api_source_note,
-                    model_field,
-                    model_hint_text,
-                ],
-            ),
-            _card(
-                "Updates & Telemetry",
-                ft.Icons.UPDATE,
-                [
-                    _setting_row("Check for updates", check_updates_switch),
-                    _setting_row("Auto-install updates", auto_install_updates_switch),
-                    _setting_row("Restart after install", restart_after_update_switch),
-                    _setting_row("Send reliability events", reliability_events_switch),
-                    update_status_text,
-                    check_now_button,
-                    update_notice,
-                ],
-            ),
+            _card("License & Quota", ft.Icons.VERIFIED_USER, [license_key_field, ft.Row(spacing=8, controls=[activate_license_button, refresh_license_button, clear_license_button]), license_status_text, license_plan_text, license_cycle_text, license_quota_text, license_seat_text]),
+            _card("Purchase & Links", ft.Icons.LINK, [ft.Text("Upgrade or manage plans quickly.", size=10, color=MUTED), membership_link_button, onetime_link_button, gumroad_link_button, website_link_button]),
+            _card("Runtime", ft.Icons.MEMORY_OUTLINED, [api_source_note, api_key_field, export_api_button, model_field, model_hint_text]),
+            _card("Updates & Telemetry", ft.Icons.UPDATE, [_setting_row("Check for updates", check_updates_switch), _setting_row("Auto-install updates", auto_install_updates_switch), _setting_row("Restart after install", restart_after_update_switch), _setting_row("Send reliability events", reliability_events_switch), update_status_text, check_now_button, update_notice]),
         ],
     )
 
     about_content = ft.Column(
         spacing=10,
         controls=[
-            _card(
-                "About Voxify",
-                ft.Icons.INFO_OUTLINE,
-                [
-                    ft.Container(
-                        padding=ft.Padding(12, 12, 12, 12),
-                        border_radius=10,
-                        bgcolor=CARD_SOFT,
-                        border=ft.Border.all(1, BORDER),
-                        content=ft.Column(
-                            spacing=6,
-                            controls=[
-                                ft.Row(
-                                    spacing=8,
-                                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                                    controls=[
-                                        _logo_widget(logo_base64, 22),
-                                        ft.Text("Voxify", size=16, color=TEXT, weight=ft.FontWeight.W_900),
-                                    ],
-                                ),
-                                ft.Text("Speech to Text Engine", size=10, color=MUTED, weight=ft.FontWeight.W_700),
-                                ft.Text(f"Version {app_info.APP_VERSION}", size=10, color=MUTED_SOFT),
-                            ],
-                        ),
-                    ),
-                    ft.OutlinedButton(
-                        "Documentation",
-                        icon=ft.Icons.OPEN_IN_NEW,
-                        on_click=lambda _e: page.launch_url("https://brevios.com"),
-                        style=ft.ButtonStyle(
-                            color=TEXT,
-                            side=ft.BorderSide(1, BORDER),
-                            shape=ft.RoundedRectangleBorder(radius=10),
-                        ),
-                    ),
-                    ft.OutlinedButton(
-                        "Privacy Policy",
-                        icon=ft.Icons.OPEN_IN_NEW,
-                        on_click=lambda _e: page.launch_url("http://127.0.0.1:5050/privacy-policy"),
-                        style=ft.ButtonStyle(
-                            color=TEXT,
-                            side=ft.BorderSide(1, BORDER),
-                            shape=ft.RoundedRectangleBorder(radius=10),
-                        ),
-                    ),
-                    ft.OutlinedButton(
-                        "Terms of Service",
-                        icon=ft.Icons.OPEN_IN_NEW,
-                        on_click=lambda _e: page.launch_url("http://127.0.0.1:5050/terms-and-conditions"),
-                        style=ft.ButtonStyle(
-                            color=TEXT,
-                            side=ft.BorderSide(1, BORDER),
-                            shape=ft.RoundedRectangleBorder(radius=10),
-                        ),
-                    ),
-                ],
-            ),
+            _card("About Voxify", ft.Icons.INFO_OUTLINE, [ft.Container(padding=ft.Padding(12, 12, 12, 12), border_radius=10, bgcolor=CARD_SOFT, border=ft.Border.all(1, BORDER), content=ft.Column(spacing=6, controls=[ft.Row(spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER, controls=[_logo_widget(logo_base64, 22), ft.Text("Voxify", size=16, color=TEXT, weight=ft.FontWeight.W_900)]), ft.Text("Speech to Text Engine", size=10, color=MUTED, weight=ft.FontWeight.W_700), ft.Text(f"Version {app_info.APP_VERSION}", size=10, color=MUTED_SOFT)])), ft.OutlinedButton("Documentation", icon=ft.Icons.OPEN_IN_NEW, on_click=lambda _e: page.launch_url("https://brevios.com"), style=ft.ButtonStyle(color=TEXT, side=ft.BorderSide(1, BORDER), shape=ft.RoundedRectangleBorder(radius=10))), ft.OutlinedButton("Privacy Policy", icon=ft.Icons.OPEN_IN_NEW, on_click=lambda _e: page.launch_url("http://127.0.0.1:5050/privacy-policy"), style=ft.ButtonStyle(color=TEXT, side=ft.BorderSide(1, BORDER), shape=ft.RoundedRectangleBorder(radius=10))), ft.OutlinedButton("Terms of Service", icon=ft.Icons.OPEN_IN_NEW, on_click=lambda _e: page.launch_url("http://127.0.0.1:5050/terms-and-conditions"), style=ft.ButtonStyle(color=TEXT, side=ft.BorderSide(1, BORDER), shape=ft.RoundedRectangleBorder(radius=10)))]),
         ],
     )
 
     tab_containers: dict[str, ft.Container] = {
         "general": ft.Container(visible=True, content=general_content),
         "audio": ft.Container(visible=False, content=audio_content),
-        "text": ft.Container(visible=False, content=text_content),
+        "assistant": ft.Container(visible=False, content=assistant_content),
         "system": ft.Container(visible=False, content=system_content),
         "about": ft.Container(visible=False, content=about_content),
     }
@@ -1274,148 +1120,21 @@ def main(page: ft.Page) -> None:
     for tab_id, label, icon_name in TABS:
         icon = ft.Icon(icon_name, size=14, color=MUTED_SOFT)
         text = ft.Text(label, size=9, weight=ft.FontWeight.W_700, color=MUTED_SOFT)
-        button = ft.Container(
-            expand=True,
-            border_radius=10,
-            padding=ft.Padding(6, 8, 6, 8),
-            alignment=ft.Alignment(0, 0),
-            on_click=lambda _e, tid=tab_id: _activate_tab(tid),
-            content=ft.Column(
-                spacing=3,
-                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-                controls=[icon, text],
-            ),
-        )
+        button = ft.Container(expand=True, border_radius=10, padding=ft.Padding(6, 8, 6, 8), alignment=ft.Alignment(0, 0), on_click=lambda _e, tid=tab_id: _activate_tab(tid), content=ft.Column(spacing=3, horizontal_alignment=ft.CrossAxisAlignment.CENTER, controls=[icon, text]))
         tab_buttons[tab_id] = {"container": button, "icon": icon, "label": text}
         segmented_buttons.append(button)
 
     _activate_tab("general")
 
-    save_button = ft.FilledButton(
-        content=ft.Row(
-            tight=True,
-            spacing=6,
-            controls=[
-                ft.Icon(ft.Icons.SAVE, size=14, color=TEXT),
-                ft.Text("Save Changes", weight=ft.FontWeight.W_700),
-            ],
-        ),
-        on_click=on_save,
-        style=ft.ButtonStyle(
-            color=TEXT,
-            bgcolor=ACCENT_ALT,
-            overlay_color=ACCENT,
-            shape=ft.RoundedRectangleBorder(radius=10),
-            padding=ft.Padding(14, 10, 14, 10),
-        ),
-    )
+    save_button = ft.FilledButton(content=ft.Row(tight=True, spacing=6, controls=[ft.Icon(ft.Icons.SAVE, size=14, color=TEXT), ft.Text("Save Changes", weight=ft.FontWeight.W_700)]), on_click=on_save, style=ft.ButtonStyle(color=TEXT, bgcolor=ACCENT_ALT, overlay_color=ACCENT, shape=ft.RoundedRectangleBorder(radius=10), padding=ft.Padding(14, 10, 14, 10)))
 
-    root = ft.Container(
-        expand=True,
-        bgcolor=BG,
-        padding=ft.Padding(10, 10, 10, 10),
-        content=ft.Column(
-            spacing=10,
-            controls=[
-                ft.Container(
-                    padding=ft.Padding(12, 12, 12, 12),
-                    border_radius=14,
-                    bgcolor=SURFACE,
-                    border=ft.Border.all(1, BORDER),
-                    content=ft.Row(
-                        alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                        controls=[
-                            ft.Row(
-                                spacing=8,
-                                vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                                controls=[
-                                    _logo_widget(logo_base64, 18),
-                                    ft.Column(
-                                        spacing=2,
-                                        controls=[
-                                            ft.Text("Voxify", size=16, weight=ft.FontWeight.W_900, color=TEXT),
-                                            ft.Text("Command Center", size=9, color=MUTED, weight=ft.FontWeight.W_700),
-                                        ],
-                                    ),
-                                ],
-                            ),
-                            ft.IconButton(
-                                icon=ft.Icons.CLOSE,
-                                icon_size=16,
-                                icon_color=MUTED,
-                                tooltip="Close",
-                                on_click=_close_window,
-                            ),
-                        ],
-                    ),
-                ),
-                ft.Container(
-                    padding=ft.Padding(4, 4, 4, 4),
-                    border_radius=14,
-                    bgcolor=CARD,
-                    border=ft.Border.all(1, BORDER),
-                    content=ft.Row(spacing=4, controls=segmented_buttons),
-                ),
-                ft.Container(
-                    expand=True,
-                    padding=ft.Padding(0, 2, 0, 2),
-                    content=ft.Column(
-                        scroll=ft.ScrollMode.AUTO,
-                        spacing=10,
-                        controls=[
-                            tab_containers["general"],
-                            tab_containers["audio"],
-                            tab_containers["text"],
-                            tab_containers["system"],
-                            tab_containers["about"],
-                        ],
-                    ),
-                ),
-                ft.Container(
-                    padding=ft.Padding(12, 12, 12, 12),
-                    border_radius=14,
-                    bgcolor=SURFACE,
-                    border=ft.Border.all(1, BORDER),
-                    content=ft.Row(
-                        alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                        controls=[status_text, save_button],
-                    ),
-                ),
-            ],
-        ),
-    )
-
+    root = ft.Container(expand=True, bgcolor=BG, padding=ft.Padding(10, 10, 10, 10), content=ft.Column(spacing=10, controls=[ft.Container(padding=ft.Padding(12, 12, 12, 12), border_radius=14, bgcolor=SURFACE, border=ft.Border.all(1, BORDER), content=ft.Row(alignment=ft.MainAxisAlignment.SPACE_BETWEEN, vertical_alignment=ft.CrossAxisAlignment.CENTER, controls=[ft.Row(spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER, controls=[_logo_widget(logo_base64, 18), ft.Column(spacing=2, controls=[ft.Text("Voxify", size=16, weight=ft.FontWeight.W_900, color=TEXT), ft.Text("Command Center", size=9, color=MUTED, weight=ft.FontWeight.W_700)])]), ft.IconButton(icon=ft.Icons.CLOSE, icon_size=16, icon_color=MUTED, tooltip="Close", on_click=_close_window)])), ft.Container(padding=ft.Padding(4, 4, 4, 4), border_radius=14, bgcolor=CARD, border=ft.Border.all(1, BORDER), content=ft.Row(spacing=4, controls=segmented_buttons)), ft.Container(expand=True, padding=ft.Padding(0, 2, 0, 2), content=ft.Column(scroll=ft.ScrollMode.AUTO, spacing=10, controls=[tab_containers["general"], tab_containers["audio"], tab_containers["assistant"], tab_containers["system"], tab_containers["about"]])), ft.Container(padding=ft.Padding(12, 12, 12, 12), border_radius=14, bgcolor=SURFACE, border=ft.Border.all(1, BORDER), content=ft.Row(alignment=ft.MainAxisAlignment.SPACE_BETWEEN, vertical_alignment=ft.CrossAxisAlignment.CENTER, controls=[status_text, save_button]))]))
     page.add(root)
     page.update()
     _sync_model_by_mode()
-    raw_ent = license_state.get("entitlement") if isinstance(license_state.get("entitlement"), dict) else {}
-    entitlement_obj = None
-    if raw_ent.get("licenseId"):
-        try:
-            entitlement_obj = website_client.LicenseEntitlement(
-                license_id=(raw_ent.get("licenseId") or "").strip(),
-                status=(raw_ent.get("status") or "").strip().lower(),
-                plan=(raw_ent.get("plan") or "starter").strip().lower(),
-                quota_chars=int(raw_ent.get("quotaChars") or 0),
-                bonus_chars=int(raw_ent.get("bonusChars") or 0),
-                used_chars=int(raw_ent.get("usedChars") or 0),
-                used_words=int(raw_ent.get("usedWords") or 0),
-                remaining_chars=int(raw_ent.get("remainingChars") or 0),
-                seat_limit=int(raw_ent.get("seatLimit") or 1),
-                active_seats=int(raw_ent.get("activeSeats") or 0),
-                is_subscription=bool(raw_ent.get("isSubscription", False)),
-                can_transcribe=bool(raw_ent.get("canTranscribe", False)),
-                billing_cycle=(raw_ent.get("billingCycle") or "").strip().lower(),
-            )
-        except Exception:
-            entitlement_obj = None
-    _render_license_entitlement(entitlement_obj)
-    if (license_state.get("token") or "").strip():
-        _refresh_license()
+    _update_save_button_state()
     _check_updates(manual=False)
-
+    _render_license_entitlement(website_client._parse_entitlement(license_state.get("entitlement")) if license_state.get("entitlement") else None)
 
 if __name__ == "__main__":
     ft.run(main, view=ft.AppView.FLET_APP)

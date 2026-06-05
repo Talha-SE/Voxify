@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import math
 import os
 import subprocess
@@ -13,6 +14,15 @@ from typing import Optional
 
 import flet as ft
 
+# Professional Logging Setup
+logger = logging.getLogger("VoxifyApp")
+logger.setLevel(logging.INFO)
+if not logger.handlers:
+    handler = logging.StreamHandler()
+    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
+
 import config
 import app_info
 import branding
@@ -24,6 +34,7 @@ import reliability
 import realtime_transcriber as rt_module
 import transcriber as tr_module
 import website_client
+import gemini_live_client
 
 APP_TITLE = "Voxify"
 ACCENT = "#2563EB"
@@ -54,8 +65,8 @@ MODE_BATCH_BORDER = "#60A5FA"
 MODE_BATCH_TEXT = "#93C5FD"
 BATCH_MODEL = "voxtral-mini-2507"
 LIVE_MODELS = {"voxtral-mini-2507", "voxtral-small-2507"}
-WIDGET_FULL_WIDTH = 280
-WIDGET_FULL_HEIGHT = 56
+WIDGET_FULL_WIDTH = 200
+WIDGET_FULL_HEIGHT = 160
 WIDGET_MINI_WIDTH = 56
 WIDGET_MINI_HEIGHT = 56
 
@@ -125,12 +136,17 @@ class VoxifyApp:
         self._click_listener = None
         self._waiting_click = False
         self._is_recording = False
+        self._is_chatting = False
+        self._is_sharing_screen = False
         self._stopping = False
+        self._gemini_live_client = None
         self._live_text_buffer: list[str] = []
         self._live_paste_job = None
         self._runtime_api_key = ""
         self._api_last_check_at = 0.0
         self._api_cache_ttl_sec = 120.0
+        self._gemini_api_key = ""
+        self._gemini_api_last_check = 0.0
         self._api_check_in_flight = False
         self._api_lock = threading.Lock()
         self._license_token = ""
@@ -149,15 +165,10 @@ class VoxifyApp:
         self._live_source_index = 0
         self._live_type_lock = threading.Lock()
         self._last_live_typed_char = ""
-        self._live_session_chars = 0
-        self._live_session_words = 0
         self._is_minimized = False
         self._auto_minimize_timer: Optional[threading.Timer] = None
+        self._screen_capture_thread: Optional[threading.Thread] = None
 
-        self.status_anim_running = False
-        self.status_anim_step = 0
-        self.status_anim_base = "Ready"
-        self.status_anim_thread: Optional[threading.Thread] = None
         self._wave_anim_running = False
         self._wave_anim_thread: Optional[threading.Thread] = None
         self._settings_process: Optional[subprocess.Popen] = None
@@ -175,7 +186,6 @@ class VoxifyApp:
         threading.Thread(target=self._watch_config_changes, daemon=True).start()
 
     def _window_bgcolor(self) -> str:
-        # Transparent app window removes rectangular corners on Win/macOS.
         if sys.platform.startswith("win") or sys.platform == "darwin":
             return ft.Colors.TRANSPARENT
         return BG
@@ -243,7 +253,46 @@ class VoxifyApp:
         self.minimize_btn.bgcolor = ft.Colors.with_opacity(0.18, DANGER)
         self.minimize_btn.border = ft.Border.all(1, ft.Colors.with_opacity(0.45, DANGER))
 
-        self.controls_group.border = ft.Border.only(left=ft.BorderSide(1, ft.Colors.with_opacity(0.3, ACCENT)))
+        if self._is_chatting:
+            self.chat_icon.name = ft.Icons.AUTO_AWESOME
+            self.chat_icon.color = TEXT
+            self.chat_btn.bgcolor = ACCENT
+            self.chat_btn.gradient = ft.LinearGradient(
+                begin=ft.Alignment(-1, 0),
+                end=ft.Alignment(1, 0),
+                colors=[ACCENT, ACCENT_GLOW],
+            )
+            self.chat_btn.shadow = ft.BoxShadow(
+                blur_radius=16,
+                spread_radius=0,
+                color=ft.Colors.with_opacity(0.45, ACCENT_GLOW),
+            )
+            self.chat_btn.border = ft.Border.all(1, ft.Colors.with_opacity(0.5, ACCENT_GLOW))
+            
+            self.action_button.visible = False
+            self.video_btn.visible = True
+            
+            self.minimized_action_button.opacity = 0.4
+            self.minimized_action_button.disabled = True
+            self.minimized_action_button.bgcolor = ft.Colors.with_opacity(0.1, MUTED)
+            self.minimized_action_icon.color = MUTED_SOFT
+        else:
+            self.chat_icon.name = ft.Icons.AUTO_AWESOME_ROUNDED
+            self.chat_icon.color = ACCENT
+            self.chat_btn.bgcolor = ft.Colors.with_opacity(0.2, CARD_ACTIVE)
+            self.chat_btn.gradient = None
+            self.chat_btn.shadow = None
+            self.chat_btn.border = ft.Border.all(1, ft.Colors.with_opacity(0.2, BORDER))
+            
+            self.action_button.visible = True
+            self.video_btn.visible = False
+            
+            self.action_button.opacity = 1.0
+            self.action_button.disabled = False
+            self.minimized_action_button.opacity = 1.0
+            self.minimized_action_button.disabled = False
+
+        self.controls_group.border = None
         self.widget_shell.gradient = ft.LinearGradient(
             begin=ft.Alignment(-1, -1),
             end=ft.Alignment(1, 1),
@@ -280,6 +329,7 @@ class VoxifyApp:
         self.page.window.title_bar_hidden = True
         self.page.window.title_bar_buttons_hidden = True
         self.page.window.frameless = True
+        self.page.window.prevent_close = True
         self.page.window.always_on_top = bool(self.cfg.get("always_on_top", True))
         self.page.window.movable = True
         try:
@@ -293,7 +343,7 @@ class VoxifyApp:
             event_type = str(getattr(event, "type", "")).lower()
             event_data = str(getattr(event, "data", "")).lower()
             if "close" in event_type or event_data == "close":
-                self._stop_any_active_work()
+                self._close_app(None)
 
         try:
             self.page.window.on_event = _on_window_event
@@ -378,239 +428,58 @@ class VoxifyApp:
         try:
             self.page.update()
         except Exception:
-            # Ignore transient window update failures during rapid minimize/restore transitions.
             pass
 
     def _build_ui(self) -> None:
-        self.title_text = ft.Text(
-            "Voxify",
-            size=10,
-            weight=ft.FontWeight.W_900,
-            color=TEXT,
-        )
-        self.status_text = ft.Text(
-            "Standby",
-            size=7,
-            weight=ft.FontWeight.W_700,
-            color=MUTED,
-            max_lines=1,
-            overflow=ft.TextOverflow.ELLIPSIS,
-        )
+        self.title_text = ft.Text("Voxify", size=10, weight=ft.FontWeight.W_900, color=TEXT)
+        self.status_text = ft.Text("Standby", size=7, weight=ft.FontWeight.W_700, color=MUTED, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS)
+        self.mode_badge_text = ft.Text("LIVE", size=6, weight=ft.FontWeight.W_800, color=ACCENT_GLOW)
+        self.mode_badge = ft.Container(padding=ft.Padding.symmetric(horizontal=5, vertical=1), border_radius=999, bgcolor=ft.Colors.with_opacity(0.15, ACCENT), border=ft.Border.all(1, ft.Colors.with_opacity(0.4, ACCENT)), content=self.mode_badge_text)
+        self.aux_chip_text = ft.Text("", size=7, weight=ft.FontWeight.W_700, color=TEXT, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS)
+        self.aux_chip = ft.Container(visible=False, padding=ft.Padding.symmetric(horizontal=6, vertical=2), border_radius=999, bgcolor=ft.Colors.with_opacity(0.28, AUX_BG), border=ft.Border.all(1, ft.Colors.with_opacity(0.55, AUX_BORDER)), content=self.aux_chip_text)
 
-        self.mode_badge_text = ft.Text(
-            "LIVE",
-            size=6,
-            weight=ft.FontWeight.W_800,
-            color=ACCENT_GLOW,
-        )
-        self.mode_badge = ft.Container(
-            padding=ft.Padding.symmetric(horizontal=5, vertical=1),
-            border_radius=999,
-            bgcolor=ft.Colors.with_opacity(0.15, ACCENT),
-            border=ft.Border.all(1, ft.Colors.with_opacity(0.4, ACCENT)),
-            content=self.mode_badge_text,
-        )
-
-        self.aux_chip_text = ft.Text(
-            "",
-            size=7,
-            weight=ft.FontWeight.W_700,
-            color=TEXT,
-            max_lines=1,
-            overflow=ft.TextOverflow.ELLIPSIS,
-        )
-        self.aux_chip = ft.Container(
-            visible=False,
-            padding=ft.Padding.symmetric(horizontal=6, vertical=2),
-            border_radius=999,
-            bgcolor=ft.Colors.with_opacity(0.28, AUX_BG),
-            border=ft.Border.all(1, ft.Colors.with_opacity(0.55, AUX_BORDER)),
-            content=self.aux_chip_text,
-        )
-
-        self.pulse_ring = ft.Container(
-            width=8,
-            height=8,
-            border_radius=4,
-            bgcolor=ft.Colors.with_opacity(0.3, INACTIVE_DOT),
-            alignment=ft.Alignment(0, 0),
-            animate=120,
-        )
-        self.pulse_core = ft.Container(
-            width=5,
-            height=5,
-            border_radius=2.5,
-            bgcolor=INACTIVE_DOT,
-            animate=120,
-        )
-        indicator = ft.Container(
-            width=12,
-            height=12,
-            alignment=ft.Alignment(0, 0),
-            content=ft.Stack(
-                width=12,
-                height=12,
-                controls=[
-                    ft.Container(alignment=ft.Alignment(0, 0), content=self.pulse_ring),
-                    ft.Container(alignment=ft.Alignment(0, 0), content=self.pulse_core),
-                ],
-            ),
-        )
+        self.pulse_ring = ft.Container(width=8, height=8, border_radius=4, bgcolor=ft.Colors.with_opacity(0.3, INACTIVE_DOT), alignment=ft.Alignment(0, 0), animate=120)
+        self.pulse_core = ft.Container(width=5, height=5, border_radius=2.5, bgcolor=INACTIVE_DOT, animate=120)
+        indicator = ft.Container(width=12, height=12, alignment=ft.Alignment(0, 0), content=ft.Stack(width=12, height=12, controls=[ft.Container(alignment=ft.Alignment(0, 0), content=self.pulse_ring), ft.Container(alignment=ft.Alignment(0, 0), content=self.pulse_core)]))
 
         self.wave_bars: list[ft.Container] = []
         for _ in range(5):
-            bar = ft.Container(
-                width=2,
-                height=5,
-                border_radius=2,
-                bgcolor=BAR_INACTIVE,
-                animate=120,
-            )
+            bar = ft.Container(width=2, height=5, border_radius=2, bgcolor=BAR_INACTIVE, animate=120)
             self.wave_bars.append(bar)
-
-        waveform = ft.Container(
-            width=44,
-            height=16,
-            alignment=ft.Alignment(0, 0),
-            content=ft.Row(
-                spacing=2,
-                alignment=ft.MainAxisAlignment.CENTER,
-                vertical_alignment=ft.CrossAxisAlignment.END,
-                controls=self.wave_bars,
-            ),
-        )
+        waveform = ft.Container(width=44, height=16, alignment=ft.Alignment(0, 0), content=ft.Row(spacing=2, alignment=ft.MainAxisAlignment.CENTER, vertical_alignment=ft.CrossAxisAlignment.END, controls=self.wave_bars))
 
         self.action_label = ft.Text("Start", color=TEXT)
-        self.action_icon = ft.Icon(ft.Icons.MIC_OFF_ROUNDED, size=16, color=ACCENT)
-        self.action_button = ft.Container(
-            width=36,
-            height=36,
-            border_radius=18,
-            alignment=ft.Alignment(0, 0),
-            bgcolor=CARD_ACTIVE,
-            border=ft.Border.all(1, ft.Colors.with_opacity(0.45, ACCENT)),
-            content=self.action_icon,
-            on_click=self._on_action_click,
-            animate=160,
-            shadow=ft.BoxShadow(
-                blur_radius=14,
-                spread_radius=0,
-                color=ft.Colors.with_opacity(0.22, ACCENT),
-            ),
-        )
-
-        self.minimized_action_icon = ft.Icon(ft.Icons.MIC_OFF_ROUNDED, size=20, color=ACCENT)
-        self.minimized_action_button = ft.Container(
-            width=56,
-            height=56,
-            border_radius=28,
-            alignment=ft.Alignment(0, 0),
-            bgcolor=CARD_ACTIVE,
-            border=ft.Border.all(1, ft.Colors.with_opacity(0.45, ACCENT)),
-            content=self.minimized_action_icon,
-            on_click=self._on_action_click,
-            animate=160,
-            shadow=ft.BoxShadow(
-                blur_radius=16,
-                spread_radius=0,
-                color=ft.Colors.with_opacity(0.24, ACCENT),
-            ),
-        )
+        self.action_icon = ft.Icon(ft.Icons.MIC_NONE_ROUNDED, size=16, color=ACCENT)
+        self.action_button = ft.Container(width=36, height=36, border_radius=18, alignment=ft.Alignment(0, 0), bgcolor=CARD_ACTIVE, border=ft.Border.all(1, ft.Colors.with_opacity(0.45, ACCENT)), content=self.action_icon, on_click=self._on_action_click, animate=160, shadow=ft.BoxShadow(blur_radius=14, spread_radius=0, color=ft.Colors.with_opacity(0.22, ACCENT)))
+        self.minimized_action_icon = ft.Icon(ft.Icons.MIC_NONE_ROUNDED, size=20, color=ACCENT)
+        self.minimized_action_button = ft.Container(width=56, height=56, border_radius=28, alignment=ft.Alignment(0, 0), bgcolor=CARD_ACTIVE, border=ft.Border.all(1, ft.Colors.with_opacity(0.45, ACCENT)), content=self.minimized_action_icon, on_click=self._on_action_click, animate=160, shadow=ft.BoxShadow(blur_radius=16, spread_radius=0, color=ft.Colors.with_opacity(0.24, ACCENT)))
 
         self.settings_icon = ft.Icon(ft.Icons.SETTINGS_ROUNDED, size=14, color=ft.Colors.with_opacity(0.8, SETTINGS_ICON))
-        self.settings_btn = ft.Container(
-            width=28,
-            height=28,
-            border_radius=14,
-            alignment=ft.Alignment(0, 0),
-            bgcolor=ft.Colors.with_opacity(0.2, CARD_ACTIVE),
-            border=ft.Border.all(1, ft.Colors.with_opacity(0.2, BORDER)),
-            content=self.settings_icon,
-            on_click=self._open_settings,
-            ink=True,
-        )
-
+        self.settings_btn = ft.Container(width=28, height=28, border_radius=14, alignment=ft.Alignment(0, 0), bgcolor=ft.Colors.with_opacity(0.2, CARD_ACTIVE), border=ft.Border.all(1, ft.Colors.with_opacity(0.2, BORDER)), content=self.settings_icon, on_click=self._open_settings, ink=True)
         self.minimize_icon = ft.Icon(ft.Icons.CLOSE_ROUNDED, size=14, color=ft.Colors.with_opacity(0.9, CLOSE_ICON))
-        self.minimize_btn = ft.Container(
-            width=28,
-            height=28,
-            border_radius=14,
-            alignment=ft.Alignment(0, 0),
-            bgcolor=ft.Colors.with_opacity(0.18, DANGER),
-            border=ft.Border.all(1, ft.Colors.with_opacity(0.45, DANGER)),
-            content=self.minimize_icon,
-            on_click=self._close_app,
-            ink=True,
-        )
+        self.minimize_btn = ft.Container(width=28, height=28, border_radius=14, alignment=ft.Alignment(0, 0), bgcolor=ft.Colors.with_opacity(0.18, DANGER), border=ft.Border.all(1, ft.Colors.with_opacity(0.45, DANGER)), content=self.minimize_icon, on_click=self._close_app, ink=True)
+        self.chat_icon = ft.Icon(ft.Icons.AUTO_AWESOME_ROUNDED, size=14, color=ACCENT)
+        self.chat_btn = ft.Container(width=28, height=28, border_radius=14, alignment=ft.Alignment(0, 0), bgcolor=ft.Colors.with_opacity(0.2, CARD_ACTIVE), border=ft.Border.all(1, ft.Colors.with_opacity(0.2, BORDER)), content=self.chat_icon, on_click=self._on_chat_click, ink=True)
+        
+        self.video_icon = ft.Icon(ft.Icons.VIDEOCAM_OUTLINED, size=14, color=ACCENT)
+        self.video_btn = ft.Container(width=36, height=36, border_radius=18, alignment=ft.Alignment(0, 0), bgcolor=ft.Colors.with_opacity(0.2, CARD_ACTIVE), border=ft.Border.all(1, ft.Colors.with_opacity(0.2, BORDER)), content=self.video_icon, on_click=self._on_video_click, visible=False, ink=True)
 
         brand_block = ft.Column(
-            spacing=0,
-            tight=True,
+            spacing=0, 
+            tight=True, 
+            horizontal_alignment=ft.CrossAxisAlignment.START,
             controls=[
-                ft.Row(
-                    spacing=4,
-                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                    controls=[self.title_text, self.mode_badge],
-                ),
-                self.status_text,
-                self.aux_chip,
-            ],
+                ft.Row(spacing=4, vertical_alignment=ft.CrossAxisAlignment.CENTER, controls=[self.title_text, self.mode_badge]), 
+                self.status_text, 
+                self.aux_chip
+            ]
         )
+        self.controls_group = ft.Container(padding=ft.Padding.symmetric(vertical=4), content=ft.Row(spacing=6, alignment=ft.MainAxisAlignment.CENTER, vertical_alignment=ft.CrossAxisAlignment.CENTER, controls=[self.action_button, self.video_btn, self.chat_btn, self.settings_btn, self.minimize_btn]))
 
-        self.controls_group = ft.Container(
-            margin=ft.Margin.only(left=3),
-            padding=ft.Padding.only(left=8),
-            border=ft.Border.only(left=ft.BorderSide(1, ft.Colors.with_opacity(0.3, ACCENT))),
-            content=ft.Row(
-                spacing=4,
-                vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                controls=[self.action_button, self.settings_btn, self.minimize_btn],
-            ),
-        )
+        self.full_mode_container = ft.Container(visible=True, content=ft.Column(alignment=ft.MainAxisAlignment.SPACE_BETWEEN, horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=12, controls=[ft.Row(alignment=ft.MainAxisAlignment.CENTER, vertical_alignment=ft.CrossAxisAlignment.CENTER, spacing=8, controls=[indicator, brand_block]), ft.Column(horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=4, controls=[waveform, self.aux_chip]), self.controls_group]))
+        self.minimized_mode_container = ft.Container(visible=False, alignment=ft.Alignment(0, 0), content=self.minimized_action_button)
 
-        self.full_mode_container = ft.Container(
-            visible=True,
-            content=ft.Row(
-                alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-                vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                controls=[
-                    ft.Row(
-                        spacing=6,
-                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                        controls=[indicator, brand_block],
-                    ),
-                    waveform,
-                    self.controls_group,
-                ],
-            ),
-        )
-
-        self.minimized_mode_container = ft.Container(
-            visible=False,
-            alignment=ft.Alignment(0, 0),
-            content=self.minimized_action_button,
-        )
-
-        self.widget_shell = ft.Container(
-            expand=True,
-            margin=ft.Margin.all(0),
-            padding=ft.Padding.symmetric(horizontal=10, vertical=6),
-            border_radius=28,
-            gradient=ft.LinearGradient(
-                begin=ft.Alignment(-1, -1),
-                end=ft.Alignment(1, 1),
-                colors=[CARD, WIDGET_GRADIENT_END],
-            ),
-            on_hover=self._on_widget_hover,
-            content=ft.Stack(
-                expand=True,
-                controls=[
-                    self.full_mode_container,
-                    self.minimized_mode_container,
-                ],
-            ),
-        )
-
+        self.widget_shell = ft.Container(expand=True, margin=ft.Margin.all(0), padding=ft.Padding.symmetric(horizontal=12, vertical=12), border_radius=20, gradient=ft.LinearGradient(begin=ft.Alignment(-1, -1), end=ft.Alignment(1, 1), colors=[CARD, WIDGET_GRADIENT_END]), on_hover=self._on_widget_hover, content=ft.Stack(expand=True, controls=[self.full_mode_container, self.minimized_mode_container]))
         root = ft.WindowDragArea(maximizable=False, content=self.widget_shell)
         self.page.add(root)
 
@@ -643,14 +512,7 @@ class VoxifyApp:
             return selected
         return BATCH_MODEL
 
-    def _set_action(
-        self,
-        label: str,
-        fg: str,
-        border: str,
-        text_color: str,
-        on_click,
-    ) -> None:
+    def _set_action(self, label: str, fg: str, border: str, text_color: str, on_click) -> None:
         self.action_label.value = label
         self.action_label.color = text_color
         self.action_button.on_click = on_click
@@ -666,7 +528,7 @@ class VoxifyApp:
         is_settings = "settings" in label
         is_retry = "retry" in label
 
-        icon_name = ft.Icons.MIC_OFF_ROUNDED
+        icon_name = ft.Icons.MIC_NONE_ROUNDED
         icon_color = ACCENT
         button_bg = CARD_ACTIVE
         button_border = ft.Colors.with_opacity(0.45, border)
@@ -678,11 +540,7 @@ class VoxifyApp:
             icon_color = TEXT
             button_bg = ACCENT
             button_border = ft.Colors.with_opacity(0.5, ACCENT_GLOW)
-            button_gradient = ft.LinearGradient(
-                begin=ft.Alignment(-1, 0),
-                end=ft.Alignment(1, 0),
-                colors=[ACCENT, ACCENT_GLOW],
-            )
+            button_gradient = ft.LinearGradient(begin=ft.Alignment(-1, 0), end=ft.Alignment(1, 0), colors=[ACCENT, ACCENT_GLOW])
             glow_color = ft.Colors.with_opacity(0.45, ACCENT_GLOW)
         elif is_cancel:
             icon_name = ft.Icons.CANCEL_ROUNDED
@@ -700,13 +558,13 @@ class VoxifyApp:
             icon_name = ft.Icons.SETTINGS_ROUNDED
             icon_color = ACCENT
             button_bg = CARD_ACTIVE
-            button_border = ft.Colors.with_opacity(0.5, ACCENT)
+            button_border = ft.Border.all(1, ft.Colors.with_opacity(0.5, ACCENT))
             glow_color = ft.Colors.with_opacity(0.24, ACCENT)
         elif is_retry:
             icon_name = ft.Icons.REFRESH_ROUNDED
             icon_color = ACCENT_GLOW
             button_bg = CARD_ACTIVE
-            button_border = ft.Colors.with_opacity(0.5, ACCENT)
+            button_border = ft.Border.all(1, ft.Colors.with_opacity(0.5, ACCENT))
             glow_color = ft.Colors.with_opacity(0.24, ACCENT)
         elif is_busy:
             icon_name = ft.Icons.HOURGLASS_TOP_ROUNDED
@@ -715,7 +573,7 @@ class VoxifyApp:
             button_border = ft.Colors.with_opacity(0.45, BORDER)
             glow_color = ft.Colors.with_opacity(0.0, ACCENT)
         elif "start" in label:
-            icon_name = ft.Icons.MIC_OFF_ROUNDED
+            icon_name = ft.Icons.MIC_NONE_ROUNDED
             icon_color = ACCENT
             button_bg = CARD_ACTIVE
             button_border = ft.Colors.with_opacity(0.45, ACCENT)
@@ -728,30 +586,18 @@ class VoxifyApp:
             glow_color = ft.Colors.with_opacity(0.15, border)
 
         self.action_icon.name = icon_name
-        self.action_icon.color = icon_color
-        self.action_button.bgcolor = button_bg
-        self.action_button.gradient = button_gradient
-        self.action_button.border = ft.Border.all(1, button_border)
-        self.action_button.shadow = ft.BoxShadow(
-            blur_radius=16,
-            spread_radius=0,
-            color=glow_color,
-        )
+        self.action_icon.color = MUTED_SOFT if self._is_chatting else icon_color
+        self.action_button.bgcolor = ft.Colors.with_opacity(0.1, MUTED) if self._is_chatting else button_bg
+        self.action_button.gradient = None if self._is_chatting else button_gradient
+        self.action_button.border = ft.Border.all(1, button_border) if not isinstance(button_border, ft.Border) else button_border
+        self.action_button.shadow = ft.BoxShadow(blur_radius=16, spread_radius=0, color=ft.Colors.with_opacity(0.0 if self._is_chatting else 1.0, glow_color) if isinstance(glow_color, str) else glow_color)
 
         self.minimized_action_icon.name = icon_name
-        self.minimized_action_icon.color = icon_color
-        self.minimized_action_button.bgcolor = button_bg
-        self.minimized_action_button.gradient = button_gradient
-        self.minimized_action_button.border = ft.Border.all(1, button_border)
-        self.minimized_action_button.shadow = ft.BoxShadow(
-            blur_radius=16,
-            spread_radius=0,
-            color=glow_color,
-        )
-
-    def _set_health_chip(self, text: str = "", active: bool = False) -> None:
-        # Health chip is intentionally hidden in the compact modern UI.
-        return
+        self.minimized_action_icon.color = MUTED_SOFT if self._is_chatting else icon_color
+        self.minimized_action_button.bgcolor = ft.Colors.with_opacity(0.1, MUTED) if self._is_chatting else button_bg
+        self.minimized_action_button.gradient = None if self._is_chatting else button_gradient
+        self.minimized_action_button.border = ft.Border.all(1, button_border) if not isinstance(button_border, ft.Border) else button_border
+        self.minimized_action_button.shadow = ft.BoxShadow(blur_radius=16, spread_radius=0, color=ft.Colors.with_opacity(0.0 if self._is_chatting else 1.0, glow_color) if isinstance(glow_color, str) else glow_color)
 
     def _set_aux_chip(self, text: str = "", active: bool = False) -> None:
         self.aux_chip.visible = active
@@ -765,15 +611,8 @@ class VoxifyApp:
     def _start_wave_animation(self) -> None:
         if self._wave_anim_running:
             return
-
         self._wave_anim_running = True
-        wave_heights: tuple[tuple[float, ...], ...] = (
-            (0.2, 0.6, 0.3, 0.8, 0.2),
-            (0.2, 0.8, 0.4, 1.0, 0.2),
-            (0.2, 0.5, 0.9, 0.4, 0.2),
-            (0.2, 1.0, 0.5, 0.7, 0.2),
-            (0.2, 0.7, 0.3, 0.9, 0.2),
-        )
+        wave_heights = ((0.2, 0.6, 0.3, 0.8, 0.2), (0.2, 0.8, 0.4, 1.0, 0.2), (0.2, 0.5, 0.9, 0.4, 0.2), (0.2, 1.0, 0.5, 0.7, 0.2), (0.2, 0.7, 0.3, 0.9, 0.2))
 
         def _animate() -> None:
             step = 0
@@ -782,416 +621,417 @@ class VoxifyApp:
                     active = self._is_visual_active()
                     pattern = wave_heights[step % len(wave_heights)] if active else wave_heights[0]
                     pulse = (math.sin(step * 0.6) + 1.0) / 2.0
-
                     for index, bar in enumerate(self.wave_bars):
                         bar.height = int(4 + pattern[index] * 10)
                         bar.bgcolor = BAR_ACTIVE if active else BAR_INACTIVE
-
                     ring_size = int(8 + (4 * pulse if active else 2 * pulse))
                     ring_alpha = 0.45 if active else (0.2 + 0.12 * pulse)
                     ring_color = ACCENT_GLOW if active else INACTIVE_DOT
-
                     self.pulse_ring.width = ring_size
                     self.pulse_ring.height = ring_size
                     self.pulse_ring.border_radius = ring_size / 2
                     self.pulse_ring.bgcolor = ft.Colors.with_opacity(ring_alpha, ring_color)
                     self.pulse_core.bgcolor = ACTIVE_DOT if active else INACTIVE_DOT
-
                     self.page.update()
                 except Exception:
                     self._wave_anim_running = False
                     break
-
                 step += 1
                 time.sleep(0.15 if active else 0.28)
 
-        self._wave_anim_thread = threading.Thread(target=_animate, daemon=True)
-        self._wave_anim_thread.start()
+        threading.Thread(target=_animate, daemon=True).start()
+
+    def _on_chat_click(self, _event) -> None:
+        self._register_widget_interaction()
+        if self._is_chatting:
+            self._stop_chat_mode()
+            return
+        self._api_check_in_flight = False
+        self._waiting_click = False
+        self._stop_target_listener()
+        self.page.window.opacity = 1.0
+        if self._is_recording:
+            self._is_recording = False
+            if self._rt_transcriber: self._rt_transcriber.stop(); self._rt_transcriber = None
+            if self._recorder: self._recorder = None
+        self._start_chat_mode()
+
+    def _start_chat_mode(self) -> None:
+        self._is_chatting = True
+        self._set_status("Connecting to Gemini...", ACCENT, animate=True)
+        self._apply_theme_to_controls()
+        try:
+            gemini_key = self._get_gemini_api_key()
+            gemini_model = self.cfg.get("gemini_model", "gemini-3.1-flash-live-preview")
+            gemini_voice = self.cfg.get("gemini_voice", "Puck")
+            
+            system_instruction = (
+                "You are Voxify, a highly intelligent and autonomous PC AI assistant. "
+                "You have deep integration with the user's computer and the web. "
+                "CRITICAL RULES:\n"
+                "1. VERIFICATION: Whenever you perform a visual action (opening an app, a tab, clicking, or typing), "
+                "you MUST look at the live screen share (if enabled) to VERIFY the action succeeded. "
+                "If you don't see the expected result on the screen, do not lie to the user. "
+                "Instead, report the failure and try an alternative method or ask for clarification.\n"
+                "2. SMART MODALITY: Use 'web_search' for background info (weather, facts) to avoid browser popups. "
+                "Only use 'search_web' or 'open_url' if the user explicitly wants to see the browser.\n"
+                "3. TABS vs WINDOWS: Default to opening in a 'tab' unless a 'window' is specifically requested. "
+                "If a tab fails to appear in the current window, try opening it as a new window.\n"
+                "4. CONTEXT: Always check the 'get_active_window_info' and 'read_clipboard' to stay updated on the user's current task."
+            )
+
+            tools = [{"function_declarations": [
+                {"name": "open_app", "description": "Searches for and opens an application on the computer.", "parameters": {"type": "OBJECT", "properties": {"query": {"type": "STRING", "description": "App name (e.g., 'chrome', 'notepad')."}}, "required": ["query"]}},
+                {"name": "mouse_click", "description": "Clicks at specific screen coordinates.", "parameters": {"type": "OBJECT", "properties": {"x": {"type": "INTEGER"}, "y": {"type": "INTEGER"}, "button": {"type": "STRING", "enum": ["left", "right", "middle"], "default": "left"}, "double": {"type": "BOOLEAN", "default": False}}, "required": ["x", "y"]}},
+                {"name": "move_mouse", "description": "Moves the mouse cursor to specific screen coordinates with smooth easing.", "parameters": {"type": "OBJECT", "properties": {"x": {"type": "INTEGER"}, "y": {"type": "INTEGER"}, "duration": {"type": "NUMBER", "default": 0.2}}, "required": ["x", "y"]}},
+                {"name": "move_mouse_relative", "description": "Moves the mouse cursor by a small pixel offset from its current position.", "parameters": {"type": "OBJECT", "properties": {"dx": {"type": "INTEGER"}, "dy": {"type": "INTEGER"}}, "required": ["dx", "dy"]}},
+                {"name": "mouse_drag", "description": "Drags the mouse from one point to another (useful for sliders or moving files).", "parameters": {"type": "OBJECT", "properties": {"x1": {"type": "INTEGER"}, "y1": {"type": "INTEGER"}, "x2": {"type": "INTEGER"}, "y2": {"type": "INTEGER"}, "button": {"type": "STRING", "enum": ["left", "right"], "default": "left"}}, "required": ["x1", "y1", "x2", "y2"]}},
+                {"name": "type_text", "description": "Types text at the current cursor position or at specific screen coordinates.", "parameters": {"type": "OBJECT", "properties": {"text": {"type": "STRING"}, "press_enter": {"type": "BOOLEAN", "default": True}, "x": {"type": "INTEGER", "description": "Optional x coordinate to click before typing."}, "y": {"type": "INTEGER", "description": "Optional y coordinate to click before typing."}}, "required": ["text"]}},
+                {"name": "smooth_scroll", "description": "Scrolls the screen up or down smoothly.", "parameters": {"type": "OBJECT", "properties": {"direction": {"type": "STRING", "enum": ["up", "down"]}, "clicks": {"type": "INTEGER", "description": "Scroll distance.", "default": 3}}, "required": ["direction"]}},
+                {"name": "start_scrolling", "description": "Starts scrolling the page continuously in a specific direction.", "parameters": {"type": "OBJECT", "properties": {"direction": {"type": "STRING", "enum": ["up", "down"]}, "speed": {"type": "NUMBER", "description": "Seconds between scroll steps (smaller is faster).", "default": 0.5}}, "required": ["direction"]}},
+                {"name": "stop_scrolling", "description": "Stops the continuous scrolling action.", "parameters": {"type": "OBJECT", "properties": {}}},
+                {"name": "press_key", "description": "Presses a specific keyboard key.", "parameters": {"type": "OBJECT", "properties": {"key": {"type": "STRING", "description": "Key like 'enter', 'win', 'tab'."}}, "required": ["key"]}},
+                {"name": "list_windows", "description": "Returns a list of titles for all currently visible windows.", "parameters": {"type": "OBJECT", "properties": {}}},
+                {"name": "manage_window", "description": "Activates, minimizes, maximizes, or closes a specific window by its title.", "parameters": {"type": "OBJECT", "properties": {"title": {"type": "STRING", "description": "Full or partial window title."}, "action": {"type": "STRING", "enum": ["activate", "minimize", "maximize", "close"]}}, "required": ["title", "action"]}},
+                {"name": "get_system_status", "description": "Retrieves real-time system resource usage (CPU, RAM, Battery) and local time.", "parameters": {"type": "OBJECT", "properties": {}}},
+                {"name": "read_clipboard", "description": "Reads the current text content from the system clipboard. Use this to get context on what the user is working on.", "parameters": {"type": "OBJECT", "properties": {}}},
+                {"name": "get_active_window_info", "description": "Returns information (title and process name) about the window the user is currently looking at.", "parameters": {"type": "OBJECT", "properties": {}}},
+                {"name": "system_action", "description": "Performs system-level actions like locking the PC or sleeping.", "parameters": {"type": "OBJECT", "properties": {"action": {"type": "STRING", "enum": ["lock", "sleep", "empty_trash"]}}, "required": ["action"]}},
+                {"name": "set_volume", "description": "Sets the system volume to a specific percentage.", "parameters": {"type": "OBJECT", "properties": {"level": {"type": "INTEGER", "description": "Volume percentage (0-100)."}}, "required": ["level"]}},
+                {"name": "set_brightness", "description": "Sets the screen brightness to a specific percentage.", "parameters": {"type": "OBJECT", "properties": {"level": {"type": "INTEGER", "description": "Brightness percentage (0-100)."}}, "required": ["level"]}},
+                {"name": "run_shell_command", "description": "Executes a PowerShell command and returns the output. Use this for developer tasks or system queries.", "parameters": {"type": "OBJECT", "properties": {"command": {"type": "STRING"}}, "required": ["command"]}},
+                {"name": "list_files", "description": "Lists the most recent files in a specific user directory.", "parameters": {"type": "OBJECT", "properties": {"directory": {"type": "STRING", "enum": ["downloads", "documents", "desktop", "pictures", "videos"], "default": "downloads"}}, "required": ["directory"]}},
+                {"name": "read_file", "description": "Reads the first 5000 characters of a text file for analysis.", "parameters": {"type": "OBJECT", "properties": {"path": {"type": "STRING", "description": "Full file path."}}, "required": ["path"]}},
+                {"name": "get_screens_info", "description": "Returns details about all connected monitors (resolution, primary screen).", "parameters": {"type": "OBJECT", "properties": {}}},
+                {"name": "media_control", "description": "Controls system media playback and volume.", "parameters": {"type": "OBJECT", "properties": {"action": {"type": "STRING", "enum": ["play_pause", "next", "previous", "volume_up", "volume_down", "mute"]}}, "required": ["action"]}},
+                {"name": "search_web", "description": "Opens the default browser and searches for a specific query.", "parameters": {"type": "OBJECT", "properties": {"query": {"type": "STRING"}, "mode": {"type": "STRING", "enum": ["tab", "window"], "default": "tab"}}, "required": ["query"]}},
+                {"name": "web_search", "description": "Performs a background web search and returns text snippets to you (the AI). Use this to answer user questions without opening a browser.", "parameters": {"type": "OBJECT", "properties": {"query": {"type": "STRING"}}, "required": ["query"]}},
+                {"name": "open_url", "description": "Opens a specific website URL in the default browser.", "parameters": {"type": "OBJECT", "properties": {"url": {"type": "STRING"}, "mode": {"type": "STRING", "enum": ["tab", "window"], "default": "tab"}}, "required": ["url"]}},
+                {"name": "get_local_time", "description": "Returns the current local date and time.", "parameters": {"type": "OBJECT", "properties": {}}},
+                {"name": "get_mouse_position", "description": "Returns the current (x, y) coordinates of the mouse cursor.", "parameters": {"type": "OBJECT", "properties": {}}}
+            ]}]
+            self._gemini_live_client = gemini_live_client.GeminiLiveClient(
+                api_key=gemini_key, 
+                model=gemini_model, 
+                voice_name=gemini_voice, 
+                tools=tools, 
+                system_instruction=system_instruction,
+                on_status=lambda s: self.page.run_thread(self._set_gemini_status, s), 
+                on_error=lambda e: self.page.run_thread(self._on_gemini_error, e), 
+                on_transcript=lambda t: self.page.run_thread(self._on_gemini_transcript, t), 
+                on_tool_call=self._handle_ai_tool_call
+            )
+            self._gemini_live_client.start()
+            self._is_recording = True
+        except Exception as exc:
+            self._is_chatting = False
+            self._is_recording = False
+            self._on_transcription_error(f"Gemini Live failed: {exc}")
+            self._apply_theme_to_controls()
+            return
+        self.page.update()
+
+    def _handle_ai_tool_call(self, name: str, args: dict) -> dict:
+        self.page.run_thread(self._set_status, f"AI {name}...", SUCCESS)
+        
+        # Security/Privacy Check: Is PC Control enabled?
+        pc_control_enabled = bool(self.cfg.get("pc_control_enabled", True))
+        
+        # Tools that are allowed even if PC Control is OFF (Read-only or background)
+        allowed_tools = ["web_search", "get_local_time", "get_system_status", "read_clipboard", "get_active_window_info", "list_windows", "list_files"]
+        
+        if not pc_control_enabled and name not in allowed_tools:
+            return {"success": False, "error": "PC Control is currently disabled by the user in Settings. You can only chat and search the web."}
+
+        try:
+            if name == "open_app": return {"success": output_handler.open_application(args.get("query", ""))}
+            elif name == "mouse_click": return {"success": output_handler.mouse_click(x=args.get("x"), y=args.get("y"), button=args.get("button", "left"), double=args.get("double", False))}
+            elif name == "move_mouse": return {"success": output_handler.move_mouse(x=args.get("x"), y=args.get("y"), duration=args.get("duration", 0.2))}
+            elif name == "move_mouse_relative": return {"success": output_handler.move_mouse_relative(dx=args.get("dx", 0), dy=args.get("dy", 0), duration=args.get("duration", 0.1))}
+            elif name == "mouse_drag": return {"success": output_handler.mouse_drag(x1=args.get("x1"), y1=args.get("y1"), x2=args.get("x2"), y2=args.get("y2"), button=args.get("button", "left"))}
+            elif name == "type_text":
+                text = args.get("text", "")
+                if args.get("press_enter", True): text += "\n"
+                return {"success": output_handler.type_text(text)}
+            elif name == "smooth_scroll": return {"success": output_handler.smooth_scroll(direction=args.get("direction", "down"), clicks=args.get("clicks", 3))}
+            elif name == "start_scrolling": return {"success": output_handler.start_continuous_scroll(direction=args.get("direction", "down"), speed=args.get("speed", 0.5))}
+            elif name == "stop_scrolling": return {"success": output_handler.stop_continuous_scroll()}
+            elif name == "press_key": return {"success": output_handler.send_shortcut(args.get("key", ""))}
+            elif name == "list_windows": return {"success": True, "windows": output_handler.list_windows()}
+            elif name == "manage_window": return {"success": output_handler.manage_window(title=args.get("title", ""), action=args.get("action", "activate"))}
+            elif name == "get_system_status": return {"success": True, "status": output_handler.get_system_status()}
+            elif name == "read_clipboard": return {"success": True, "content": output_handler.read_clipboard()}
+            elif name == "get_active_window_info": return {"success": True, "info": output_handler.get_active_window_info()}
+            elif name == "system_action": return {"success": output_handler.system_action(action=args.get("action", ""))}
+            elif name == "list_files": return {"success": True, "files": output_handler.list_files(directory=args.get("directory", "downloads"))}
+            elif name == "read_file": return {"success": True, "content": output_handler.read_file_content(path=args.get("path", ""))}
+            elif name == "run_shell_command": return {"success": True, "output": output_handler.run_shell_command(command=args.get("command", ""))}
+            elif name == "get_screens_info": return {"success": True, "screens": output_handler.get_screens_info()}
+            elif name == "set_volume": return {"success": output_handler.set_system_volume(level=args.get("level", 50))}
+            elif name == "set_brightness": return {"success": output_handler.set_screen_brightness(level=args.get("level", 50))}
+            elif name == "media_control": return {"success": output_handler.media_control(action=args.get("action", ""))}
+            elif name == "search_web": return {"success": output_handler.search_web(query=args.get("query", ""), mode=args.get("mode", "tab"))}
+            elif name == "web_search": return {"success": True, "results": output_handler.web_search(query=args.get("query", ""))}
+            elif name == "open_url": return {"success": output_handler.open_url(url=args.get("url", ""), mode=args.get("mode", "tab"))}
+            elif name == "get_local_time": return {"success": True, "time": output_handler.get_local_time()}
+        except Exception as exc: return {"success": False, "error": str(exc)}
+        return {"success": False, "error": "Unknown tool"}
+
+    def _stop_chat_mode(self) -> None:
+        self._is_chatting = False
+        self._is_recording = False
+        self._stop_screen_sharing()
+        if self._gemini_live_client: self._gemini_live_client.stop(); self._gemini_live_client = None
+        self._set_status("Chat closed", MUTED)
+        self._apply_theme_to_controls()
+        self._reset_to_ready()
+
+    def _set_gemini_status(self, status: str) -> None:
+        mapping = {"Connected": "Gemini Live ready", "Listening": "Listening...", "Interrupted": "You interrupted"}
+        display = mapping.get(status, status)
+        self._set_status(display, SUCCESS)
+
+    def _on_gemini_error(self, error: str) -> None:
+        if self._is_chatting:
+            self._is_chatting = False
+            if self._gemini_live_client:
+                try: self._gemini_live_client.stop()
+                except Exception: pass
+                self._gemini_live_client = None
+            self._on_transcription_error(f"Gemini Live: {error}")
+
+    def _on_gemini_transcript(self, transcript: str) -> None:
+        preview = (transcript[:50] + "..") if len(transcript) > 50 else transcript
+        self._set_status(preview, TEXT)
+
+    def _on_video_click(self, _event) -> None:
+        self._register_widget_interaction()
+        if self._is_sharing_screen: self._stop_screen_sharing()
+        else: self._start_screen_sharing()
+
+    def _start_screen_sharing(self) -> None:
+        if not self._is_chatting: return
+        self._is_sharing_screen = True
+        self.video_icon.name = ft.Icons.VIDEOCAM_ROUNDED
+        self.video_icon.color = TEXT
+        self.video_btn.bgcolor = ACCENT
+        self.video_btn.shadow = ft.BoxShadow(blur_radius=12, spread_radius=0, color=ft.Colors.with_opacity(0.4, ACCENT_GLOW))
+        self._set_status("Sharing screen", SUCCESS)
+        self._screen_capture_thread = threading.Thread(target=self._run_screen_capture, daemon=True)
+        self._screen_capture_thread.start()
+        self.page.update()
+
+    def _stop_screen_sharing(self) -> None:
+        self._is_sharing_screen = False
+        self.video_icon.name = ft.Icons.VIDEOCAM_OUTLINED
+        self.video_icon.color = ACCENT
+        self.video_btn.bgcolor = ft.Colors.with_opacity(0.2, CARD_ACTIVE)
+        self.video_btn.shadow = None
+        if self._is_chatting: self._set_status("Listening...", SUCCESS)
+        self.page.update()
+
+    def _run_screen_capture(self) -> None:
+        import io
+        try:
+            import pyautogui
+        except ImportError: return
+        while self._is_sharing_screen and self._is_chatting:
+            try:
+                screenshot = pyautogui.screenshot()
+                screenshot.thumbnail((1024, 1024))
+                img_byte_arr = io.BytesIO()
+                screenshot.save(img_byte_arr, format='JPEG', quality=70)
+                if self._gemini_live_client:
+                    self.page.run_thread(self._gemini_live_client.send_video_frame, img_byte_arr.getvalue())
+                time.sleep(1.0)
+            except Exception: break
+        self._is_sharing_screen = False
 
     def _open_settings(self, _event) -> None:
         self._register_widget_interaction()
-        if self._settings_opening:
-            return
-        if self._settings_process and self._settings_process.poll() is None:
-            return
-
+        if self._settings_opening: return
+        if self._settings_process and self._settings_process.poll() is None: return
         self._settings_opening = True
 
         def _launch() -> None:
             try:
-                if getattr(sys, "frozen", False):
-                    cmd = [sys.executable, "--settings"]
-                    launch_cwd = str(Path(sys.executable).parent)
+                if getattr(sys, "frozen", False): cmd = [sys.executable, "--settings"]
                 else:
                     app_script = Path(__file__).with_name("app.py")
-                    if not app_script.exists():
-                        raise FileNotFoundError("app.py not found next to flet_main.py")
                     cmd = [sys.executable, str(app_script), "--settings"]
-                    launch_cwd = str(app_script.parent)
-
-                kwargs = {"cwd": launch_cwd}
-                if sys.platform.startswith("win"):
-                    kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+                kwargs = {}
+                if sys.platform.startswith("win"): kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
                 self._settings_process = subprocess.Popen(cmd, **kwargs)
-                threading.Thread(
-                    target=self._wait_for_settings_process,
-                    args=(self._settings_process,),
-                    daemon=True,
-                ).start()
-            except Exception as exc:
-                self.page.run_thread(self._show_settings_error, f"Unable to open settings: {exc}")
-            finally:
-                self._settings_opening = False
-
+                threading.Thread(target=self._wait_for_settings_process, args=(self._settings_process,), daemon=True).start()
+            except Exception as exc: self.page.run_thread(self._show_settings_error, f"Unable to open settings: {exc}")
+            finally: self._settings_opening = False
         threading.Thread(target=_launch, daemon=True).start()
 
     def _wait_for_settings_process(self, process: subprocess.Popen) -> None:
-        try:
-            process.wait()
-        except Exception:
-            return
-        try:
-            self.page.run_thread(self._sync_settings_from_disk)
-        except RuntimeError:
-            return
+        try: process.wait()
+        except Exception: return
+        try: self.page.run_thread(self._sync_settings_from_disk)
+        except RuntimeError: return
 
     def _sync_settings_from_disk(self) -> None:
-        previous_mode = (self.cfg.get("mode") or "Batch").strip()
-        previous_channel = (self.cfg.get("runtime_channel") or "stable").strip().lower()
         previous_theme = self._theme_name
-
         self.cfg = config.load()
         self._device_id = self._get_or_create_device_id()
         self._config_mtime = self._get_config_mtime()
         theme_changed = self._apply_theme_globals()
         self.page.window.always_on_top = bool(self.cfg.get("always_on_top", True))
-
-        if theme_changed or previous_theme != self._theme_name:
-            self._apply_theme_to_controls()
-
+        if theme_changed or previous_theme != self._theme_name: self._apply_theme_to_controls()
         self._set_mode_badge()
-
-        if self._auto_minimize_enabled():
-            self._schedule_auto_minimize_timer()
+        if self._auto_minimize_enabled(): self._schedule_auto_minimize_timer()
         else:
             self._cancel_auto_minimize_timer()
-            if self._is_minimized:
-                self._set_minimized(False)
-
-        current_channel = (self.cfg.get("runtime_channel") or "stable").strip().lower()
-        if current_channel != previous_channel:
-            self._runtime_config = None
-            self._runtime_config_last_fetch = 0.0
-
-        if not self._is_recording and not self._waiting_click and not self._api_check_in_flight:
-            if previous_mode != (self.cfg.get("mode") or "Batch").strip():
-                self._set_status("Settings updated", SUCCESS)
-            else:
-                self._set_status("Ready", MUTED)
-
+            if self._is_minimized: self._set_minimized(False)
+        self._set_status("Ready", MUTED)
         self.page.update()
 
     def _show_settings_error(self, message: str) -> None:
-        self.page.snack_bar = ft.SnackBar(
-            content=ft.Text(message, color=TEXT),
-            bgcolor=CARD_SOFT,
-            open=True,
-        )
+        self.page.snack_bar = ft.SnackBar(content=ft.Text(message, color=TEXT), bgcolor=CARD_SOFT, open=True)
         self.page.update()
 
     def _get_config_mtime(self) -> float:
-        try:
-            return float(config.CONFIG_FILE.stat().st_mtime)
-        except Exception:
-            return 0.0
+        try: return float(config.CONFIG_FILE.stat().st_mtime)
+        except Exception: return 0.0
 
     def _watch_config_changes(self) -> None:
         while True:
-            time.sleep(0.7)
+            time.sleep(1.0)
             latest_mtime = self._get_config_mtime()
-            if latest_mtime <= 0.0:
-                continue
-            if latest_mtime == self._config_mtime:
-                continue
+            if latest_mtime <= 0.0 or latest_mtime == self._config_mtime: continue
             self._config_mtime = latest_mtime
-            try:
-                self.page.run_thread(self._sync_settings_from_disk)
-            except RuntimeError:
-                return
+            try: self.page.run_thread(self._sync_settings_from_disk)
+            except RuntimeError: return
 
     def _get_or_create_device_id(self) -> str:
         device_id = (self.cfg.get("device_id") or "").strip()
-        if device_id:
-            return device_id
+        if device_id: return device_id
         device_id = uuid.uuid4().hex
-        latest = config.load()
-        latest["device_id"] = device_id
-        config.save(latest)
-        self.cfg = latest
+        latest = config.load(); latest["device_id"] = device_id
+        config.save(latest); self.cfg = latest
         return device_id
 
     def _load_cached_license_state(self) -> None:
         state = license_cache.load_state()
         self._license_token = (state.get("token") or "").strip()
         raw_entitlement = state.get("entitlement")
-        if isinstance(raw_entitlement, dict) and raw_entitlement.get("licenseId"):
+        if isinstance(raw_entitlement, dict) and (raw_entitlement.get("licenseId") or raw_entitlement.get("license_id")):
             try:
                 self._license_entitlement = website_client.LicenseEntitlement(
-                    license_id=(raw_entitlement.get("licenseId") or "").strip(),
+                    license_id=(raw_entitlement.get("licenseId") or raw_entitlement.get("license_id") or "").strip(),
                     status=(raw_entitlement.get("status") or "").strip().lower(),
                     plan=(raw_entitlement.get("plan") or "starter").strip().lower(),
-                    billing_cycle=(raw_entitlement.get("billingCycle") or "").strip().lower(),
-                    quota_chars=int(raw_entitlement.get("quotaChars") or 0),
-                    bonus_chars=int(raw_entitlement.get("bonusChars") or 0),
-                    used_chars=int(raw_entitlement.get("usedChars") or 0),
-                    used_words=int(raw_entitlement.get("usedWords") or 0),
-                    remaining_chars=int(raw_entitlement.get("remainingChars") or 0),
-                    seat_limit=int(raw_entitlement.get("seatLimit") or 1),
-                    active_seats=int(raw_entitlement.get("activeSeats") or 0),
-                    is_subscription=bool(raw_entitlement.get("isSubscription", False)),
-                    can_transcribe=bool(raw_entitlement.get("canTranscribe", False)),
+                    billing_cycle=(raw_entitlement.get("billingCycle") or raw_entitlement.get("billing_cycle") or "").strip().lower(),
+                    quota_chars=int(raw_entitlement.get("quotaChars") or raw_entitlement.get("quota_chars") or 0),
+                    bonus_chars=int(raw_entitlement.get("bonusChars") or raw_entitlement.get("bonus_chars") or 0),
+                    used_chars=int(raw_entitlement.get("usedChars") or raw_entitlement.get("used_chars") or 0),
+                    used_words=int(raw_entitlement.get("usedWords") or raw_entitlement.get("used_words") or 0),
+                    remaining_chars=int(raw_entitlement.get("remainingChars") or raw_entitlement.get("remaining_chars") or 0),
+                    seat_limit=int(raw_entitlement.get("seatLimit") or raw_entitlement.get("seat_limit") or 1),
+                    active_seats=int(raw_entitlement.get("activeSeats") or raw_entitlement.get("active_seats") or 0),
+                    is_subscription=bool(raw_entitlement.get("isSubscription") or raw_entitlement.get("is_subscription") or False),
+                    can_transcribe=bool(raw_entitlement.get("canTranscribe") or raw_entitlement.get("can_transcribe") or False),
                 )
-            except Exception:
-                self._license_entitlement = None
+            except Exception: self._license_entitlement = None
 
     def _load_runtime_config(self, force: bool = False) -> website_client.RuntimeConfig | None:
         now = time.time()
-        if (
-            not force
-            and self._runtime_config is not None
-            and (now - self._runtime_config_last_fetch) < self._runtime_config_ttl_sec
-        ):
-            return self._runtime_config
-
-        device_id = self._get_or_create_device_id()
-        runtime_channel = (self.cfg.get("runtime_channel") or "stable").strip().lower()
+        if not force and self._runtime_config is not None and (now - self._runtime_config_last_fetch) < self._runtime_config_ttl_sec: return self._runtime_config
         try:
-            runtime_cfg = website_client.get_runtime_config(
-                channel=runtime_channel,
-                platform=app_info.APP_PLATFORM,
-                device_id=device_id,
-            )
-        except Exception:
-            return self._runtime_config
-
-        self._runtime_config = runtime_cfg
-        self._runtime_config_last_fetch = now
-        return runtime_cfg
+            runtime_cfg = website_client.get_runtime_config(channel=(self.cfg.get("runtime_channel") or "stable").strip().lower(), platform=app_info.APP_PLATFORM, device_id=self._device_id)
+            self._runtime_config = runtime_cfg; self._runtime_config_last_fetch = now
+        except Exception: pass
+        return self._runtime_config
 
     def _warmup_startup(self) -> None:
-        try:
-            rec_module.list_input_devices()
-        except Exception:
-            pass
+        try: rec_module.list_input_devices()
+        except Exception: pass
         self._load_runtime_config(force=True)
         try:
             self._refresh_license_session(force=False)
             self._get_runtime_api_key()
-            self.page.run_thread(self._set_health_chip, "Connected", True)
-        except Exception:
-            pass
-
-    def _serialize_entitlement(self, ent: website_client.LicenseEntitlement | None) -> dict:
-        if not ent:
-            return {}
-        return {
-            "licenseId": ent.license_id,
-            "status": ent.status,
-            "plan": ent.plan,
-            "billingCycle": ent.billing_cycle,
-            "quotaChars": ent.quota_chars,
-            "bonusChars": ent.bonus_chars,
-            "usedChars": ent.used_chars,
-            "usedWords": ent.used_words,
-            "remainingChars": ent.remaining_chars,
-            "seatLimit": ent.seat_limit,
-            "activeSeats": ent.active_seats,
-            "isSubscription": ent.is_subscription,
-            "canTranscribe": ent.can_transcribe,
-        }
+            self._get_gemini_api_key()
+        except Exception: pass
 
     def _refresh_license_session(self, force: bool = False) -> website_client.LicenseEntitlement:
         now = time.time()
         with self._license_lock:
-            if (
-                not force
-                and self._license_entitlement is not None
-                and self._license_token
-                and now < self._license_refresh_at
-            ):
-                return self._license_entitlement
-
+            if not force and self._license_entitlement is not None and self._license_token and now < self._license_refresh_at: return self._license_entitlement
         state = license_cache.load_state()
         token = (state.get("token") or self._license_token or "").strip()
-        if not token:
-            raise website_client.WebsiteAPIError("License is not activated. Open Settings and activate your license key.")
-
-        cached_key = (state.get("licenseKey") or "").strip()
-        try:
-            session_data = website_client.refresh_license(
-                token=token,
-                device_id=self._device_id,
-                device_name=f"{app_info.APP_NAME}-{app_info.APP_PLATFORM}",
-                license_key=cached_key,
-            )
+        if not token: raise website_client.WebsiteAPIError("License required. Activate in Settings.")
+        try: session_data = website_client.refresh_license(token=token, device_id=self._device_id, device_name=f"{app_info.APP_NAME}-{app_info.APP_PLATFORM}", license_key=(state.get("licenseKey") or "").strip())
         except Exception:
-            if not cached_key:
-                raise
-            session_data = website_client.activate_license(
-                license_key=cached_key,
-                device_id=self._device_id,
-                device_name=f"{app_info.APP_NAME}-{app_info.APP_PLATFORM}",
-            )
-
+            if not (state.get("licenseKey") or "").strip(): raise
+            session_data = website_client.activate_license(license_key=(state.get("licenseKey") or "").strip(), device_id=self._device_id, device_name=f"{app_info.APP_NAME}-{app_info.APP_PLATFORM}")
         with self._license_lock:
-            self._license_token = session_data.token
-            self._license_entitlement = session_data.entitlement
+            self._license_token = session_data.token; self._license_entitlement = session_data.entitlement
             self._license_refresh_at = time.time() + 1800
             self._runtime_api_key = session_data.live_api_key or self._runtime_api_key
-            if session_data.live_api_key:
-                self._api_last_check_at = time.time()
-        license_cache.save_state(
-            token=session_data.token,
-            license_key=(state.get("licenseKey") or "").strip(),
-            entitlement=self._serialize_entitlement(session_data.entitlement),
-        )
+            if session_data.live_api_key: self._api_last_check_at = time.time()
+        license_cache.save_state(token=session_data.token, license_key=(state.get("licenseKey") or "").strip(), entitlement=self._serialize_entitlement(session_data.entitlement))
         return session_data.entitlement
 
-    def _current_feature_flag(self, key: str, fallback: bool) -> bool:
-        runtime_cfg = self._runtime_config
-        if runtime_cfg and runtime_cfg.in_rollout:
-            value = runtime_cfg.feature_flags.get(key)
-            if isinstance(value, bool):
-                return value
-        return fallback
+    def _get_runtime_api_key(self) -> str:
+        now = time.time()
+        with self._api_lock:
+            if config.get("api_key", "").strip(): return config.get("api_key", "").strip()
+            if self._runtime_api_key and (now - self._api_last_check_at) < self._api_cache_ttl_sec: return self._runtime_api_key
+        bootstrap = website_client.get_desktop_bootstrap(token=self._license_token, device_id=self._device_id)
+        with self._api_lock: self._runtime_api_key = bootstrap.api_key.strip(); self._api_last_check_at = time.time()
+        return self._runtime_api_key
 
-    def _effective_live_retry_limit(self) -> int:
-        base = int(self.cfg.get("live_retry_limit", 2))
-        runtime_cfg = self._runtime_config
-        if runtime_cfg and runtime_cfg.in_rollout:
-            return max(0, min(10, int(runtime_cfg.live_retry_limit)))
-        return max(0, min(10, base))
-
-    def _silence_trim_enabled(self) -> bool:
-        local_value = bool(self.cfg.get("silence_trim_enabled", True))
-        runtime_cfg = self._runtime_config
-        if runtime_cfg and runtime_cfg.in_rollout:
-            return bool(runtime_cfg.silence_trim_enabled)
-        return local_value
-
-    def _log_reliability_event(
-        self,
-        event_type: str,
-        latency_ms: int | None = None,
-        error_code: str = "",
-        detail: str = "",
-    ) -> None:
-        if not self._session_id:
-            return
-        event = reliability.build_event(
-            session_id=self._session_id,
-            mode=self.cfg.get("mode", "Live"),
-            source=self._active_source,
-            event_type=event_type,
-            latency_ms=latency_ms,
-            error_code=error_code,
-            detail=detail,
-        )
-        send_remote = bool(self.cfg.get("send_reliability_events", False)) and self._current_feature_flag(
-            "reliabilityEvents", False
-        )
-        reliability.log_event_async(event, send_remote=send_remote)
-
-    def _process_transcript(self, raw_text: str) -> dictation_features.ProcessedTranscript:
-        return dictation_features.process_transcript(
-            raw_text=raw_text,
-            profile=self.cfg.get("dictation_profile", "notes"),
-            replacements=self.cfg.get("text_replacements", {}),
-            personal_dictionary=self.cfg.get("personal_dictionary", []),
-            voice_commands_enabled=bool(self.cfg.get("voice_commands_enabled", True))
-            and self._current_feature_flag("voiceCommands", True),
-            command_prefix=self.cfg.get("command_prefix", "command"),
-        )
-
-    def _execute_voice_actions(self, actions: tuple[str, ...]) -> None:
-        for action in actions:
-            if action == "undo_last":
-                modifier = "command" if sys.platform == "darwin" else "ctrl"
-                output_handler.send_shortcut(modifier, "z")
-
-    def _handle_typing_failure(self, raw_text: str) -> None:
-        self._last_raw_transcript = raw_text
-        self._typing_failed_pending = True
-        self._log_reliability_event("typing_failed", error_code="typing_failed")
-        output_handler.copy_to_clipboard(raw_text)
-        self._set_aux_chip("Typing delayed", True)
-        self.page.snack_bar = ft.SnackBar(
-            content=ft.Text("Typing failed. Raw transcript copied.", color=TEXT),
-            bgcolor=CARD_SOFT,
-            open=True,
-        )
-        self.page.update()
-        if not self._is_recording and not self._waiting_click:
-            self._set_action("Copy raw", CARD_SOFT, ACCENT, TEXT, self._copy_raw_transcript)
-
-    def _copy_raw_transcript(self, _event) -> None:
-        if not self._last_raw_transcript:
-            return
-        output_handler.copy_to_clipboard(self._last_raw_transcript)
-        self._typing_failed_pending = False
-        self._set_aux_chip("", False)
-        self._reset_to_ready()
-
-    def _close_app(self, _event) -> None:
-        self.page.run_task(self._close_app_async)
-
-    async def _close_app_async(self) -> None:
-        self._stop_any_active_work()
-        await self.page.window.close()
+    def _get_gemini_api_key(self) -> str:
+        now = time.time()
+        if self._gemini_api_key and (now - self._gemini_api_last_check) < 300: return self._gemini_api_key
+        bootstrap = website_client.get_desktop_bootstrap(token=self._license_token, device_id=self._device_id)
+        self._gemini_api_key = bootstrap.gemini_api_key.strip(); self._gemini_api_last_check = now
+        return self._gemini_api_key
 
     def _on_action_click(self, _event) -> None:
+        logger.info("Action button clicked")
         self._register_widget_interaction()
+        if self._is_chatting:
+            logger.info("Action blocked: chat mode active")
+            self.page.snack_bar = ft.SnackBar(content=ft.Text("Stop chat mode first", color=TEXT), bgcolor=CARD_SOFT, open=True)
+            self.page.update(); return
         if self._is_recording:
-            self._stop_recording()
-            return
+            logger.info("Stopping recording via button")
+            self._stop_recording(); return
         if self._waiting_click:
-            self._cancel_target_selection()
-            return
-        if self._api_check_in_flight:
-            return
-        self._ask_for_target_click()
+            logger.info("Cancelling target selection via button")
+            self._cancel_target_selection(); return
+        if not self._api_check_in_flight:
+            logger.info("Starting transcription flow")
+            self._ask_for_target_click()
 
     def _ask_for_target_click(self) -> None:
-        self.cfg = config.load()
-        self._session_id = reliability.new_session_id()
-        self._last_raw_transcript = ""
-        self._typing_failed_pending = False
-        self._api_check_in_flight = True
+        self._session_id = reliability.new_session_id(); self._api_check_in_flight = True
+        logger.info(f"Session {self._session_id}: checking license")
         self._set_status("Checking license", MUTED)
-        self._set_action("Checking...", CARD_SOFT, BORDER, MUTED, lambda _e: None)
         threading.Thread(target=self._check_api_and_prepare_target, daemon=True).start()
 
     def _check_api_and_prepare_target(self) -> None:
         try:
-            self._load_runtime_config(force=False)
-            entitlement = self._refresh_license_session(force=False)
-            if not entitlement.can_transcribe:
-                raise website_client.WebsiteAPIError("License quota exhausted. Top up or renew the plan.")
+            logger.info("Refreshing license session")
+            ent = self._refresh_license_session(force=False)
+            if not ent.can_transcribe:
+                logger.warning("License quota exhausted")
+                raise website_client.WebsiteAPIError("Quota reached.")
+            logger.info(f"License OK: plan={ent.plan}, remaining={ent.remaining_chars}")
             if self._is_live_mode():
+                logger.info("Fetching live runtime API key")
                 self._get_runtime_api_key()
-        except website_client.WebsiteAPIError as exc:
-            self.page.run_thread(self._on_api_check_failed, str(exc))
-            return
+            self.page.run_thread(self._begin_target_selection)
         except Exception as exc:
-            self.page.run_thread(self._on_api_check_failed, f"Unable to initialize API: {exc}")
-            return
-        self.page.run_thread(self._begin_target_selection)
+            logger.error(f"API check failed: {exc}")
+            self.page.run_thread(self._on_api_check_failed, str(exc))
 
     def _begin_target_selection(self) -> None:
-        self._api_check_in_flight = False
-        self._set_health_chip("Connected", True)
-        self._log_reliability_event("api_check_ok")
-        self._waiting_click = True
+        self._api_check_in_flight = False; self._waiting_click = True
         self._set_status("Click a target", MUTED)
         self._set_action("Cancel", CARD_SOFT, DANGER, DANGER, self._cancel_target_selection)
         self.page.window.opacity = 0.85
@@ -1199,121 +1039,55 @@ class VoxifyApp:
         threading.Thread(target=self._listen_for_target_click, daemon=True).start()
 
     def _on_api_check_failed(self, message: str) -> None:
-        self._api_check_in_flight = False
-        self._waiting_click = False
-        self.page.window.opacity = 1
-        self._stop_target_listener()
-        self._runtime_api_key = ""
-        self._set_health_chip("", False)
-        self._log_reliability_event("api_check_failed", error_code=reliability.normalize_error_code(message), detail=message)
-        self.page.snack_bar = ft.SnackBar(
-            content=ft.Text(message, color=TEXT),
-            bgcolor=CARD_SOFT,
-            open=True,
-        )
+        self._api_check_in_flight = False; self._waiting_click = False
+        self.page.window.opacity = 1; self._stop_target_listener(); self._reset_to_ready()
+        self.page.snack_bar = ft.SnackBar(content=ft.Text(message, color=TEXT), bgcolor=CARD_SOFT, open=True)
         self.page.update()
-        normalized = (message or "").strip().lower()
-        if "license is not activated" in normalized:
-            self._set_status("License required", DANGER)
-            self._set_aux_chip("Open Settings to activate", True)
-            self._set_action("Open settings", CARD_SOFT, ACCENT, TEXT, self._open_settings)
-            return
-        if self._is_quota_error(normalized):
-            self._set_quota_blocked_state()
-            return
-        if (
-            "license verification is not configured" in normalized
-            or "productid and deviceid are required" in normalized
-            or "licensekey and deviceid are required" in normalized
-        ):
-            self._set_status("Server config required", DANGER)
-            self._set_aux_chip("Admin: configure server-side license verification", True)
-            self._set_action("Retry", CARD_SOFT, ACCENT, TEXT, self._on_action_click)
-            return
-        if "unable to reach the website" in normalized or "license database is unavailable" in normalized:
-            self._set_status("Server unavailable", DANGER)
-            self._set_aux_chip("Start website server", True)
-            self._set_action("Retry", CARD_SOFT, ACCENT, TEXT, self._on_action_click)
-            return
-        self._reset_to_ready()
-
-    def _get_runtime_api_key(self) -> str:
-        now = time.time()
-        with self._api_lock:
-            if self._runtime_api_key and (now - self._api_last_check_at) < self._api_cache_ttl_sec:
-                return self._runtime_api_key
-
-        self._refresh_license_session(force=False)
-        bootstrap = website_client.get_desktop_bootstrap(
-            token=self._license_token,
-            device_id=self._device_id,
-        )
-        key = bootstrap.api_key.strip()
-        with self._api_lock:
-            self._runtime_api_key = key
-            self._api_last_check_at = time.time()
-        return key
 
     def _listen_for_target_click(self) -> None:
-        try:
-            from pynput import mouse as pmouse
+        logger.info("Listening for target click")
+        try: from pynput import mouse as pmouse
         except ImportError:
-            self.page.snack_bar = ft.SnackBar(
-                content=ft.Text("pynput is required for click-to-type.", color=TEXT),
-                bgcolor=CARD_SOFT,
-                open=True,
-            )
-            self.page.update()
-            self.page.window.opacity = 1
-            self._reset_to_ready()
+            logger.error("pynput not installed")
+            self.page.run_thread(self._on_api_check_failed, "pynput library required for click-to-type. Install with: pip install pynput")
             return
-
         def on_click(x, y, button, pressed):
-            if not pressed or button != pmouse.Button.left:
-                return
-
+            if not pressed or button != pmouse.Button.left: return
             wx = int(self.page.window.left or 0)
             wy = int(self.page.window.top or 0)
             ww = int(self.page.window.width or 320)
             wh = int(self.page.window.height or 170)
             if wx <= x <= wx + ww and wy <= y <= wy + wh:
+                logger.debug("Click on self, ignoring")
                 return
-
-            if not self._waiting_click:
-                return True
-            try:
-                listener.stop()
-            except Exception:
-                pass
+            if not self._waiting_click: return True
+            logger.info(f"Target clicked at ({x}, {y})")
+            try: listener.stop()
+            except Exception: pass
             self.page.run_thread(self._on_target_selected)
-
-        listener = pmouse.Listener(on_click=on_click)
-        self._click_listener = listener
-        listener.start()
-        listener.join()
+        try:
+            listener = pmouse.Listener(on_click=on_click); self._click_listener = listener
+            logger.info("Mouse listener started")
+            listener.start(); listener.join()
+        except Exception as exc:
+            logger.error(f"Mouse listener failed: {exc}")
+            self.page.run_thread(self._on_api_check_failed, f"Mouse capture failed: {exc}")
 
     def _cancel_target_selection(self) -> None:
-        self._waiting_click = False
-        self.page.window.opacity = 1
-        self._stop_target_listener()
-        self._reset_to_ready()
+        logger.info("Target selection cancelled")
+        self._waiting_click = False; self.page.window.opacity = 1; self._stop_target_listener(); self._reset_to_ready()
 
     def _on_target_selected(self) -> None:
-        if not self._waiting_click:
-            return
-        self._waiting_click = False
-        self.page.window.opacity = 1
-        self._stop_target_listener()
+        if not self._waiting_click: return
+        logger.info("Target selected, starting recording")
+        self._waiting_click = False; self.page.window.opacity = 1; self._stop_target_listener()
         self._set_status("Target selected", SUCCESS)
-        self._log_reliability_event("target_selected")
         self._start_recording()
 
     def _stop_target_listener(self) -> None:
         if self._click_listener:
-            try:
-                self._click_listener.stop()
-            except Exception:
-                pass
+            try: self._click_listener.stop()
+            except Exception: pass
             self._click_listener = None
 
     def _start_recording(self) -> None:
@@ -1322,482 +1096,176 @@ class VoxifyApp:
         self._stopping = False
         self._set_aux_chip("", False)
         self._set_action("Preparing...", CARD_SOFT, BORDER, MUTED, lambda _e: None)
-
-        if self._is_live_mode():
-            self._start_live_mode()
-            return
-
-        self._start_batch_mode()
+        mode = "Live" if self._is_live_mode() else "Batch"
+        logger.info(f"Starting {mode} mode recording, source={self.cfg.get('source', 'mic')}, sample_rate={self.cfg.get('sample_rate', 16000)}")
+        if self._is_live_mode(): self._start_live_mode()
+        else: self._start_batch_mode()
 
     def _start_batch_mode(self) -> None:
-        preferred_source = self.cfg.get("source", "mic")
         sample_rate = int(self.cfg.get("sample_rate", 16000))
+        preferred = self.cfg.get("source", "mic")
         runtime_cfg = self._runtime_config or self._load_runtime_config(force=False)
         endpointing_mode = self.cfg.get("reliability_mode", "balanced")
         if runtime_cfg and runtime_cfg.in_rollout:
             endpointing_mode = runtime_cfg.endpointing_mode or endpointing_mode
-        if preferred_source == "system":
+        if preferred == "system":
             supported, reason = rec_module.system_audio_support_status()
             if not supported:
-                preferred_source = "mic"
-                self._set_aux_chip("System audio unavailable; using mic", True)
-                self._log_reliability_event(
-                    "fallback_used",
-                    detail=f"batch:mic:{reason}",
-                )
-        candidates = [preferred_source]
-        if bool(self.cfg.get("auto_fallback_enabled", True)) and self._current_feature_flag("autoFallback", True):
-            alt = "system" if preferred_source == "mic" else "mic"
-            if alt not in candidates:
-                candidates.append(alt)
-
-        last_exc: Optional[Exception] = None
-        for idx, source in enumerate(candidates):
-            self._recorder = rec_module.Recorder(
-                source=source,
-                sample_rate=sample_rate,
-                silence_trim_enabled=self._silence_trim_enabled(),
-                reliability_mode=endpointing_mode,
-            )
+                logger.warning(f"System audio unsupported: {reason}, falling back to mic")
+                preferred = "mic"
+        sources = [preferred]
+        alt = "system" if preferred == "mic" else "mic"
+        if alt not in sources: sources.append(alt)
+        logger.info(f"Batch sources: {sources}, endpointing={endpointing_mode}")
+        last_exc = None
+        for source in sources:
+            logger.info(f"Trying recorder source={source}")
+            self._recorder = rec_module.Recorder(source=source, sample_rate=sample_rate, silence_trim_enabled=self._silence_trim_enabled(), reliability_mode=endpointing_mode)
             try:
                 self._recorder.start()
-                self._active_source = source
-                if idx > 0:
-                    self._set_aux_chip("Fallback active", True)
-                    self._log_reliability_event("fallback_used", detail=f"batch:{source}")
-                break
+                self._is_recording = True
+                logger.info(f"Recording started on source={source}")
+                self._set_status("Recording", TEXT)
+                self._set_action("Stop recording", CARD_SOFT, DANGER, DANGER, self._on_action_click)
+                return
             except Exception as exc:
                 last_exc = exc
+                logger.warning(f"Source {source} failed: {exc}")
                 self._recorder = None
-
-        if not self._recorder:
-            message = str(last_exc or "Unable to start recording source.")
-            self.page.snack_bar = ft.SnackBar(
-                content=ft.Text(message, color=TEXT),
-                bgcolor=CARD_SOFT,
-                open=True,
-            )
-            self.page.update()
-            self._log_reliability_event(
-                "recording_failed",
-                error_code=reliability.normalize_error_code(message),
-                detail=message,
-            )
-            self._reset_to_ready()
-            return
-
-        self._is_recording = True
-        self._log_reliability_event("recording_started")
-        self._set_status("Recording", TEXT)
-        self._set_action("Stop recording", CARD_SOFT, DANGER, DANGER, self._on_action_click)
+        logger.error(f"All sources failed: {last_exc}")
+        self._on_transcription_error(str(last_exc or "Unable to start recording source."))
 
     def _start_live_mode(self) -> None:
-        api_key = self._runtime_api_key.strip()
+        api_key = (self._runtime_api_key or "").strip()
         if not api_key:
+            logger.error("Live mode: API key is empty")
             self._on_transcription_error("Live mode key is unavailable. Refresh license from Settings and retry.")
             return
-        preferred_source = self.cfg.get("source", "mic")
-        if preferred_source == "system":
-            supported, reason = rec_module.system_audio_support_status()
-            if not supported:
-                preferred_source = "mic"
-                self._set_aux_chip("System audio unavailable; using mic", True)
-                self._log_reliability_event(
-                    "fallback_used",
-                    detail=f"live:mic:{reason}",
-                )
-        self._live_text_buffer.clear()
-        self._live_retry_count = 0
-        self._last_live_typed_char = ""
-        self._live_session_chars = 0
-        self._live_session_words = 0
-        self._live_source_candidates = [preferred_source]
-        if bool(self.cfg.get("auto_fallback_enabled", True)) and self._current_feature_flag("autoFallback", True):
-            alt = "system" if preferred_source == "mic" else "mic"
-            if alt not in self._live_source_candidates:
-                self._live_source_candidates.append(alt)
-        self._live_source_index = 0
-        self._is_recording = True
-        self._start_live_stream_with_current_source()
-        self._log_reliability_event("live_started")
-        self._set_status("Listening", SUCCESS)
-        self._set_health_chip("Connected", True)
-        self._set_action("Stop recording", CARD_SOFT, DANGER, DANGER, self._on_action_click)
-
-    def _start_live_stream_with_current_source(self) -> None:
-        if self._stopping or not self._is_recording:
-            return
-        api_key = self._runtime_api_key.strip()
-        sample_rate = int(self.cfg.get("sample_rate", 16000))
-        source = self._live_source_candidates[self._live_source_index]
-        self._active_source = source
-        self._set_aux_chip("Fallback active", self._live_source_index > 0)
-        if self._live_source_index > 0:
-            self._log_reliability_event("fallback_used", detail=f"live:{source}")
-
+        logger.info(f"Starting live mode, source={self.cfg.get('source', 'mic')}")
+        self._live_text_buffer.clear(); self._is_recording = True
         try:
-            self._rt_transcriber = rt_module.RealtimeTranscriber(
-                api_key=api_key,
-                sample_rate=sample_rate,
-                source=source,
-                on_delta=lambda t: self.page.run_thread(self._type_live_delta, t),
-                on_status=lambda s: self.page.run_thread(self._set_status, self._normalize_live_status(s), MUTED),
-                on_done=lambda: self.page.run_thread(self._on_realtime_done),
-                on_error=lambda e: self.page.run_thread(self._on_live_stream_error, e),
-            )
+            self._rt_transcriber = rt_module.RealtimeTranscriber(api_key=api_key, sample_rate=int(self.cfg.get("sample_rate", 16000)), source=self.cfg.get("source", "mic"), on_delta=lambda t: self.page.run_thread(self._type_live_delta, t), on_status=lambda s: self.page.run_thread(self._set_status, s, MUTED), on_done=lambda: self.page.run_thread(self._on_realtime_done), on_error=lambda e: self.page.run_thread(self._on_transcription_error, e))
             self._rt_transcriber.start()
+            logger.info("Live transcriber started")
+            self._set_status("Listening", SUCCESS)
+            self._set_action("Stop recording", CARD_SOFT, DANGER, DANGER, self._on_action_click)
         except Exception as exc:
-            self._on_live_stream_error(str(exc))
-
-    def _on_live_stream_error(self, err: str) -> None:
-        if self._stopping or not self._is_recording:
-            self._on_transcription_error(err)
-            return
-
-        self._log_reliability_event(
-            "live_error",
-            error_code=reliability.normalize_error_code(err),
-            detail=err,
-        )
-        retry_limit = self._effective_live_retry_limit()
-        can_retry = self._live_retry_count < retry_limit
-        if can_retry:
-            self._live_retry_count += 1
-            if self._live_source_index < len(self._live_source_candidates) - 1:
-                self._live_source_index += 1
-            self._set_health_chip("Recovering", True)
-            self._set_status(f"Recovering ({self._live_retry_count}/{retry_limit})", MUTED)
-            if self._rt_transcriber:
-                try:
-                    self._rt_transcriber.stop()
-                except Exception:
-                    pass
-                self._rt_transcriber = None
-            delay = min(2.5, 0.7 * self._live_retry_count)
-            timer = threading.Timer(delay, lambda: self.page.run_thread(self._start_live_stream_with_current_source))
-            timer.daemon = True
-            timer.start()
-            return
-
-        self._on_transcription_error(err)
-
-    def _normalize_live_status(self, status: str) -> str:
-        normalized = status.lower().strip()
-        if "connecting" in normalized:
-            self._set_health_chip("Recovering", True)
-            return "Connecting"
-        if "live" in normalized or "speak now" in normalized:
-            self._set_health_chip("Connected", True)
-            return "Listening"
-        return status
+            logger.error(f"Live mode failed: {exc}")
+            self._on_transcription_error(str(exc))
 
     def _stop_recording(self) -> None:
-        if self._stopping:
-            return
+        logger.info("Stop recording requested")
         self._stopping = True
-        self._log_reliability_event("recording_stopping")
-        self._set_action("Stopping...", CARD_SOFT, BORDER, MUTED, lambda _e: None)
-        self._set_status("Stopping...", MUTED)
-
-        if self._is_live_mode():
-            self._stop_realtime()
-            return
-
-        if not self._recorder:
-            self._reset_to_ready()
-            return
-
-        self._is_recording = False
-        threading.Thread(target=self._transcribe_batch_worker, daemon=True).start()
+        if self._is_live_mode(): self._stop_realtime()
+        else:
+            self._is_recording = False
+            logger.info("Starting batch transcription worker")
+            threading.Thread(target=self._transcribe_batch_worker, daemon=True).start()
 
     def _transcribe_batch_worker(self) -> None:
-        wav_path: Optional[str] = None
-        started_at = time.perf_counter()
+        wav_path = None
         try:
             wav_path = self._recorder.stop()
-            prompt = None
-            dictionary_terms = self.cfg.get("personal_dictionary", [])
-            if dictionary_terms:
-                prompt = "Prefer these terms exactly: " + ", ".join(dictionary_terms[:80])
-            client = tr_module.TranscriptionClient(
-                api_key=self._runtime_api_key,
-                model=self._selected_batch_model(),
-                license_token=self._license_token,
-                device_id=self._device_id,
-            )
-            raw_text = client.transcribe(
-                wav_path,
-                language=self.cfg.get("language") or None,
-                prompt=prompt,
-            )
-            if client.last_usage:
-                try:
-                    self._refresh_license_session(force=True)
-                except Exception:
-                    pass
+            logger.info(f"Audio captured to {wav_path}")
+            client = tr_module.TranscriptionClient(api_key=self._runtime_api_key, model=self._selected_batch_model(), license_token=self._license_token, device_id=self._device_id)
+            raw_text = client.transcribe(wav_path, language=self.cfg.get("language") or None)
+            logger.info(f"Transcription received: {len(raw_text)} chars")
             processed = self._process_transcript(raw_text)
-            self._execute_voice_actions(processed.actions)
-
-            typed_ok = True
-            if processed.text.strip():
-                typed_ok = output_handler.type_text(processed.text)
-                if not typed_ok:
-                    self.page.run_thread(self._handle_typing_failure, raw_text)
-
-            latency_ms = int((time.perf_counter() - started_at) * 1000)
-            self._log_reliability_event("batch_transcribed", latency_ms=latency_ms)
-            self.page.run_thread(self._on_transcription_done, processed.text if processed.text else raw_text)
+            output_handler.type_text(processed.text)
+            self.page.run_thread(self._on_transcription_done, processed.text)
         except Exception as exc:
-            self._log_reliability_event(
-                "batch_error",
-                error_code=reliability.normalize_error_code(str(exc)),
-                detail=str(exc),
-            )
+            logger.error(f"Batch transcription error: {exc}")
             self.page.run_thread(self._on_transcription_error, str(exc))
         finally:
             if wav_path:
                 tr_module.cleanup_temp(wav_path)
+                logger.debug(f"Temp file cleaned: {wav_path}")
 
     def _on_transcription_done(self, text: str) -> None:
-        self._stopping = False
-        if not text.strip():
-            self._set_status("No speech detected", MUTED)
-        else:
-            self._set_status(f"Typed {len(text)} chars", SUCCESS)
-        self._reset_to_ready()
-        if self._typing_failed_pending and self._last_raw_transcript:
-            self._set_aux_chip("Typing delayed", True)
-            self._set_action("Copy raw", CARD_SOFT, ACCENT, TEXT, self._copy_raw_transcript)
-
-    def _is_quota_error(self, message: str) -> bool:
-        normalized = (message or "").strip().lower()
-        return any(
-            token in normalized
-            for token in (
-                "quota exhausted",
-                "quota exceeded",
-                "quota reached",
-                "license quota exhausted",
-                "quota is exhausted",
-            )
-        )
-
-    def _set_quota_blocked_state(self) -> None:
-        self._set_status("Quota reached", DANGER)
-        self._set_aux_chip("Open Settings > System to upgrade plan", True)
-        self._set_action("Open settings", CARD_SOFT, ACCENT, TEXT, self._open_settings)
+        logger.info(f"Transcription done: {len(text)} chars typed")
+        self._stopping = False; self._reset_to_ready()
 
     def _on_transcription_error(self, err: str) -> None:
-        self._stopping = False
-        self._set_health_chip("", False)
-        self._log_reliability_event(
-            "transcription_error",
-            error_code=reliability.normalize_error_code(err),
-            detail=err,
-        )
-        display_message = err
-        if self._is_quota_error(err):
-            display_message = "Quota reached. Upgrade or top up from Settings > System."
-        self.page.snack_bar = ft.SnackBar(content=ft.Text(display_message, color=TEXT), bgcolor=CARD_SOFT, open=True)
-        self.page.update()
-        if self._is_quota_error(err):
-            self._set_quota_blocked_state()
-            return
-        self._reset_to_ready()
-
-    def _start_status_animation(self, base: str) -> None:
-        self.status_anim_base = base
-        if self.status_anim_running:
-            return
-        self.status_anim_running = True
-
-        def _animate() -> None:
-            while self.status_anim_running:
-                dots = "." * (self.status_anim_step % 4)
-                self.status_text.value = f"{self.status_anim_base}{dots}"
-                self.page.update()
-                self.status_anim_step += 1
-                time.sleep(0.25)
-
-        self.status_anim_thread = threading.Thread(target=_animate, daemon=True)
-        self.status_anim_thread.start()
-
-    def _stop_status_animation(self) -> None:
-        self.status_anim_running = False
-        self.status_anim_step = 0
-        self.status_text.value = self.status_anim_base
+        logger.error(f"Transcription error: {err}")
+        self._stopping = False; self._reset_to_ready()
+        if self._is_chatting: self._apply_theme_to_controls()
+        self.page.snack_bar = ft.SnackBar(content=ft.Text(err, color=TEXT), bgcolor=CARD_SOFT, open=True)
         self.page.update()
 
     def _set_status(self, text: str, color: str = MUTED, animate: bool = False) -> None:
-        self._stop_status_animation()
-        self.status_text.value = text
-        self.status_text.color = color
-        if animate:
-            self._start_status_animation(text)
-        self.page.update()
+        self.status_text.value = text; self.status_text.color = color; self.page.update()
 
     def _reset_to_ready(self) -> None:
-        self._stopping = False
-        self._api_check_in_flight = False
         self._is_recording = False
-        self._stop_status_animation()
-        self._live_text_buffer.clear()
-        self._live_session_chars = 0
-        self._live_session_words = 0
-        self._set_aux_chip("", False)
-        self._set_status("Ready", MUTED)
+        self._api_check_in_flight = False
+        if self._is_chatting: self._set_status("Ask me anything", SUCCESS)
+        else: self._set_status("Ready", MUTED)
         self._set_action("Start", ACCENT, ACCENT, TEXT, self._on_action_click)
 
     def _stop_realtime(self) -> None:
         self._is_recording = False
-        self._set_health_chip("", False)
-        if self._live_paste_job:
-            try:
-                self._live_paste_job.cancel()
-            except Exception:
-                pass
-            self._live_paste_job = None
-        self._flush_live_buffer()
-        if self._rt_transcriber:
-            self._rt_transcriber.stop()
-            self._rt_transcriber = None
+        if self._rt_transcriber: self._rt_transcriber.stop(); self._rt_transcriber = None
         self._finalize_stop()
 
     def _finalize_stop(self) -> None:
-        self._stopping = False
-        self._last_live_typed_char = ""
-        self._sync_live_usage()
-        self._set_status("Completed", SUCCESS)
-        self._reset_to_ready()
-        if self._typing_failed_pending and self._last_raw_transcript:
-            self._set_aux_chip("Typing delayed", True)
-            self._set_action("Copy raw", CARD_SOFT, ACCENT, TEXT, self._copy_raw_transcript)
+        self._stopping = False; self._reset_to_ready()
 
     def _type_live_delta(self, delta: str) -> None:
         self._live_text_buffer.append(delta)
-        if self._live_paste_job:
-            try:
-                self._live_paste_job.cancel()
-            except Exception:
-                pass
-        delay = 0.05 if len(delta) > 10 else 0.25
-        timer = threading.Timer(delay, self._flush_live_buffer)
-        self._live_paste_job = timer
-        timer.daemon = True
-        timer.start()
-
-    def _prepare_live_chunk_for_typing(self, text: str) -> str:
-        if not text:
-            return text
-
-        previous = self._last_live_typed_char
-        first = text[0]
-        if previous and (not previous.isspace()) and (not first.isspace()):
-            if (previous.isalnum() and first.isalnum()) or (previous in ",.;:!?" and first.isalnum()):
-                return " " + text
-        return text
+        if self._live_paste_job: self._live_paste_job.cancel()
+        timer = threading.Timer(0.2, self._flush_live_buffer); self._live_paste_job = timer; timer.daemon = True; timer.start()
 
     def _flush_live_buffer(self) -> None:
-        if not self._live_text_buffer:
-            return
-        raw_chunk = "".join(self._live_text_buffer)
-        self._live_text_buffer.clear()
-        processed = self._process_transcript(raw_chunk)
-        self._execute_voice_actions(processed.actions)
-
-        def _type() -> None:
-            payload = processed.text
-            if not payload.strip():
-                return
-
-            with self._live_type_lock:
-                payload = self._prepare_live_chunk_for_typing(payload)
-                ok = output_handler.type_text(payload, interval=0.01)
-                if ok and payload:
-                    self._last_live_typed_char = payload[-1]
-                    self._live_session_chars += len(payload)
-                    self._live_session_words += len([part for part in payload.split() if part])
-
-            if not ok:
-                self.page.run_thread(self._handle_typing_failure, raw_chunk)
-                self._log_reliability_event("typing_failed", error_code="typing_failed", detail="live_chunk")
-
-        threading.Thread(target=_type, daemon=True).start()
-        self._live_paste_job = None
-
-    def _sync_live_usage(self) -> None:
-        if self._live_session_chars <= 0 and self._live_session_words <= 0:
-            return
-        if not self._license_token:
-            return
-        chars = int(self._live_session_chars)
-        words = int(self._live_session_words)
-        self._live_session_chars = 0
-        self._live_session_words = 0
-        idempotency_key = hashlib.sha256(
-            f"{self._session_id}:live:{chars}:{words}:{time.time_ns()}".encode("utf-8")
-        ).hexdigest()
-
-        def _worker() -> None:
-            try:
-                updated = website_client.consume_license_usage(
-                    token=self._license_token,
-                    device_id=self._device_id,
-                    chars_used=chars,
-                    words_used=words,
-                    mode="live",
-                    session_id=self._session_id,
-                    idempotency_key=idempotency_key,
-                    detail="live_session",
-                )
-                with self._license_lock:
-                    self._license_entitlement = updated
-                license_cache.save_state(
-                    token=self._license_token,
-                    license_key=(license_cache.load_state().get("licenseKey") or "").strip(),
-                    entitlement=self._serialize_entitlement(updated),
-                )
-            except website_client.WebsiteAPIError as exc:
-                message = str(exc)
-                if self._is_quota_error(message):
-                    self.page.run_thread(self._on_transcription_error, message)
-            except Exception:
-                pass
-
-        threading.Thread(target=_worker, daemon=True).start()
+        if not self._live_text_buffer: return
+        raw_chunk = "".join(self._live_text_buffer); self._live_text_buffer.clear()
+        processed = self._process_transcript(raw_chunk); output_handler.type_text(processed.text, interval=0.01)
 
     def _on_realtime_done(self) -> None:
-        self._is_recording = False
-        self._log_reliability_event("live_completed")
-        self._flush_live_buffer()
-        if self._rt_transcriber:
-            self._rt_transcriber = None
         self._finalize_stop()
 
     def _stop_any_active_work(self) -> None:
-        self.status_anim_running = False
-        self._wave_anim_running = False
-        self._cancel_auto_minimize_timer()
-        self._stop_target_listener()
         if self._rt_transcriber:
-            try:
-                self._rt_transcriber.stop()
-            except Exception:
-                pass
+            try: self._rt_transcriber.stop()
+            except Exception: pass
             self._rt_transcriber = None
-        if self._recorder:
-            self._recorder = None
-        if self._live_paste_job:
+        if self._gemini_live_client:
+            try: self._gemini_live_client.stop()
+            except Exception: pass
+            self._gemini_live_client = None
+
+    def _serialize_entitlement(self, ent: website_client.LicenseEntitlement | None) -> dict:
+        if not ent: return {}
+        return {"license_id": ent.license_id, "status": ent.status, "plan": ent.plan, "billing_cycle": ent.billing_cycle, "quota_chars": ent.quota_chars, "used_chars": ent.used_chars, "remaining_chars": ent.remaining_chars, "can_transcribe": ent.can_transcribe}
+
+    def _process_transcript(self, raw_text: str) -> dictation_features.ProcessedTranscript:
+        return dictation_features.process_transcript(raw_text=raw_text, profile=self.cfg.get("dictation_profile", "notes"), replacements=self.cfg.get("text_replacements", {}), personal_dictionary=self.cfg.get("personal_dictionary", []), voice_commands_enabled=bool(self.cfg.get("voice_commands_enabled", True)), command_prefix=self.cfg.get("command_prefix", "command"))
+
+    def _close_app(self, _event) -> None:
+        if self._settings_process and self._settings_process.poll() is None:
             try:
-                self._live_paste_job.cancel()
+                import ctypes
+                hwnd = ctypes.windll.user32.FindWindowW(None, "Voxify Settings")
+                if hwnd:
+                    ctypes.windll.user32.ShowWindow(hwnd, 5)
+                    ctypes.windll.user32.SetForegroundWindow(hwnd)
             except Exception:
                 pass
-            self._live_paste_job = None
+            self.page.snack_bar = ft.SnackBar(
+                content=ft.Text("Close the Settings window first.", color=TEXT),
+                bgcolor=ft.Colors.with_opacity(0.9, DANGER), open=True,
+            )
+            self.page.update()
+            return
+        self._stop_any_active_work()
+        self.page.run_task(self._close_app_async)
 
+    async def _close_app_async(self) -> None:
+        await self.page.window.destroy()
+
+    def _silence_trim_enabled(self) -> bool: return bool(self.cfg.get("silence_trim_enabled", True))
 
 def main(page: ft.Page) -> None:
     VoxifyApp(page)
-
 
 if __name__ == "__main__":
     ft.run(main, view=ft.AppView.FLET_APP)

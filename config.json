@@ -1,5 +1,6 @@
 {
   "model": "voxtral-mini-2507",
+  "api_key": "",
   "language": "",
   "sample_rate": 16000,
   "channels": 1,
@@ -21,12 +22,15 @@
   "text_replacements": {},
   "auto_fallback_enabled": true,
   "silence_trim_enabled": true,
-  "live_retry_limit": 2,
+  "live_retry_limit": 10,
   "runtime_channel": "stable",
   "send_reliability_events": false,
   "device_id": "0f95a0228b7a463c8c1da43669ee7ed9",
+  "gemini_model": "gemini-3.1-flash-live-preview",
+  "gemini_voice": "Erinome",
   "auto_minimize": false,
   "minimize_timeout": 10,
+  "pc_control_enabled": true,
   "auto_install_updates": true,
   "restart_after_update": true
 }
