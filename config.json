@@ -35,11 +35,11 @@
   "gemini_thinking_level": "minimal",
   "gemini_thinking_budget": 0,
   "screen_share_resolution": "low",
-  "screen_share_quality": 30,
   "screen_share_pause_on_idle": true,
   "auto_minimize": false,
   "minimize_timeout": 10,
   "pc_control_enabled": true,
   "auto_install_updates": true,
-  "restart_after_update": true
+  "restart_after_update": true,
+  "screen_share_quality": 30
 }

@@ -342,6 +342,7 @@ def main(page: ft.Page) -> None:
             retry_limit = 2
 
         return {
+            "api_key": (api_key_field.value or "").strip(),
             "model": model_value,
             "gemini_model": gemini_model_field.value or "gemini-3.1-flash-live-preview",
             "gemini_voice": voice_field.value or "Puck",
@@ -379,7 +380,7 @@ def main(page: ft.Page) -> None:
         current_ui = _get_current_ui_cfg()
         
         keys_to_compare = [
-            "model", "gemini_model", "gemini_voice", "auto_type_delay", "mode", "source",
+            "api_key", "model", "gemini_model", "gemini_voice", "auto_type_delay", "mode", "source",
             "always_on_top", "check_for_updates", "theme", "auto_minimize", "minimize_timeout", "pc_control_enabled",
             "live_retry_limit", "voice_commands_enabled", "command_prefix", "auto_fallback_enabled",
             "silence_trim_enabled", "send_reliability_events", "auto_install_updates", "restart_after_update",
@@ -1172,25 +1173,11 @@ def main(page: ft.Page) -> None:
         ],
         **_field_style(),
     )
-    screen_quality_slider = ft.Slider(
-        min=30, max=95, divisions=13,
-        value=float(cfg.get("screen_share_quality", 70)),
-        label="{value}%",
-        active_color=ACCENT_ALT,
-        inactive_color=ft.Colors.with_opacity(0.15, ACCENT_ALT),
-    )
-    screen_quality_text = ft.Text(f"{int(screen_quality_slider.value)}%", size=10, color=MUTED, width=35)
     screen_pause_on_idle_switch = ft.Switch(
         value=bool(cfg.get("screen_share_pause_on_idle", True)),
         active_color=ACCENT_ALT,
     )
 
-    def _on_screen_quality_change(e) -> None:
-        screen_quality_text.value = f"{int(screen_quality_slider.value)}%"
-        screen_quality_text.update()
-        _update_save_button_state(e)
-
-    screen_quality_slider.on_change = _on_screen_quality_change
     screen_resolution_field.on_change = lambda e: _update_save_button_state(e)
     screen_pause_on_idle_switch.on_change = lambda e: _update_save_button_state(e)
 
@@ -1200,10 +1187,8 @@ def main(page: ft.Page) -> None:
             _card("Gemini Live Chat", ft.Icons.SMART_TOY_OUTLINED, [ft.Text("Select the Gemini model for real-time voice chat.", size=10, color=MUTED), gemini_model_field, _setting_row("Allow AI to control PC", pc_control_switch)]),
             _card("Voice", ft.Icons.RECORD_VOICE_OVER_OUTLINED, [ft.Text("Choose a voice for the Gemini assistant.", size=10, color=MUTED), voice_gender_field, voice_field]),
             _card("Screen Sharing", ft.Icons.MONITOR_OUTLINED, [
-                ft.Text("Adjust screen capture quality and behavior.", size=10, color=MUTED),
+                ft.Text("The AI sees your screen in real time. Adjust the capture resolution below.", size=10, color=MUTED),
                 screen_resolution_field,
-                ft.Row(alignment=ft.MainAxisAlignment.SPACE_BETWEEN, vertical_alignment=ft.CrossAxisAlignment.CENTER, controls=[ft.Text("JPEG quality", color=MUTED, size=10, weight=ft.FontWeight.W_700), screen_quality_text]),
-                screen_quality_slider,
                 _setting_row("Skip idle frames", screen_pause_on_idle_switch),
             ]),
         ],
