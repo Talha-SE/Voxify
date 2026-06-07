@@ -39,6 +39,12 @@ class DesktopBootstrap:
 
 
 @dataclass(frozen=True)
+class EphemeralTokenResult:
+    token: str
+    model: str
+
+
+@dataclass(frozen=True)
 class UpdateInfo:
     update_available: bool
     latest_version: str
@@ -310,6 +316,32 @@ def get_desktop_bootstrap(token: str, device_id: str, base_url: str | None = Non
         gemini_api_key=(payload.get("geminiApiKey") or "").strip(),
         gemini_model=(payload.get("geminiModel") or "gemini-3.1-flash-live-preview").strip(),
         entitlement=entitlement_raw,
+    )
+
+
+def get_ephemeral_token(token: str, device_id: str, base_url: str | None = None) -> EphemeralTokenResult:
+    params = {
+        "token": (token or "").strip(),
+        "deviceId": (device_id or "").strip(),
+    }
+    try:
+        response = requests.post(
+            f"{_normalize_base_url(base_url)}/api/gemini/ephemeral-token",
+            params=params,
+            timeout=BOOTSTRAP_TIMEOUT,
+        )
+        payload = response.json() if response.content else {}
+    except requests.RequestException as exc:
+        raise WebsiteAPIError("Unable to generate ephemeral token.") from exc
+    except ValueError as exc:
+        raise WebsiteAPIError("Ephemeral token response is invalid.") from exc
+
+    if response.status_code >= 400 or not isinstance(payload, dict) or not payload.get("success"):
+        raise WebsiteAPIError((payload or {}).get("message") or "Ephemeral token generation failed.")
+
+    return EphemeralTokenResult(
+        token=(payload.get("ephemeralToken") or "").strip(),
+        model=(payload.get("model") or "gemini-3.1-flash-live-preview").strip(),
     )
 
 

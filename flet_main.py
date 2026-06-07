@@ -138,6 +138,9 @@ class VoxifyApp:
         self._is_recording = False
         self._is_chatting = False
         self._is_sharing_screen = False
+        self._screen_share_paused = False
+        self._last_frame_bytes: Optional[bytes] = None
+        self._last_frame_pixels: Optional["np.ndarray"] = None
         self._stopping = False
         self._gemini_live_client = None
         self._live_text_buffer: list[str] = []
@@ -661,65 +664,99 @@ class VoxifyApp:
         self._set_status("Connecting to Gemini...", ACCENT, animate=True)
         self._apply_theme_to_controls()
         try:
-            gemini_key = self._get_gemini_api_key()
+            gemini_key = ""
+            ephemeral_token = None
             gemini_model = self.cfg.get("gemini_model", "gemini-3.1-flash-live-preview")
             gemini_voice = self.cfg.get("gemini_voice", "Puck")
-            
+            use_ephemeral = self.cfg.get("gemini_use_ephemeral_tokens", True)
+
+            if use_ephemeral:
+                try:
+                    ephemeral_result = self._get_gemini_ephemeral_token()
+                    ephemeral_token = ephemeral_result.token
+                    gemini_model = ephemeral_result.model
+                    logger.info("Using ephemeral token for Gemini connection.")
+                except Exception as exc:
+                    logger.warning(f"Ephemeral token failed, falling back to API key: {exc}")
+                    use_ephemeral = False
+
+            if not use_ephemeral or not ephemeral_token:
+                gemini_key = self._get_gemini_api_key()
+
             system_instruction = (
-                "You are Voxify, a highly intelligent and autonomous PC AI assistant. "
-                "You have deep integration with the user's computer and the web. "
-                "CRITICAL RULES:\n"
-                "1. VERIFICATION: Whenever you perform a visual action (opening an app, a tab, clicking, or typing), "
-                "you MUST look at the live screen share (if enabled) to VERIFY the action succeeded. "
-                "If you don't see the expected result on the screen, do not lie to the user. "
-                "Instead, report the failure and try an alternative method or ask for clarification.\n"
-                "2. SMART MODALITY: Use 'web_search' for background info (weather, facts) to avoid browser popups. "
-                "Only use 'search_web' or 'open_url' if the user explicitly wants to see the browser.\n"
-                "3. TABS vs WINDOWS: Default to opening in a 'tab' unless a 'window' is specifically requested. "
-                "If a tab fails to appear in the current window, try opening it as a new window.\n"
-                "4. CONTEXT: Always check the 'get_active_window_info' and 'read_clipboard' to stay updated on the user's current task."
+                "You are Voxify, a highly intelligent and autonomous PC voice assistant.\n\n"
+                "## CRITICAL VOICE ONLY RULES (MUST OBEY):\n"
+                "1. NO MARKDOWN OR BOLD TEXT: You must NEVER use bold markdown formatting (like '**') or headers in your speech. Speak strictly in normal plain-text conversational English sentences. Never output strings like '**Initiating Contact Sequence**' or '**Acquiring Window Data**'.\n"
+                "2. NO TOOL NARRATION: You must NEVER speak about your tool calls, thoughts, plans, or step-by-step progress. Do not say 'I am opening...', 'Let me check...', 'I've retrieved...', or explain your math/calculations. Do not announce context gathering.\n"
+                "3. BE EXTREMELY CONCISE: Speak only one or two short sentences. Answer directly and wait for the user.\n"
+                "4. SILENT CONTEXT GATHERING: When you gather context using 'get_active_window_info' or 'read_clipboard', do it completely silently. Just call the tools and use the data to respond directly to the user's query.\n"
+                "5. READING/LOOKING AT THE SCREEN: If the user asks you to read, locate, click, or analyze text/buttons on the screen, call the 'parse_screen_text' tool immediately. Never say you cannot read the screen or that tools are insufficient.\n"
+                "6. ALARMS AND TIMERS: If the user asks you to set an alarm, timer, or reminder, calculate the duration in seconds and call the 'set_timer' tool.\n"
+                "7. VERIFICATION: Use the screen share (if enabled) to verify visual actions (typing, clicking) succeeded. If they failed, try an alternative silently or report the failure concisely.\n"
+                "8. language: Speak only in English."
             )
 
-            tools = [{"function_declarations": [
-                {"name": "open_app", "description": "Searches for and opens an application on the computer.", "parameters": {"type": "OBJECT", "properties": {"query": {"type": "STRING", "description": "App name (e.g., 'chrome', 'notepad')."}}, "required": ["query"]}},
-                {"name": "mouse_click", "description": "Clicks at specific screen coordinates.", "parameters": {"type": "OBJECT", "properties": {"x": {"type": "INTEGER"}, "y": {"type": "INTEGER"}, "button": {"type": "STRING", "enum": ["left", "right", "middle"], "default": "left"}, "double": {"type": "BOOLEAN", "default": False}}, "required": ["x", "y"]}},
-                {"name": "move_mouse", "description": "Moves the mouse cursor to specific screen coordinates with smooth easing.", "parameters": {"type": "OBJECT", "properties": {"x": {"type": "INTEGER"}, "y": {"type": "INTEGER"}, "duration": {"type": "NUMBER", "default": 0.2}}, "required": ["x", "y"]}},
-                {"name": "move_mouse_relative", "description": "Moves the mouse cursor by a small pixel offset from its current position.", "parameters": {"type": "OBJECT", "properties": {"dx": {"type": "INTEGER"}, "dy": {"type": "INTEGER"}}, "required": ["dx", "dy"]}},
-                {"name": "mouse_drag", "description": "Drags the mouse from one point to another (useful for sliders or moving files).", "parameters": {"type": "OBJECT", "properties": {"x1": {"type": "INTEGER"}, "y1": {"type": "INTEGER"}, "x2": {"type": "INTEGER"}, "y2": {"type": "INTEGER"}, "button": {"type": "STRING", "enum": ["left", "right"], "default": "left"}}, "required": ["x1", "y1", "x2", "y2"]}},
-                {"name": "type_text", "description": "Types text at the current cursor position or at specific screen coordinates.", "parameters": {"type": "OBJECT", "properties": {"text": {"type": "STRING"}, "press_enter": {"type": "BOOLEAN", "default": True}, "x": {"type": "INTEGER", "description": "Optional x coordinate to click before typing."}, "y": {"type": "INTEGER", "description": "Optional y coordinate to click before typing."}}, "required": ["text"]}},
-                {"name": "smooth_scroll", "description": "Scrolls the screen up or down smoothly.", "parameters": {"type": "OBJECT", "properties": {"direction": {"type": "STRING", "enum": ["up", "down"]}, "clicks": {"type": "INTEGER", "description": "Scroll distance.", "default": 3}}, "required": ["direction"]}},
-                {"name": "start_scrolling", "description": "Starts scrolling the page continuously in a specific direction.", "parameters": {"type": "OBJECT", "properties": {"direction": {"type": "STRING", "enum": ["up", "down"]}, "speed": {"type": "NUMBER", "description": "Seconds between scroll steps (smaller is faster).", "default": 0.5}}, "required": ["direction"]}},
-                {"name": "stop_scrolling", "description": "Stops the continuous scrolling action.", "parameters": {"type": "OBJECT", "properties": {}}},
-                {"name": "press_key", "description": "Presses a specific keyboard key.", "parameters": {"type": "OBJECT", "properties": {"key": {"type": "STRING", "description": "Key like 'enter', 'win', 'tab'."}}, "required": ["key"]}},
-                {"name": "list_windows", "description": "Returns a list of titles for all currently visible windows.", "parameters": {"type": "OBJECT", "properties": {}}},
-                {"name": "manage_window", "description": "Activates, minimizes, maximizes, or closes a specific window by its title.", "parameters": {"type": "OBJECT", "properties": {"title": {"type": "STRING", "description": "Full or partial window title."}, "action": {"type": "STRING", "enum": ["activate", "minimize", "maximize", "close"]}}, "required": ["title", "action"]}},
-                {"name": "get_system_status", "description": "Retrieves real-time system resource usage (CPU, RAM, Battery) and local time.", "parameters": {"type": "OBJECT", "properties": {}}},
-                {"name": "read_clipboard", "description": "Reads the current text content from the system clipboard. Use this to get context on what the user is working on.", "parameters": {"type": "OBJECT", "properties": {}}},
-                {"name": "get_active_window_info", "description": "Returns information (title and process name) about the window the user is currently looking at.", "parameters": {"type": "OBJECT", "properties": {}}},
-                {"name": "system_action", "description": "Performs system-level actions like locking the PC or sleeping.", "parameters": {"type": "OBJECT", "properties": {"action": {"type": "STRING", "enum": ["lock", "sleep", "empty_trash"]}}, "required": ["action"]}},
-                {"name": "set_volume", "description": "Sets the system volume to a specific percentage.", "parameters": {"type": "OBJECT", "properties": {"level": {"type": "INTEGER", "description": "Volume percentage (0-100)."}}, "required": ["level"]}},
-                {"name": "set_brightness", "description": "Sets the screen brightness to a specific percentage.", "parameters": {"type": "OBJECT", "properties": {"level": {"type": "INTEGER", "description": "Brightness percentage (0-100)."}}, "required": ["level"]}},
-                {"name": "run_shell_command", "description": "Executes a PowerShell command and returns the output. Use this for developer tasks or system queries.", "parameters": {"type": "OBJECT", "properties": {"command": {"type": "STRING"}}, "required": ["command"]}},
-                {"name": "list_files", "description": "Lists the most recent files in a specific user directory.", "parameters": {"type": "OBJECT", "properties": {"directory": {"type": "STRING", "enum": ["downloads", "documents", "desktop", "pictures", "videos"], "default": "downloads"}}, "required": ["directory"]}},
-                {"name": "read_file", "description": "Reads the first 5000 characters of a text file for analysis.", "parameters": {"type": "OBJECT", "properties": {"path": {"type": "STRING", "description": "Full file path."}}, "required": ["path"]}},
-                {"name": "get_screens_info", "description": "Returns details about all connected monitors (resolution, primary screen).", "parameters": {"type": "OBJECT", "properties": {}}},
-                {"name": "media_control", "description": "Controls system media playback and volume.", "parameters": {"type": "OBJECT", "properties": {"action": {"type": "STRING", "enum": ["play_pause", "next", "previous", "volume_up", "volume_down", "mute"]}}, "required": ["action"]}},
-                {"name": "search_web", "description": "Opens the default browser and searches for a specific query.", "parameters": {"type": "OBJECT", "properties": {"query": {"type": "STRING"}, "mode": {"type": "STRING", "enum": ["tab", "window"], "default": "tab"}}, "required": ["query"]}},
-                {"name": "web_search", "description": "Performs a background web search and returns text snippets to you (the AI). Use this to answer user questions without opening a browser.", "parameters": {"type": "OBJECT", "properties": {"query": {"type": "STRING"}}, "required": ["query"]}},
-                {"name": "open_url", "description": "Opens a specific website URL in the default browser.", "parameters": {"type": "OBJECT", "properties": {"url": {"type": "STRING"}, "mode": {"type": "STRING", "enum": ["tab", "window"], "default": "tab"}}, "required": ["url"]}},
-                {"name": "get_local_time", "description": "Returns the current local date and time.", "parameters": {"type": "OBJECT", "properties": {}}},
-                {"name": "get_mouse_position", "description": "Returns the current (x, y) coordinates of the mouse cursor.", "parameters": {"type": "OBJECT", "properties": {}}}
+            SILENT = "SILENT EXECUTION. "
+            tools = [{"functionDeclarations": [
+                {"name": "open_app", "description": SILENT + "Searches for and opens an application on the computer.", "parameters": {"type": "OBJECT", "properties": {"query": {"type": "STRING", "description": "App name (e.g., 'chrome', 'notepad')."}}, "required": ["query"]}},
+                {"name": "mouse_click", "description": SILENT + "Clicks at specific screen coordinates.", "parameters": {"type": "OBJECT", "properties": {"x": {"type": "INTEGER"}, "y": {"type": "INTEGER"}, "button": {"type": "STRING", "enum": ["left", "right", "middle"], "default": "left"}, "double": {"type": "BOOLEAN", "default": False}}, "required": ["x", "y"]}},
+                {"name": "move_mouse", "description": SILENT + "Moves the mouse cursor to specific screen coordinates.", "parameters": {"type": "OBJECT", "properties": {"x": {"type": "INTEGER"}, "y": {"type": "INTEGER"}, "duration": {"type": "NUMBER", "default": 0.2}}, "required": ["x", "y"]}},
+                {"name": "move_mouse_relative", "description": SILENT + "Moves the mouse cursor by a pixel offset from its current position.", "parameters": {"type": "OBJECT", "properties": {"dx": {"type": "INTEGER"}, "dy": {"type": "INTEGER"}}, "required": ["dx", "dy"]}},
+                {"name": "mouse_drag", "description": SILENT + "Drags the mouse from one point to another.", "parameters": {"type": "OBJECT", "properties": {"x1": {"type": "INTEGER"}, "y1": {"type": "INTEGER"}, "x2": {"type": "INTEGER"}, "y2": {"type": "INTEGER"}, "button": {"type": "STRING", "enum": ["left", "right"], "default": "left"}}, "required": ["x1", "y1", "x2", "y2"]}},
+                {"name": "type_text", "description": SILENT + "Types text at the current cursor position or at specific coordinates.", "parameters": {"type": "OBJECT", "properties": {"text": {"type": "STRING"}, "press_enter": {"type": "BOOLEAN", "default": True}, "x": {"type": "INTEGER", "description": "Optional x coordinate to click before typing."}, "y": {"type": "INTEGER", "description": "Optional y coordinate to click before typing."}}, "required": ["text"]}},
+                {"name": "smooth_scroll", "description": SILENT + "Scrolls the screen up or down smoothly.", "parameters": {"type": "OBJECT", "properties": {"direction": {"type": "STRING", "enum": ["up", "down"]}, "clicks": {"type": "INTEGER", "description": "Scroll distance.", "default": 3}}, "required": ["direction"]}},
+                {"name": "start_scrolling", "description": SILENT + "Starts scrolling the page continuously.", "parameters": {"type": "OBJECT", "properties": {"direction": {"type": "STRING", "enum": ["up", "down"]}, "speed": {"type": "NUMBER", "description": "Seconds between scroll steps (smaller is faster).", "default": 0.5}}, "required": ["direction"]}},
+                {"name": "stop_scrolling", "description": SILENT + "Stops the continuous scrolling action.", "parameters": {"type": "OBJECT", "properties": {}}},
+                {"name": "press_key", "description": SILENT + "Presses a specific keyboard key.", "parameters": {"type": "OBJECT", "properties": {"key": {"type": "STRING", "description": "Key like 'enter', 'win', 'tab'."}}, "required": ["key"]}},
+                {"name": "press_key_combination", "description": SILENT + "Presses multiple keyboard keys simultaneously (hotkeys).", "parameters": {"type": "OBJECT", "properties": {"keys": {"type": "ARRAY", "items": {"type": "STRING"}, "description": "List of key names to press (e.g., ['ctrl', 'shift', 'p'])."}}, "required": ["keys"]}},
+                {"name": "parse_screen_text", "description": SILENT + "Captures the screen and uses OCR to find all visible text and their coordinates.", "parameters": {"type": "OBJECT", "properties": {}}},
+                {"name": "set_timer", "description": SILENT + "Sets a timer/alarm for a specified duration in seconds.", "parameters": {"type": "OBJECT", "properties": {"duration_seconds": {"type": "INTEGER", "description": "The timer duration in seconds."}, "label": {"type": "STRING", "description": "Optional name or label for the timer."}}, "required": ["duration_seconds"]}},
+                {"name": "list_windows", "description": SILENT + "Returns titles of all currently visible windows.", "parameters": {"type": "OBJECT", "properties": {}}},
+                {"name": "manage_window", "description": SILENT + "Activates, minimizes, maximizes, or closes a specific window.", "parameters": {"type": "OBJECT", "properties": {"title": {"type": "STRING", "description": "Full or partial window title."}, "action": {"type": "STRING", "enum": ["activate", "minimize", "maximize", "close"]}}, "required": ["title", "action"]}},
+                {"name": "get_system_status", "description": SILENT + "Retrieves system resource usage (CPU, RAM, Battery) and local time.", "parameters": {"type": "OBJECT", "properties": {}}},
+                {"name": "read_clipboard", "description": SILENT + "Reads the current text content from the system clipboard.", "parameters": {"type": "OBJECT", "properties": {}}},
+                {"name": "get_active_window_info", "description": SILENT + "Returns title and process name of the active window.", "parameters": {"type": "OBJECT", "properties": {}}},
+                {"name": "system_action", "description": SILENT + "Locks the PC or puts it to sleep.", "parameters": {"type": "OBJECT", "properties": {"action": {"type": "STRING", "enum": ["lock", "sleep", "empty_trash"]}}, "required": ["action"]}},
+                {"name": "set_volume", "description": SILENT + "Sets the system volume to a specific percentage (0-100).", "parameters": {"type": "OBJECT", "properties": {"level": {"type": "INTEGER", "description": "Volume percentage (0-100)."}}, "required": ["level"]}},
+                {"name": "set_brightness", "description": SILENT + "Sets the screen brightness to a specific percentage (0-100).", "parameters": {"type": "OBJECT", "properties": {"level": {"type": "INTEGER", "description": "Brightness percentage (0-100)."}}, "required": ["level"]}},
+                {"name": "run_shell_command", "description": SILENT + "Executes a PowerShell command and returns the output.", "parameters": {"type": "OBJECT", "properties": {"command": {"type": "STRING"}}, "required": ["command"]}},
+                {"name": "list_files", "description": SILENT + "Lists recent files in a specific user directory.", "parameters": {"type": "OBJECT", "properties": {"directory": {"type": "STRING", "enum": ["downloads", "documents", "desktop", "pictures", "videos"], "default": "downloads"}}, "required": ["directory"]}},
+                {"name": "read_file", "description": SILENT + "Reads the first 5000 characters of a text file.", "parameters": {"type": "OBJECT", "properties": {"path": {"type": "STRING", "description": "Full file path."}}, "required": ["path"]}},
+                {"name": "write_file_content", "description": SILENT + "Creates or overwrites a text file with the specified content.", "parameters": {"type": "OBJECT", "properties": {"path": {"type": "STRING", "description": "Full file path."}, "content": {"type": "STRING", "description": "Content to write."}}, "required": ["path", "content"]}},
+                {"name": "file_operation", "description": SILENT + "Copies, moves, deletes, or renames files or folders.", "parameters": {"type": "OBJECT", "properties": {"source": {"type": "STRING", "description": "Source path."}, "target": {"type": "STRING", "description": "Target path (optional)."}, "action": {"type": "STRING", "enum": ["copy", "move", "delete", "rename"]}}, "required": ["source", "action"]}},
+                {"name": "create_folder", "description": SILENT + "Creates a new folder at the specified path.", "parameters": {"type": "OBJECT", "properties": {"path": {"type": "STRING", "description": "Folder path to create."}}, "required": ["path"]}},
+                {"name": "list_running_processes", "description": SILENT + "Returns running processes with PIDs, names, CPU and memory usage.", "parameters": {"type": "OBJECT", "properties": {}}},
+                {"name": "kill_process", "description": SILENT + "Terminates a process by its PID or name.", "parameters": {"type": "OBJECT", "properties": {"pid_or_name": {"type": "STRING", "description": "The PID or process name."}}, "required": ["pid_or_name"]}},
+                {"name": "get_screens_info", "description": SILENT + "Returns details about all connected monitors.", "parameters": {"type": "OBJECT", "properties": {}}},
+                {"name": "media_control", "description": SILENT + "Controls system media playback (play/pause, next, previous, volume, mute).", "parameters": {"type": "OBJECT", "properties": {"action": {"type": "STRING", "enum": ["play_pause", "next", "previous", "volume_up", "volume_down", "mute"]}}, "required": ["action"]}},
+                {"name": "search_web", "description": SILENT + "Opens the default browser and searches for a specific query.", "parameters": {"type": "OBJECT", "properties": {"query": {"type": "STRING"}, "mode": {"type": "STRING", "enum": ["tab", "window"], "default": "tab"}}, "required": ["query"]}},
+                {"name": "web_search", "description": SILENT + "Performs a background web search and returns text snippets. Use this to answer questions without opening a browser.", "parameters": {"type": "OBJECT", "properties": {"query": {"type": "STRING"}}, "required": ["query"]}},
+                {"name": "open_url", "description": SILENT + "Opens a specific URL in the default browser.", "parameters": {"type": "OBJECT", "properties": {"url": {"type": "STRING"}, "mode": {"type": "STRING", "enum": ["tab", "window"], "default": "tab"}}, "required": ["url"]}},
+                {"name": "get_local_time", "description": SILENT + "Returns the current local date and time.", "parameters": {"type": "OBJECT", "properties": {}}},
+                {"name": "get_mouse_position", "description": SILENT + "Returns the current (x, y) coordinates of the mouse cursor.", "parameters": {"type": "OBJECT", "properties": {}}}
             ]}]
+
+            session_resumption = self.cfg.get("gemini_session_resumption", False)
+            context_compression = self.cfg.get("gemini_context_compression", False)
+            idle_timeout = int(self.cfg.get("gemini_idle_timeout", 300))
+
+            screen_share_res = self.cfg.get("screen_share_resolution", "") or ""
             self._gemini_live_client = gemini_live_client.GeminiLiveClient(
-                api_key=gemini_key, 
-                model=gemini_model, 
-                voice_name=gemini_voice, 
-                tools=tools, 
+                api_key=gemini_key if gemini_key else None,
+                ephemeral_token=ephemeral_token,
+                model=gemini_model,
+                voice_name=gemini_voice,
+                media_resolution=screen_share_res or None,
+                tools=tools,
                 system_instruction=system_instruction,
-                on_status=lambda s: self.page.run_thread(self._set_gemini_status, s), 
-                on_error=lambda e: self.page.run_thread(self._on_gemini_error, e), 
-                on_transcript=lambda t: self.page.run_thread(self._on_gemini_transcript, t), 
-                on_tool_call=self._handle_ai_tool_call
+                session_resumption=session_resumption,
+                context_compression=context_compression,
+                idle_timeout=idle_timeout,
+                on_status=lambda s: self.page.run_thread(self._set_gemini_status, s),
+                on_error=lambda e: self.page.run_thread(self._on_gemini_error, e),
+                on_transcript=lambda t: self.page.run_thread(self._on_gemini_transcript, t),
+                on_user_transcript=lambda t: self.page.run_thread(self._on_gemini_user_transcript, t),
+                on_tool_call=self._handle_ai_tool_call,
             )
             self._gemini_live_client.start()
             self._is_recording = True
@@ -734,11 +771,15 @@ class VoxifyApp:
     def _handle_ai_tool_call(self, name: str, args: dict) -> dict:
         self.page.run_thread(self._set_status, f"AI {name}...", SUCCESS)
         
-        # Security/Privacy Check: Is PC Control enabled?
-        pc_control_enabled = bool(self.cfg.get("pc_control_enabled", True))
+        # Security/Privacy Check: Read fresh configuration from disk to ensure real-time settings compliance
+        pc_control_enabled = bool(config.load().get("pc_control_enabled", True))
         
-        # Tools that are allowed even if PC Control is OFF (Read-only or background)
-        allowed_tools = ["web_search", "get_local_time", "get_system_status", "read_clipboard", "get_active_window_info", "list_windows", "list_files"]
+        # Tools that are allowed even if PC Control is OFF (Strictly passive, read-only context or background search)
+        allowed_tools = [
+            "web_search", "get_local_time", "get_system_status", "read_clipboard", 
+            "get_active_window_info", "list_windows", "list_files", "parse_screen_text", 
+            "list_running_processes"
+        ]
         
         if not pc_control_enabled and name not in allowed_tools:
             return {"success": False, "error": "PC Control is currently disabled by the user in Settings. You can only chat and search the web."}
@@ -751,12 +792,17 @@ class VoxifyApp:
             elif name == "mouse_drag": return {"success": output_handler.mouse_drag(x1=args.get("x1"), y1=args.get("y1"), x2=args.get("x2"), y2=args.get("y2"), button=args.get("button", "left"))}
             elif name == "type_text":
                 text = args.get("text", "")
-                if args.get("press_enter", True): text += "\n"
-                return {"success": output_handler.type_text(text)}
+                success = output_handler.type_text(text)
+                if success and args.get("press_enter", True):
+                    success = output_handler.send_shortcut("enter")
+                return {"success": success}
             elif name == "smooth_scroll": return {"success": output_handler.smooth_scroll(direction=args.get("direction", "down"), clicks=args.get("clicks", 3))}
             elif name == "start_scrolling": return {"success": output_handler.start_continuous_scroll(direction=args.get("direction", "down"), speed=args.get("speed", 0.5))}
             elif name == "stop_scrolling": return {"success": output_handler.stop_continuous_scroll()}
             elif name == "press_key": return {"success": output_handler.send_shortcut(args.get("key", ""))}
+            elif name == "press_key_combination": return {"success": output_handler.press_key_combination(args.get("keys", []))}
+            elif name == "parse_screen_text": return {"success": True, "text_elements": output_handler.parse_screen_text()}
+            elif name == "set_timer": return {"success": output_handler.set_timer(duration_seconds=args.get("duration_seconds"), label=args.get("label", "Timer"))}
             elif name == "list_windows": return {"success": True, "windows": output_handler.list_windows()}
             elif name == "manage_window": return {"success": output_handler.manage_window(title=args.get("title", ""), action=args.get("action", "activate"))}
             elif name == "get_system_status": return {"success": True, "status": output_handler.get_system_status()}
@@ -765,7 +811,11 @@ class VoxifyApp:
             elif name == "system_action": return {"success": output_handler.system_action(action=args.get("action", ""))}
             elif name == "list_files": return {"success": True, "files": output_handler.list_files(directory=args.get("directory", "downloads"))}
             elif name == "read_file": return {"success": True, "content": output_handler.read_file_content(path=args.get("path", ""))}
-            elif name == "run_shell_command": return {"success": True, "output": output_handler.run_shell_command(command=args.get("command", ""))}
+            elif name == "write_file_content": return {"success": output_handler.write_file_content(path=args.get("path", ""), content=args.get("content", ""))}
+            elif name == "file_operation": return {"success": output_handler.file_operation(source=args.get("source", ""), target=args.get("target", ""), action=args.get("action", "copy"))}
+            elif name == "create_folder": return {"success": output_handler.create_folder(path=args.get("path", ""))}
+            elif name == "list_running_processes": return {"success": True, "processes": output_handler.list_running_processes()}
+            elif name == "kill_process": return {"success": output_handler.kill_process(pid_or_name=args.get("pid_or_name", ""))}
             elif name == "get_screens_info": return {"success": True, "screens": output_handler.get_screens_info()}
             elif name == "set_volume": return {"success": output_handler.set_system_volume(level=args.get("level", 50))}
             elif name == "set_brightness": return {"success": output_handler.set_screen_brightness(level=args.get("level", 50))}
@@ -804,14 +854,31 @@ class VoxifyApp:
         preview = (transcript[:50] + "..") if len(transcript) > 50 else transcript
         self._set_status(preview, TEXT)
 
+    RESOLUTION_MAP = {
+        "low": 480,
+        "medium": 768,
+        "high": 1024,
+    }
+
+    FPS_TABLE = [
+        (0.30, 0.5),
+        (0.10, 1.0),
+        (0.00, 2.0),
+    ]
+
     def _on_video_click(self, _event) -> None:
         self._register_widget_interaction()
-        if self._is_sharing_screen: self._stop_screen_sharing()
-        else: self._start_screen_sharing()
+        if self._is_sharing_screen:
+            self._stop_screen_sharing()
+        else:
+            self._start_screen_sharing()
 
     def _start_screen_sharing(self) -> None:
         if not self._is_chatting: return
         self._is_sharing_screen = True
+        self._screen_share_paused = False
+        self._last_frame_bytes = None
+        self._last_frame_pixels = None
         self.video_icon.name = ft.Icons.VIDEOCAM_ROUNDED
         self.video_icon.color = TEXT
         self.video_btn.bgcolor = ACCENT
@@ -823,6 +890,9 @@ class VoxifyApp:
 
     def _stop_screen_sharing(self) -> None:
         self._is_sharing_screen = False
+        self._screen_share_paused = False
+        self._last_frame_bytes = None
+        self._last_frame_pixels = None
         self.video_icon.name = ft.Icons.VIDEOCAM_OUTLINED
         self.video_icon.color = ACCENT
         self.video_btn.bgcolor = ft.Colors.with_opacity(0.2, CARD_ACTIVE)
@@ -830,22 +900,94 @@ class VoxifyApp:
         if self._is_chatting: self._set_status("Listening...", SUCCESS)
         self.page.update()
 
+    def _pause_screen_sharing(self) -> None:
+        self._screen_share_paused = True
+        self.video_icon.name = ft.Icons.VIDEOCAM_OUTLINED
+        self.video_icon.color = MUTED_SOFT
+        self.video_btn.bgcolor = ft.Colors.with_opacity(0.2, CARD_ACTIVE)
+        self.video_btn.shadow = None
+        self._set_status("Screen share paused", MUTED)
+        self.page.update()
+
+    def _resume_screen_sharing(self) -> None:
+        self._screen_share_paused = False
+        self.video_icon.name = ft.Icons.VIDEOCAM_ROUNDED
+        self.video_icon.color = TEXT
+        self.video_btn.bgcolor = ACCENT
+        self.video_btn.shadow = ft.BoxShadow(blur_radius=12, spread_radius=0, color=ft.Colors.with_opacity(0.4, ACCENT_GLOW))
+        self._set_status("Sharing screen", SUCCESS)
+        self.page.update()
+
+    def _compute_frame_sleep(self, current_pixels, total_pixels: int) -> float:
+        if self._last_frame_pixels is None or total_pixels == 0:
+            return self.FPS_TABLE[-1][1]
+        diff = cv2.absdiff(current_pixels, self._last_frame_pixels)
+        changed = float(np.count_nonzero(diff)) / total_pixels
+        for threshold, fps in self.FPS_TABLE:
+            if changed >= threshold:
+                return fps
+        return self.FPS_TABLE[-1][1]
+
     def _run_screen_capture(self) -> None:
         import io
         try:
             import pyautogui
-        except ImportError: return
+            import cv2
+            import numpy as np
+        except ImportError:
+            self._is_sharing_screen = False
+            return
+
+        resolution_key = self.cfg.get("screen_share_resolution", "medium")
+        max_dim = self.RESOLUTION_MAP.get(resolution_key, 768)
+        jpeg_quality = int(self.cfg.get("screen_share_quality", 70))
+        pause_on_idle = bool(self.cfg.get("screen_share_pause_on_idle", True))
+
         while self._is_sharing_screen and self._is_chatting:
             try:
+                if self._screen_share_paused:
+                    time.sleep(0.5)
+                    continue
+
                 screenshot = pyautogui.screenshot()
-                screenshot.thumbnail((1024, 1024))
+                w, h = screenshot.size
+                scale = min(max_dim / max(w, h), 1.0)
+                if scale < 1.0:
+                    new_w, new_h = int(w * scale), int(h * scale)
+                    screenshot = screenshot.resize((new_w, new_h), 3)
+
+                frame_pixels = np.array(screenshot)
+                total = frame_pixels.size
+
+                if self._last_frame_pixels is not None:
+                    if pause_on_idle:
+                        diff = cv2.absdiff(frame_pixels, self._last_frame_pixels)
+                        changed_ratio = float(np.count_nonzero(diff)) / total
+                        if changed_ratio < 0.005:
+                            time.sleep(1.0)
+                            continue
+
                 img_byte_arr = io.BytesIO()
-                screenshot.save(img_byte_arr, format='JPEG', quality=70)
-                if self._gemini_live_client:
-                    self.page.run_thread(self._gemini_live_client.send_video_frame, img_byte_arr.getvalue())
-                time.sleep(1.0)
-            except Exception: break
+                screenshot.save(img_byte_arr, format="JPEG", quality=jpeg_quality)
+                frame_bytes = img_byte_arr.getvalue()
+
+                if frame_bytes != self._last_frame_bytes:
+                    self._last_frame_bytes = frame_bytes
+                    self._last_frame_pixels = frame_pixels
+                    if self._gemini_live_client:
+                        self.page.run_thread(
+                            self._gemini_live_client.send_video_frame, frame_bytes
+                        )
+
+                sleep_time = self._compute_frame_sleep(frame_pixels, total)
+                time.sleep(min(sleep_time, 2.0))
+
+            except Exception:
+                break
+
         self._is_sharing_screen = False
+        self._last_frame_bytes = None
+        self._last_frame_pixels = None
 
     def _open_settings(self, _event) -> None:
         self._register_widget_interaction()
@@ -990,6 +1132,15 @@ class VoxifyApp:
         bootstrap = website_client.get_desktop_bootstrap(token=self._license_token, device_id=self._device_id)
         self._gemini_api_key = bootstrap.gemini_api_key.strip(); self._gemini_api_last_check = now
         return self._gemini_api_key
+
+    def _get_gemini_ephemeral_token(self) -> website_client.EphemeralTokenResult:
+        return website_client.get_ephemeral_token(
+            token=self._license_token,
+            device_id=self._device_id,
+        )
+
+    def _on_gemini_user_transcript(self, transcript: str) -> None:
+        logger.info(f"User said: {transcript}")
 
     def _on_action_click(self, _event) -> None:
         logger.info("Action button clicked")
@@ -1141,10 +1292,16 @@ class VoxifyApp:
             logger.error("Live mode: API key is empty")
             self._on_transcription_error("Live mode key is unavailable. Refresh license from Settings and retry.")
             return
-        logger.info(f"Starting live mode, source={self.cfg.get('source', 'mic')}")
+        preferred = self.cfg.get("source", "mic")
+        if preferred == "system":
+            supported, reason = rec_module.system_audio_support_status()
+            if not supported:
+                logger.warning(f"System audio unsupported: {reason}, falling back to mic")
+                preferred = "mic"
+        logger.info(f"Starting live mode, source={preferred}")
         self._live_text_buffer.clear(); self._is_recording = True
         try:
-            self._rt_transcriber = rt_module.RealtimeTranscriber(api_key=api_key, sample_rate=int(self.cfg.get("sample_rate", 16000)), source=self.cfg.get("source", "mic"), on_delta=lambda t: self.page.run_thread(self._type_live_delta, t), on_status=lambda s: self.page.run_thread(self._set_status, s, MUTED), on_done=lambda: self.page.run_thread(self._on_realtime_done), on_error=lambda e: self.page.run_thread(self._on_transcription_error, e))
+            self._rt_transcriber = rt_module.RealtimeTranscriber(api_key=api_key, sample_rate=int(self.cfg.get("sample_rate", 16000)), source=preferred, on_delta=lambda t: self.page.run_thread(self._type_live_delta, t), on_status=lambda s: self.page.run_thread(self._set_status, s, MUTED), on_done=lambda: self.page.run_thread(self._on_realtime_done), on_error=lambda e: self.page.run_thread(self._on_transcription_error, e))
             self._rt_transcriber.start()
             logger.info("Live transcriber started")
             self._set_status("Listening", SUCCESS)
@@ -1241,6 +1398,7 @@ class VoxifyApp:
         return dictation_features.process_transcript(raw_text=raw_text, profile=self.cfg.get("dictation_profile", "notes"), replacements=self.cfg.get("text_replacements", {}), personal_dictionary=self.cfg.get("personal_dictionary", []), voice_commands_enabled=bool(self.cfg.get("voice_commands_enabled", True)), command_prefix=self.cfg.get("command_prefix", "command"))
 
     def _close_app(self, _event) -> None:
+        logger.info("Close requested")
         if self._settings_process and self._settings_process.poll() is None:
             try:
                 import ctypes
@@ -1260,7 +1418,9 @@ class VoxifyApp:
         self.page.run_task(self._close_app_async)
 
     async def _close_app_async(self) -> None:
+        logger.info("Destroying window")
         await self.page.window.destroy()
+        logger.info("Window destroyed")
 
     def _silence_trim_enabled(self) -> bool: return bool(self.cfg.get("silence_trim_enabled", True))
 

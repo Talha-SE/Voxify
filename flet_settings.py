@@ -272,6 +272,24 @@ def main(page: ft.Page) -> None:
     theme_preview_dirty = False
     _apply_theme_constants(selected_theme)
 
+    status_dot = ft.Container(
+        width=8,
+        height=8,
+        border_radius=4,
+        bgcolor=SUCCESS,
+        animate=ft.Animation(200, "ease"),
+    )
+    status_text = ft.Text("All changes saved", color=TEXT, size=11, weight=ft.FontWeight.W_600)
+    status_indicator = ft.Row(
+        spacing=8,
+        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        controls=[status_dot, status_text],
+    )
+
+    def _update_status(value: str, color: str) -> None:
+        status_text.value = value
+        status_dot.bgcolor = color
+
     page.title = APP_TITLE
     page.bgcolor = BG
     page.padding = 0
@@ -347,6 +365,9 @@ def main(page: ft.Page) -> None:
             "restart_after_update": bool(restart_after_update_switch.value),
             "personal_dictionary": _parse_multiline_list(personal_dictionary_field.value or ""),
             "text_replacements": _parse_replacements(text_replacements_field.value or ""),
+            "screen_share_resolution": (screen_resolution_field.value or "medium").strip(),
+            "screen_share_quality": int(screen_quality_slider.value),
+            "screen_share_pause_on_idle": bool(screen_pause_on_idle_switch.value),
         }
 
     def _update_save_button_state(_e=None) -> None:
@@ -357,7 +378,8 @@ def main(page: ft.Page) -> None:
             "always_on_top", "check_for_updates", "theme", "auto_minimize", "minimize_timeout", "pc_control_enabled",
             "live_retry_limit", "voice_commands_enabled", "command_prefix", "auto_fallback_enabled",
             "silence_trim_enabled", "send_reliability_events", "auto_install_updates", "restart_after_update",
-            "personal_dictionary", "text_replacements"
+            "personal_dictionary", "text_replacements",
+            "screen_share_resolution", "screen_share_quality", "screen_share_pause_on_idle",
         ]
         
         is_dirty = False
@@ -365,33 +387,85 @@ def main(page: ft.Page) -> None:
             saved_val = cfg.get(key)
             current_val = current_ui.get(key)
             
-            if isinstance(saved_val, (list, dict)):
+            # Normalize None values to avoid false dirty detection on missing keys
+            if saved_val is None:
+                if isinstance(current_val, bool):
+                    saved_val = False
+                elif isinstance(current_val, (int, float)):
+                    saved_val = 0
+                elif isinstance(current_val, (list, dict)):
+                    saved_val = [] if isinstance(current_val, list) else {}
+                else:
+                    saved_val = ""
+                    
+            if current_val is None:
+                if isinstance(saved_val, bool):
+                    current_val = False
+                elif isinstance(saved_val, (int, float)):
+                    current_val = 0
+                elif isinstance(saved_val, (list, dict)):
+                    current_val = [] if isinstance(saved_val, list) else {}
+                else:
+                    current_val = ""
+
+            # Check if they are lists or dicts
+            if isinstance(saved_val, (list, dict)) or isinstance(current_val, (list, dict)):
                 if saved_val != current_val:
                     is_dirty = True
                     break
+            elif isinstance(saved_val, bool) or isinstance(current_val, bool):
+                if bool(saved_val) != bool(current_val):
+                    is_dirty = True
+                    break
+            elif isinstance(saved_val, (int, float)) or isinstance(current_val, (int, float)):
+                try:
+                    if float(saved_val) != float(current_val):
+                        is_dirty = True
+                        break
+                except (ValueError, TypeError):
+                    if str(saved_val) != str(current_val):
+                        is_dirty = True
+                        break
             else:
                 if str(saved_val).strip().lower() != str(current_val).strip().lower():
-                    if isinstance(saved_val, bool) and saved_val != current_val:
-                        is_dirty = True
-                        break
-                    elif not isinstance(saved_val, bool) and str(saved_val) != str(current_val):
-                        is_dirty = True
-                        break
+                    is_dirty = True
+                    break
 
         if is_dirty:
             save_button.disabled = False
-            save_button.style.bgcolor = ACCENT_ALT
-            save_button.content.controls[0].name = ft.Icons.SAVE
-            save_button.content.controls[1].value = "Save Changes"
-            status_text.value = "Changes pending..."
-            status_text.color = MUTED
+            save_button.style = ft.ButtonStyle(
+                color=TEXT,
+                bgcolor=ACCENT_ALT,
+                overlay_color=ACCENT,
+                shape=ft.RoundedRectangleBorder(radius=10),
+                padding=ft.Padding(14, 10, 14, 10),
+            )
+            save_button.content = ft.Row(
+                tight=True,
+                spacing=6,
+                controls=[
+                    ft.Icon(ft.Icons.SAVE, size=14, color=TEXT),
+                    ft.Text("Save Changes", weight=ft.FontWeight.W_700)
+                ]
+            )
+            _update_status("Changes pending...", WARNING)
         else:
             save_button.disabled = True
-            save_button.style.bgcolor = ft.Colors.with_opacity(0.12, BORDER)
-            save_button.content.controls[0].name = ft.Icons.CHECK_CIRCLE_OUTLINE_ROUNDED
-            save_button.content.controls[1].value = "Saved"
-            status_text.value = "All changes saved"
-            status_text.color = SUCCESS
+            save_button.style = ft.ButtonStyle(
+                color=MUTED_SOFT,
+                bgcolor=ft.Colors.with_opacity(0.12, BORDER),
+                shape=ft.RoundedRectangleBorder(radius=10),
+                padding=ft.Padding(14, 10, 14, 10),
+            )
+            save_button.content = ft.Row(
+                tight=True,
+                spacing=6,
+                controls=[
+                    ft.Icon(ft.Icons.CHECK_CIRCLE_OUTLINE_ROUNDED, size=14, color=SUCCESS),
+                    ft.Text("Saved", weight=ft.FontWeight.W_700, color=SUCCESS)
+                ]
+            )
+            _update_status("All changes saved", SUCCESS)
             
         page.update()
 
@@ -600,22 +674,48 @@ def main(page: ft.Page) -> None:
     def on_save(_event: ft.ControlEvent | None = None) -> None:
         nonlocal cfg, initial_theme, theme_preview_dirty
         try:
-            status_text.value = "Saving..."
-            status_text.color = MUTED
+            _update_status("Saving...", ACCENT)
+            save_button.disabled = True
+            save_button.content = ft.Row(
+                tight=True,
+                spacing=6,
+                controls=[
+                    ft.ProgressRing(width=14, height=14, color=TEXT, stroke_width=2),
+                    ft.Text("Saving...", weight=ft.FontWeight.W_700)
+                ]
+            )
             page.update()
-            new_ui_cfg = _get_current_ui_cfg()
-            full_cfg = config.load()
-            full_cfg.update(new_ui_cfg)
-            config.save(full_cfg)
-            cfg = full_cfg
-            initial_theme = cfg.get("theme", "dark")
-            theme_preview_dirty = False
-            page.window.always_on_top = bool(cfg.get("always_on_top", True))
-            _update_save_button_state()
-            _show_snack("Settings saved successfully")
+
+            # Perform actual save work in a background thread so UI stays responsive
+            def _on_save_success(new_full_cfg: dict) -> None:
+                nonlocal cfg, initial_theme, theme_preview_dirty
+                cfg = new_full_cfg
+                initial_theme = cfg.get("theme", "dark")
+                theme_preview_dirty = False
+                page.window.always_on_top = bool(cfg.get("always_on_top", True))
+                _update_save_button_state()
+                _show_snack("Settings saved successfully")
+                page.update()
+
+            def _on_save_failed(err: str) -> None:
+                _update_status("Save failed", WARNING)
+                _show_snack(f"Save failed: {err}")
+                page.update()
+
+            def _worker() -> None:
+                try:
+                    new_ui_cfg = _get_current_ui_cfg()
+                    full_cfg = config.load()
+                    full_cfg.update(new_ui_cfg)
+                    config.save(full_cfg)
+                    # schedule UI update on the main page thread
+                    page.run_thread(_on_save_success, full_cfg)
+                except Exception as exc:
+                    page.run_thread(_on_save_failed, str(exc))
+
+            threading.Thread(target=_worker, daemon=True).start()
         except Exception as exc:
-            status_text.value = "Save failed"
-            status_text.color = WARNING
+            _update_status("Save failed", WARNING)
             _show_snack(f"Save failed: {exc}")
         page.update()
 
@@ -700,30 +800,29 @@ def main(page: ft.Page) -> None:
 
     # Assign all event handlers as properties AFTER initialization
     theme_switch.on_change = lambda e: (on_theme_toggle(e), _update_save_button_state(e))
-    always_on_top_switch.on_change = _update_save_button_state
+    always_on_top_switch.on_change = lambda e: _update_save_button_state(e)
     auto_minimize_switch.on_change = lambda e: (on_auto_minimize_toggle(e), _update_save_button_state(e))
     delay_slider.on_change = lambda e: (on_delay_change(e), _update_save_button_state(e))
     minimize_timeout_slider.on_change = lambda e: (on_timeout_change(e), _update_save_button_state(e))
     mode_field.on_change = lambda e: (on_mode_change(e), _update_save_button_state(e))
-    source_field.on_change = _update_save_button_state
-    model_field.on_change = _update_save_button_state
-    live_retry_limit_field.on_change = _update_save_button_state
-    voice_commands_switch.on_change = _update_save_button_state
-    auto_fallback_switch.on_change = _update_save_button_state
-    silence_trim_switch.on_change = _update_save_button_state
-    command_prefix_field.on_change = _update_save_button_state
-    personal_dictionary_field.on_change = _update_save_button_state
-    text_replacements_field.on_change = _update_save_button_state
-    reliability_events_switch.on_change = _update_save_button_state
+    source_field.on_change = lambda e: _update_save_button_state(e)
+    model_field.on_change = lambda e: _update_save_button_state(e)
+    live_retry_limit_field.on_change = lambda e: _update_save_button_state(e)
+    voice_commands_switch.on_change = lambda e: _update_save_button_state(e)
+    auto_fallback_switch.on_change = lambda e: _update_save_button_state(e)
+    silence_trim_switch.on_change = lambda e: _update_save_button_state(e)
+    command_prefix_field.on_change = lambda e: _update_save_button_state(e)
+    personal_dictionary_field.on_change = lambda e: _update_save_button_state(e)
+    text_replacements_field.on_change = lambda e: _update_save_button_state(e)
+    reliability_events_switch.on_change = lambda e: _update_save_button_state(e)
     check_updates_switch.on_change = lambda e: (on_updates_toggle(e), _update_save_button_state(e))
-    auto_install_updates_switch.on_change = _update_save_button_state
-    restart_after_update_switch.on_change = _update_save_button_state
-    gemini_model_field.on_change = _update_save_button_state
-    pc_control_switch.on_change = _update_save_button_state
+    auto_install_updates_switch.on_change = lambda e: _update_save_button_state(e)
+    restart_after_update_switch.on_change = lambda e: _update_save_button_state(e)
+    gemini_model_field.on_change = lambda e: _update_save_button_state(e)
+    pc_control_switch.on_change = lambda e: _update_save_button_state(e)
     voice_gender_field.on_change = _on_gender_change
-    voice_field.on_change = _update_save_button_state
+    voice_field.on_change = lambda e: _update_save_button_state(e)
 
-    status_text = ft.Text("Ready to save", color=MUTED, size=10)
     update_status_text = ft.Text(f"Current version: v{app_info.APP_VERSION}", size=10, color=MUTED)
     latest_update_text = ft.Text("", size=10, color=TEXT, weight=ft.FontWeight.W_600)
     update_note_text = ft.Text("", size=9, color=MUTED)
@@ -761,7 +860,7 @@ def main(page: ft.Page) -> None:
         hint_text="Mistral API key (optional override)",
         **_field_style(),
     )
-    api_key_field.on_change = _update_save_button_state
+    api_key_field.on_change = lambda e: _update_save_button_state(e)
 
     def _export_api(_e):
         try:
@@ -968,14 +1067,12 @@ def main(page: ft.Page) -> None:
 
     def _finish_diagnostic(all_signals_ok: bool) -> None:
         run_audio_diag_button.disabled = False
-        status_text.value = "Audio diagnostic complete" if all_signals_ok else "Audio diagnostic found issues"
-        status_text.color = SUCCESS if all_signals_ok else WARNING
+        _update_status("Audio diagnostic complete" if all_signals_ok else "Audio diagnostic found issues", SUCCESS if all_signals_ok else WARNING)
         page.update()
 
     def _run_audio_diagnostic(_event: ft.ControlEvent | None = None) -> None:
         run_audio_diag_button.disabled = True
-        status_text.value = "Running audio diagnostic..."
-        status_text.color = MUTED
+        _update_status("Running audio diagnostic...", MUTED)
         audio_diag_mic_text.value = "Mic: testing..."
         audio_diag_mic_text.color = MUTED
         audio_diag_system_text.value = "System: testing..."
@@ -995,8 +1092,7 @@ def main(page: ft.Page) -> None:
         if not key:
             _show_snack("License key is required.")
             return
-        status_text.value = "Activating license..."
-        status_text.color = MUTED
+        _update_status("Activating license...", MUTED)
         page.update()
         def _worker() -> None:
             try:
@@ -1072,11 +1168,50 @@ def main(page: ft.Page) -> None:
         ],
     )
 
+    screen_resolution_field = ft.Dropdown(
+        label="Share Resolution",
+        value=cfg.get("screen_share_resolution", "medium"),
+        options=[
+            ft.dropdown.Option("low", "Low (480p)"),
+            ft.dropdown.Option("medium", "Medium (768p)"),
+            ft.dropdown.Option("high", "High (1024p)"),
+        ],
+        **_field_style(),
+    )
+    screen_quality_slider = ft.Slider(
+        min=30, max=95, divisions=13,
+        value=float(cfg.get("screen_share_quality", 70)),
+        label="{value}%",
+        active_color=ACCENT_ALT,
+        inactive_color=ft.Colors.with_opacity(0.15, ACCENT_ALT),
+    )
+    screen_quality_text = ft.Text(f"{int(screen_quality_slider.value)}%", size=10, color=MUTED, width=35)
+    screen_pause_on_idle_switch = ft.Switch(
+        value=bool(cfg.get("screen_share_pause_on_idle", True)),
+        active_color=ACCENT_ALT,
+    )
+
+    def _on_screen_quality_change(e) -> None:
+        screen_quality_text.value = f"{int(screen_quality_slider.value)}%"
+        _update_save_button_state(e)
+        screen_quality_text.update()
+
+    screen_quality_slider.on_change = _on_screen_quality_change
+    screen_resolution_field.on_change = lambda e: _update_save_button_state(e)
+    screen_pause_on_idle_switch.on_change = lambda e: _update_save_button_state(e)
+
     assistant_content = ft.Column(
         spacing=10,
         controls=[
             _card("Gemini Live Chat", ft.Icons.SMART_TOY_OUTLINED, [ft.Text("Select the Gemini model for real-time voice chat.", size=10, color=MUTED), gemini_model_field, _setting_row("Allow AI to control PC", pc_control_switch)]),
             _card("Voice", ft.Icons.RECORD_VOICE_OVER_OUTLINED, [ft.Text("Choose a voice for the Gemini assistant.", size=10, color=MUTED), voice_gender_field, voice_field]),
+            _card("Screen Sharing", ft.Icons.MONITOR_OUTLINED, [
+                ft.Text("Adjust screen capture quality and behavior.", size=10, color=MUTED),
+                screen_resolution_field,
+                ft.Row(alignment=ft.MainAxisAlignment.SPACE_BETWEEN, vertical_alignment=ft.CrossAxisAlignment.CENTER, controls=[ft.Text("JPEG quality", color=MUTED, size=10, weight=ft.FontWeight.W_700), screen_quality_text]),
+                screen_quality_slider,
+                _setting_row("Skip idle frames", screen_pause_on_idle_switch),
+            ]),
         ],
     )
 
@@ -1106,8 +1241,11 @@ def main(page: ft.Page) -> None:
     }
 
     tab_buttons: dict[str, dict[str, ft.Control]] = {}
+    active_tab_id = "general"
 
     def _activate_tab(tab_id: str) -> None:
+        nonlocal active_tab_id
+        active_tab_id = tab_id
         for item_id, refs in tab_buttons.items():
             is_active = item_id == tab_id
             refs["container"].bgcolor = CARD_SOFT if is_active else ft.Colors.TRANSPARENT
@@ -1120,15 +1258,130 @@ def main(page: ft.Page) -> None:
     for tab_id, label, icon_name in TABS:
         icon = ft.Icon(icon_name, size=14, color=MUTED_SOFT)
         text = ft.Text(label, size=9, weight=ft.FontWeight.W_700, color=MUTED_SOFT)
-        button = ft.Container(expand=True, border_radius=10, padding=ft.Padding(6, 8, 6, 8), alignment=ft.Alignment(0, 0), on_click=lambda _e, tid=tab_id: _activate_tab(tid), content=ft.Column(spacing=3, horizontal_alignment=ft.CrossAxisAlignment.CENTER, controls=[icon, text]))
+        
+        def make_hover_handler(tid, ic, tx):
+            def on_hover(e):
+                if tid != active_tab_id:
+                    e.control.bgcolor = CARD_SOFT if e.data == "true" else ft.Colors.TRANSPARENT
+                    ic.color = TEXT if e.data == "true" else MUTED_SOFT
+                    tx.color = TEXT if e.data == "true" else MUTED_SOFT
+                    e.control.update()
+            return on_hover
+
+        button = ft.Container(
+            expand=True,
+            border_radius=10,
+            padding=ft.Padding(6, 8, 6, 8),
+            alignment=ft.Alignment(0, 0),
+            animate=ft.Animation(200, "easeOut"),
+            on_hover=make_hover_handler(tab_id, icon, text),
+            on_click=lambda _e, tid=tab_id: _activate_tab(tid),
+            content=ft.Column(
+                spacing=3,
+                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                controls=[icon, text]
+            )
+        )
         tab_buttons[tab_id] = {"container": button, "icon": icon, "label": text}
         segmented_buttons.append(button)
 
     _activate_tab("general")
 
-    save_button = ft.FilledButton(content=ft.Row(tight=True, spacing=6, controls=[ft.Icon(ft.Icons.SAVE, size=14, color=TEXT), ft.Text("Save Changes", weight=ft.FontWeight.W_700)]), on_click=on_save, style=ft.ButtonStyle(color=TEXT, bgcolor=ACCENT_ALT, overlay_color=ACCENT, shape=ft.RoundedRectangleBorder(radius=10), padding=ft.Padding(14, 10, 14, 10)))
+    save_button = ft.FilledButton(
+        content=ft.Row(
+            tight=True,
+            spacing=6,
+            controls=[
+                ft.Icon(ft.Icons.SAVE, size=14, color=TEXT),
+                ft.Text("Save Changes", weight=ft.FontWeight.W_700)
+            ]
+        ),
+        on_click=on_save,
+        style=ft.ButtonStyle(
+            color=TEXT,
+            bgcolor=ACCENT_ALT,
+            overlay_color=ACCENT,
+            shape=ft.RoundedRectangleBorder(radius=10),
+            padding=ft.Padding(14, 10, 14, 10)
+        )
+    )
 
-    root = ft.Container(expand=True, bgcolor=BG, padding=ft.Padding(10, 10, 10, 10), content=ft.Column(spacing=10, controls=[ft.Container(padding=ft.Padding(12, 12, 12, 12), border_radius=14, bgcolor=SURFACE, border=ft.Border.all(1, BORDER), content=ft.Row(alignment=ft.MainAxisAlignment.SPACE_BETWEEN, vertical_alignment=ft.CrossAxisAlignment.CENTER, controls=[ft.Row(spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER, controls=[_logo_widget(logo_base64, 18), ft.Column(spacing=2, controls=[ft.Text("Voxify", size=16, weight=ft.FontWeight.W_900, color=TEXT), ft.Text("Command Center", size=9, color=MUTED, weight=ft.FontWeight.W_700)])]), ft.IconButton(icon=ft.Icons.CLOSE, icon_size=16, icon_color=MUTED, tooltip="Close", on_click=_close_window)])), ft.Container(padding=ft.Padding(4, 4, 4, 4), border_radius=14, bgcolor=CARD, border=ft.Border.all(1, BORDER), content=ft.Row(spacing=4, controls=segmented_buttons)), ft.Container(expand=True, padding=ft.Padding(0, 2, 0, 2), content=ft.Column(scroll=ft.ScrollMode.AUTO, spacing=10, controls=[tab_containers["general"], tab_containers["audio"], tab_containers["assistant"], tab_containers["system"], tab_containers["about"]])), ft.Container(padding=ft.Padding(12, 12, 12, 12), border_radius=14, bgcolor=SURFACE, border=ft.Border.all(1, BORDER), content=ft.Row(alignment=ft.MainAxisAlignment.SPACE_BETWEEN, vertical_alignment=ft.CrossAxisAlignment.CENTER, controls=[status_text, save_button]))]))
+    root = ft.Container(
+        expand=True,
+        bgcolor=BG,
+        padding=ft.Padding(10, 10, 10, 10),
+        content=ft.Column(
+            spacing=10,
+            controls=[
+                ft.Container(
+                    padding=ft.Padding(12, 12, 12, 12),
+                    border_radius=14,
+                    bgcolor=SURFACE,
+                    border=ft.Border.all(1, BORDER),
+                    content=ft.Row(
+                        alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                        controls=[
+                            ft.Row(
+                                spacing=8,
+                                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                                controls=[
+                                    _logo_widget(logo_base64, 18),
+                                    ft.Column(
+                                        spacing=2,
+                                        controls=[
+                                            ft.Text("Voxify", size=16, weight=ft.FontWeight.W_900, color=TEXT),
+                                            ft.Text("Command Center", size=9, color=MUTED, weight=ft.FontWeight.W_700)
+                                        ]
+                                    )
+                                ]
+                            ),
+                            ft.IconButton(
+                                icon=ft.Icons.CLOSE,
+                                icon_size=16,
+                                icon_color=MUTED,
+                                tooltip="Close",
+                                on_click=_close_window
+                            )
+                        ]
+                    )
+                ),
+                ft.Container(
+                    padding=ft.Padding(4, 4, 4, 4),
+                    border_radius=14,
+                    bgcolor=CARD,
+                    border=ft.Border.all(1, BORDER),
+                    content=ft.Row(spacing=4, controls=segmented_buttons)
+                ),
+                ft.Container(
+                    expand=True,
+                    padding=ft.Padding(0, 2, 0, 2),
+                    content=ft.Column(
+                        scroll=ft.ScrollMode.AUTO,
+                        spacing=10,
+                        controls=[
+                            tab_containers["general"],
+                            tab_containers["audio"],
+                            tab_containers["assistant"],
+                            tab_containers["system"],
+                            tab_containers["about"]
+                        ]
+                    )
+                ),
+                ft.Container(
+                    padding=ft.Padding(12, 12, 12, 12),
+                    border_radius=14,
+                    bgcolor=SURFACE,
+                    border=ft.Border.all(1, BORDER),
+                    content=ft.Row(
+                        alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                        controls=[status_indicator, save_button]
+                    )
+                )
+            ]
+        )
+    )
     page.add(root)
     page.update()
     _sync_model_by_mode()

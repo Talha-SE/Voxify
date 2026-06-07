@@ -1258,6 +1258,50 @@ def gumroad_webhook():
     return jsonify({"success": True, "updatedLicenses": updates})
 
 
+@app.post("/api/gemini/ephemeral-token")
+def generate_ephemeral_token():
+    token = _text(request.args.get("token"))
+    device_id = _text(request.args.get("deviceId"))
+    if not token or not device_id:
+        return jsonify({"success": False, "message": "token and deviceId are required."}), 400
+
+    entitlement, _, error = _validate_token_and_license(device_id, token)
+    if not entitlement:
+        return jsonify({"success": False, "message": error}), 401
+    if entitlement.get("status") != "active":
+        return jsonify({"success": False, "message": "License is inactive."}), 403
+
+    try:
+        gemini_key = get_gemini_api_key()
+        gemini_model = get_gemini_model()
+    except RuntimeError as exc:
+        app.logger.error(f"Gemini API key MISSING in website/.env! Cannot generate ephemeral token: {exc}")
+        return jsonify({"success": False, "message": "Gemini API key not configured on server."}), 500
+
+    try:
+        resp = requests.post(
+            f"https://generativelanguage.googleapis.com/v1beta/models/{gemini_model}:generateEphemeralToken",
+            params={"key": gemini_key},
+            headers={"Content-Type": "application/json"},
+            json={},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        app.logger.info(f"Ephemeral token generated for device: {device_id}")
+        return jsonify({
+            "success": True,
+            "ephemeralToken": data["token"],
+            "model": gemini_model,
+        })
+    except requests.RequestException as exc:
+        app.logger.error(f"Ephemeral token generation failed: {exc}")
+        return jsonify({"success": False, "message": "Failed to generate ephemeral token from Gemini API."}), 502
+    except (KeyError, ValueError) as exc:
+        app.logger.error(f"Ephemeral token response parse error: {exc}")
+        return jsonify({"success": False, "message": "Invalid response from Gemini API."}), 502
+
+
 @app.get("/api/desktop-bootstrap")
 def desktop_bootstrap():
     token = _text(request.args.get("token"))

@@ -442,13 +442,68 @@ def smooth_scroll(direction: Literal["up", "down"], clicks: int = 3, speed: floa
 
 
 def open_application(query: str) -> bool:
-    """Attempt to open an application by name."""
+    """Attempt to open an application by name. Searches Start Menu shortcuts and registry paths before falling back to system start command."""
     if not _WIN_OK: return False
+    import os
+    import subprocess
+    from pathlib import Path
+    
+    query_lower = query.lower().strip()
+    
+    # 1. Search in Start Menu folders for matching shortcut (.lnk) files
+    start_menu_dirs = [
+        os.path.join(os.environ.get("ProgramData", "C:\\ProgramData"), "Microsoft\\Windows\\Start Menu\\Programs"),
+        os.path.join(os.environ.get("APPDATA", ""), "Microsoft\\Windows\\Start Menu\\Programs")
+    ]
+    
+    # Quick scan for matching .lnk files
+    for start_dir in start_menu_dirs:
+        if os.path.exists(start_dir):
+            for root, dirs, files in os.walk(start_dir):
+                for file in files:
+                    if file.lower().endswith(".lnk"):
+                        name_without_ext = file[:-4].lower()
+                        if query_lower in name_without_ext:
+                            lnk_path = os.path.join(root, file)
+                            try:
+                                os.startfile(lnk_path)
+                                return True
+                            except Exception:
+                                pass # try other shortcuts
+                                
+    # 2. Search common installation folders for direct executables
+    common_search_paths = [
+        os.path.join(os.environ.get("ProgramFiles", "C:\\Program Files")),
+        os.path.join(os.environ.get("ProgramFiles(x86)", "C:\\Program Files (x86)")),
+        os.path.join(os.environ.get("LocalAppData", ""), "Programs")
+    ]
+    for search_dir in common_search_paths:
+        if os.path.exists(search_dir):
+            for folder_name in os.listdir(search_dir):
+                if query_lower in folder_name.lower():
+                    folder_path = os.path.join(search_dir, folder_name)
+                    if os.path.isdir(folder_path):
+                        try:
+                            for file in os.listdir(folder_path):
+                                if file.lower() == f"{query_lower}.exe" or (file.lower().endswith(".exe") and query_lower in file.lower()):
+                                    try:
+                                        os.startfile(os.path.join(folder_path, file))
+                                        return True
+                                    except Exception:
+                                        pass
+                        except Exception:
+                            pass
+                                    
+    # 3. Fallback to start command
     try:
-        import subprocess
-        subprocess.Popen(f"start {query}", shell=True)
+        os.startfile(query)
         return True
-    except Exception: return False
+    except Exception:
+        try:
+            subprocess.Popen(f"start {query}", shell=True)
+            return True
+        except Exception:
+            return False
 
 
 def get_screen_size() -> tuple[int, int]:
@@ -588,32 +643,303 @@ def web_search(query: str) -> str:
     try:
         import requests
         from bs4 import BeautifulSoup
+        import urllib.parse
         
-        # Use DuckDuckGo HTML version for a simple, no-API-key search
         headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36"
         }
-        url = f"https://html.duckduckgo.com/html/?q={query}"
-        response = requests.get(url, headers=headers, timeout=10)
-        response.raise_for_status()
         
-        soup = BeautifulSoup(response.text, "html.parser")
-        results = []
-        for result in soup.find_all("a", class_="result__a")[:3]:
-            title = result.get_text()
-            snippet = ""
-            snippet_tag = result.find_parent("div").find_next_sibling("div", class_="result__snippet")
-            if snippet_tag:
-                snippet = snippet_tag.get_text()
-            results.append(f"Title: {title}\nSnippet: {snippet}")
-        
-        if not results:
-            return "No results found."
-        return "\n\n".join(results)
+        # 1. Try Google Search (usually works on most IPs and returns 200)
+        try:
+            url = f"https://www.google.com/search?q={urllib.parse.quote(query)}"
+            response = requests.get(url, headers=headers, timeout=10)
+            if response.status_code == 200:
+                soup = BeautifulSoup(response.text, "html.parser")
+                results = []
+                # Extract links and snippets from Google
+                for a in soup.find_all("a"):
+                    href = a.get("href")
+                    if href and "/url?q=" in href:
+                        parsed = urllib.parse.urlparse(href)
+                        queries = urllib.parse.parse_qs(parsed.query)
+                        real_url = queries.get("q", [None])[0]
+                        if real_url:
+                            title = a.get_text().strip()
+                            parent = a.find_parent("div")
+                            snippet = ""
+                            if parent:
+                                sibling = parent.find_next_sibling("div")
+                                if sibling:
+                                    snippet = sibling.get_text().strip()
+                            if title and real_url not in title:
+                                results.append(f"Title: {title}\nLink: {real_url}\nSnippet: {snippet[:200]}")
+                                if len(results) >= 3:
+                                    break
+                if results:
+                    return "\n\n".join(results)
+        except Exception:
+            pass
+
+        # 2. Fallback to DuckDuckGo
+        try:
+            url = f"https://html.duckduckgo.com/html/?q={urllib.parse.quote(query)}"
+            response = requests.get(url, headers=headers, timeout=10)
+            if response.status_code == 200:
+                soup = BeautifulSoup(response.text, "html.parser")
+                results = []
+                for result in soup.find_all("a", class_="result__a")[:3]:
+                    title = result.get_text()
+                    snippet = ""
+                    sibling = result.find_parent("div").find_next_sibling("div", class_="result__snippet")
+                    if sibling:
+                        snippet = sibling.get_text()
+                    results.append(f"Title: {title}\nSnippet: {snippet}")
+                if results:
+                    return "\n\n".join(results)
+        except Exception:
+            pass
+                
+        return "No results found."
     except Exception as e:
         return f"Error performing search: {str(e)}"
+
 
 
 def get_local_time() -> str:
     """Return the current local date and time."""
     return datetime.datetime.now().strftime("%A, %B %d, %Y %I:%M %p")
+
+
+# ── New Custom Functions for PC Control improvement ────────────────────────
+
+def press_key_combination(keys: list[str]) -> bool:
+    """Presses multiple keys simultaneously and releases them (modifier hotkeys)."""
+    if not keys:
+        return False
+    if not _GUI_OK:
+        return False
+    try:
+        # Press all keys in sequence
+        for key in keys:
+            pyautogui.keyDown(key.strip().lower())
+        # Release in reverse order
+        for key in reversed(keys):
+            pyautogui.keyUp(key.strip().lower())
+        return True
+    except Exception:
+        return False
+
+
+def parse_screen_text() -> list[dict]:
+    """Capture the screen and use Windows native OCR to find all text elements and coordinates."""
+    if not _WIN_OK or not _GUI_OK:
+        return []
+    
+    import os
+    import tempfile
+    import json
+    import subprocess
+    
+    temp_dir = tempfile.gettempdir()
+    temp_img = os.path.join(temp_dir, f"voxify_ocr_{int(time.time())}.png")
+    
+    try:
+        # 1. Take screenshot
+        pyautogui.screenshot(temp_img)
+        
+        # 2. Run PowerShell script that parses Windows.Media.Ocr
+        ps_code = f"""
+        function Await($task) {{
+            while ($task.Status -eq 'Started') {{ [System.Threading.Thread]::Sleep(5) }}
+            return $task.GetResults()
+        }}
+        try {{
+            $absolutePath = "{temp_img.replace(chr(92), '/')}"
+            [void][Windows.Media.Ocr.OcrEngine, Windows.Foundation, ContentType = WindowsRuntime]
+            [void][Windows.Graphics.Imaging.BitmapDecoder, Windows.Foundation, ContentType = WindowsRuntime]
+            [void][Windows.Storage.Streams.RandomAccessStream, Windows.Foundation, ContentType = WindowsRuntime]
+            
+            $storageFileTask = [Windows.Storage.StorageFile]::GetFileFromPathAsync($absolutePath)
+            $storageFile = Await $storageFileTask
+            
+            $fileStreamTask = $storageFile.OpenAsync([Windows.Storage.FileAccessMode]::Read)
+            $fileStream = Await $fileStreamTask
+
+            $decoderTask = [Windows.Graphics.Imaging.BitmapDecoder]::CreateAsync($fileStream)
+            $decoder = Await $decoderTask
+
+            $bitmapTask = $decoder.GetSoftwareBitmapAsync()
+            $softwareBitmap = Await $bitmapTask
+
+            $engine = [Windows.Media.Ocr.OcrEngine]::TryCreateFromUserProfileLanguages()
+            if ($engine -ne $null) {{
+                $ocrTask = $engine.RecognizeAsync($softwareBitmap)
+                $result = Await $ocrTask
+                
+                $out = @()
+                foreach ($line in $result.Lines) {{
+                    foreach ($word in $line.Words) {{
+                        $rect = $word.BoundingRect
+                        $out += [PSCustomObject]@{{
+                            text = $word.Text
+                            x = [int]$rect.X
+                            y = [int]$rect.Y
+                            w = [int]$rect.Width
+                            h = [int]$rect.Height
+                        }}
+                    }}
+                }}
+                $fileStream.Dispose()
+                Write-Output ($out | ConvertTo-Json -Compress)
+            }} else {{
+                $fileStream.Dispose()
+                Write-Output "[]"
+            }}
+        }} catch {{
+            Write-Output "[]"
+        }}
+        """
+        
+        result = subprocess.run(["powershell.exe", "-NoProfile", "-Command", ps_code], capture_output=True, text=True)
+        if result.returncode == 0 and result.stdout.strip():
+            try:
+                data = json.loads(result.stdout.strip())
+                return data if isinstance(data, list) else [data]
+            except Exception:
+                pass
+        return []
+    except Exception:
+        return []
+    finally:
+        if os.path.exists(temp_img):
+            try:
+                os.remove(temp_img)
+            except Exception:
+                pass
+
+
+def write_file_content(path: str, content: str) -> bool:
+    """Create or overwrite a text file with the specified content."""
+    try:
+        # Expand user directories if ~ is used
+        full_path = os.path.abspath(os.path.expanduser(path))
+        parent_dir = os.path.dirname(full_path)
+        if not os.path.exists(parent_dir):
+            os.makedirs(parent_dir, exist_ok=True)
+            
+        with open(full_path, "w", encoding="utf-8") as f:
+            f.write(content)
+        return True
+    except Exception:
+        return False
+
+
+def file_operation(source: str, target: str, action: Literal["copy", "move", "delete", "rename"]) -> bool:
+    """Perform file actions like copying, moving, deleting, or renaming files/folders."""
+    import shutil
+    try:
+        src = os.path.abspath(os.path.expanduser(source)) if source else ""
+        tgt = os.path.abspath(os.path.expanduser(target)) if target else ""
+        
+        if action == "copy":
+            if os.path.isdir(src):
+                shutil.copytree(src, tgt)
+            else:
+                shutil.copy(src, tgt)
+        elif action == "move" or action == "rename":
+            shutil.move(src, tgt)
+        elif action == "delete":
+            if os.path.isdir(src):
+                shutil.rmtree(src)
+            else:
+                os.remove(src)
+        return True
+    except Exception:
+        return False
+
+
+def create_folder(path: str) -> bool:
+    """Create a new folder (including subfolders if necessary)."""
+    try:
+        full_path = os.path.abspath(os.path.expanduser(path))
+        os.makedirs(full_path, exist_ok=True)
+        return True
+    except Exception:
+        return False
+
+
+def list_running_processes() -> list[dict]:
+    """Return a list of currently running processes with PID, name, and CPU/Memory usage."""
+    import psutil
+    processes = []
+    try:
+        for proc in psutil.process_iter(['pid', 'name', 'cpu_percent', 'memory_percent']):
+            try:
+                # Cache process info
+                info = proc.info
+                # Make memory percent readable (convert to percent of total memory)
+                processes.append({
+                    "pid": info['pid'],
+                    "name": info['name'],
+                    "cpu": info['cpu_percent'],
+                    "memory": round(info['memory_percent'], 2) if info['memory_percent'] else 0
+                })
+            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                pass
+        # Sort by CPU usage and return top 25 processes
+        processes.sort(key=lambda x: x['cpu'], reverse=True)
+        return processes[:25]
+    except Exception:
+        return []
+
+
+def kill_process(pid_or_name: str) -> bool:
+    """Terminate a process by its process ID (PID) or exact process name."""
+    import psutil
+    killed = False
+    try:
+        if pid_or_name.isdigit():
+            pid = int(pid_or_name)
+            p = psutil.Process(pid)
+            p.terminate()
+            return True
+        else:
+            name_lower = pid_or_name.lower().strip()
+            for proc in psutil.process_iter(['pid', 'name']):
+                try:
+                    if proc.info['name'] and proc.info['name'].lower() == name_lower:
+                        proc.terminate()
+                        killed = True
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    pass
+            return killed
+    except Exception:
+        return False
+
+
+def set_timer(duration_seconds: int, label: str = "Timer") -> bool:
+    """Sets a timer/alarm for a specified duration in seconds. Alerts the user when finished."""
+    def _timer_thread():
+        time.sleep(duration_seconds)
+        if _WIN_OK:
+            try:
+                import winsound
+                # Play beep sound 3 times
+                for _ in range(3):
+                    winsound.MessageBeep()
+                    time.sleep(0.5)
+            except Exception:
+                pass
+        
+        # Display popup dialog
+        if _WIN_OK:
+            try:
+                import ctypes
+                ctypes.windll.user32.MessageBoxW(0, f"Timer '{label}' finished!", "Voxify Alarm", 0x40 | 0x1000)
+            except Exception:
+                pass
+    
+    threading.Thread(target=_timer_thread, daemon=True).start()
+    return True
+
+
