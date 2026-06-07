@@ -4,9 +4,16 @@ echo.
 
 if exist dist\Voxify.exe del /q dist\Voxify.exe
 
-python -m pip install pyinstaller -q
+where python3.13 >nul 2>&1
+if errorlevel 1 (
+    set PY=python
+) else (
+    set PY=python3.13
+)
 
-python -m PyInstaller ^
+%PY% -m pip install pyinstaller -q
+
+%PY% -m PyInstaller ^
     --onefile ^
     --windowed ^
     --name "Voxify" ^
@@ -22,6 +29,7 @@ python -m PyInstaller ^
     --hidden-import numpy ^
     --hidden-import pyperclip ^
     --hidden-import pyautogui ^
+    --hidden-import mss ^
     --hidden-import requests ^
     app.py
 
@@ -39,7 +47,7 @@ if not "%SIGN_PFX_PATH%"=="" (
     if errorlevel 1 goto :build_failed
 )
 
-python package_release.py --platform windows
+%PY% package_release.py --platform windows
 
 if errorlevel 1 goto :build_failed
 

@@ -4,12 +4,25 @@ Config manager — loads and saves settings to config.json
 
 import json
 import os
+import time
 from pathlib import Path
 
 CONFIG_FILE = Path(__file__).parent / "config.json"
 
+# ── In-memory cache to avoid redundant disk I/O on repeated loads ──────────
+_config_cache: dict | None = None
+_config_cache_time: float = 0.0
+_CONFIG_CACHE_TTL: float = 2.0  # seconds before re-reading from disk
+
+
+def _invalidate_cache() -> None:
+    global _config_cache, _config_cache_time
+    _config_cache = None
+    _config_cache_time = 0.0
+
+
 DEFAULT_CONFIG = {
-    "model": "voxtral-mini-2507",
+    "model": "voxtral-mini-transcribe-2602",
     "api_key": "",
     "language": "",          # kept for runtime compatibility; empty means auto-detect
     "sample_rate": 16000,
@@ -45,7 +58,6 @@ DEFAULT_CONFIG = {
     "gemini_thinking_level": "minimal",
     "gemini_thinking_budget": 0,
     "screen_share_resolution": "",
-    "screen_share_quality": 70,
     "screen_share_pause_on_idle": True,
     "auto_minimize": True,
     "minimize_timeout": 10,
@@ -56,21 +68,42 @@ DEFAULT_CONFIG = {
 
 
 def load() -> dict:
-    """Return merged config (file values override defaults)."""
+    """Return merged config (file values override defaults), cached in memory."""
+    global _config_cache, _config_cache_time
+    now = time.time()
+    if _config_cache is not None and (now - _config_cache_time) < _CONFIG_CACHE_TTL:
+        return _config_cache
     if CONFIG_FILE.exists():
         try:
             with open(CONFIG_FILE, "r", encoding="utf-8") as f:
                 user = json.load(f)
-            return {**DEFAULT_CONFIG, **user}
+            _config_cache = {**DEFAULT_CONFIG, **user}
+            _config_cache_time = now
+            return _config_cache
         except Exception:
             pass
-    return dict(DEFAULT_CONFIG)
+    _config_cache = dict(DEFAULT_CONFIG)
+    _config_cache_time = now
+    return _config_cache
 
 
 def save(cfg: dict) -> None:
-    """Persist config to disk."""
+    """Persist config to disk and invalidate in-memory cache."""
+    _invalidate_cache()
     with open(CONFIG_FILE, "w", encoding="utf-8") as f:
         json.dump(cfg, f, indent=2)
+
+
+def get(key: str, default=None):
+    """Quick single-key read."""
+    return load().get(key, default)
+
+
+def set_value(key: str, value) -> None:
+    """Quick single-key write."""
+    cfg = load()
+    cfg[key] = value
+    save(cfg)
 
 
 def get(key: str, default=None):

@@ -13,7 +13,7 @@ from typing import Any
 
 import requests
 
-DEFAULT_WEBSITE_URL = os.getenv("VOXIFY_WEBSITE_URL") or os.getenv("SONUS_WEBSITE_URL", "http://127.0.0.1:5050")
+DEFAULT_WEBSITE_URL = os.getenv("VOXIFY_WEBSITE_URL") or os.getenv("SONUS_WEBSITE_URL", "https://voxify.brevios.com")
 STATUS_TIMEOUT = 2.0
 BOOTSTRAP_TIMEOUT = 5.0
 UPDATE_TIMEOUT = 5.0
@@ -22,7 +22,7 @@ RELIABILITY_TIMEOUT = 3.0
 LICENSE_TIMEOUT = 8.0
 TRANSCRIBE_TIMEOUT = 75.0
 DOWNLOAD_TIMEOUT = 15.0
-DEFAULT_MODEL = "voxtral-mini-2507"
+DEFAULT_MODEL = "voxtral-mini-transcribe-2602"
 
 
 class WebsiteAPIError(RuntimeError):
@@ -110,21 +110,30 @@ def _normalize_base_url(base_url: str | None = None) -> str:
     return cleaned or DEFAULT_WEBSITE_URL
 
 
+def _get(raw: dict[str, Any], *keys: str) -> Any:
+    """Try multiple key names (camelCase, snake_case) for backward compat."""
+    for key in keys:
+        val = raw.get(key)
+        if val is not None:
+            return val
+    return None
+
+
 def _parse_entitlement(raw: dict[str, Any]) -> LicenseEntitlement:
     return LicenseEntitlement(
-        license_id=(raw.get("licenseId") or "").strip(),
-        status=(raw.get("status") or "").strip().lower(),
-        plan=(raw.get("plan") or "starter").strip().lower(),
-        billing_cycle=(raw.get("billingCycle") or raw.get("cycleType") or "").strip().lower(),
-        quota_chars=int(raw.get("quotaChars") or 0),
-        bonus_chars=int(raw.get("bonusChars") or 0),
-        used_chars=int(raw.get("usedChars") or 0),
-        used_words=int(raw.get("usedWords") or 0),
-        remaining_chars=int(raw.get("remainingChars") or 0),
-        seat_limit=int(raw.get("seatLimit") or 1),
-        active_seats=int(raw.get("activeSeats") or 0),
-        is_subscription=bool(raw.get("isSubscription", False)),
-        can_transcribe=bool(raw.get("canTranscribe", False)),
+        license_id=(_get(raw, "licenseId", "license_id") or "").strip(),
+        status=(_get(raw, "status") or "").strip().lower(),
+        plan=(_get(raw, "plan") or "starter").strip().lower(),
+        billing_cycle=(_get(raw, "billingCycle", "billing_cycle", "cycleType") or "").strip().lower(),
+        quota_chars=int(_get(raw, "quotaChars", "quota_chars") or 0),
+        bonus_chars=int(_get(raw, "bonusChars", "bonus_chars") or 0),
+        used_chars=int(_get(raw, "usedChars", "used_chars") or 0),
+        used_words=int(_get(raw, "usedWords", "used_words") or 0),
+        remaining_chars=int(_get(raw, "remainingChars", "remaining_chars") or 0),
+        seat_limit=int(_get(raw, "seatLimit", "seat_limit") or 1),
+        active_seats=int(_get(raw, "activeSeats", "active_seats") or 0),
+        is_subscription=bool(_get(raw, "isSubscription", "is_subscription") or False),
+        can_transcribe=bool(_get(raw, "canTranscribe", "can_transcribe") or False),
     )
 
 

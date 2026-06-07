@@ -21,7 +21,7 @@ def get_mistral_api_key() -> str:
 
 def get_mistral_model() -> str:
     """Return the default model name for server-side API calls."""
-    return (os.getenv("MISTRAL_MODEL") or "voxtral-mini-2507").strip()
+    return (os.getenv("MISTRAL_MODEL") or "voxtral-mini-transcribe-2602").strip()
 
 
 def get_masked_api_key() -> str:

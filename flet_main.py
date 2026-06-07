@@ -13,7 +13,6 @@ from pathlib import Path
 from typing import Optional
 
 import flet as ft
-
 # Professional Logging Setup
 logger = logging.getLogger("VoxifyApp")
 logger.setLevel(logging.INFO)
@@ -29,12 +28,37 @@ import branding
 import dictation_features
 import license_cache
 import output_handler
-import recorder as rec_module
-import reliability
-import realtime_transcriber as rt_module
-import transcriber as tr_module
 import website_client
-import gemini_live_client
+
+
+# ── Lazy module loaders (heavy imports deferred until needed) ──────────────
+_recorder_module = None
+
+def _get_recorder():
+    global _recorder_module
+    if _recorder_module is None:
+        import recorder as _recorder_module
+    return _recorder_module
+
+
+def _import_reliability():
+    import reliability
+    return reliability
+
+
+def _import_realtime_transcriber():
+    import realtime_transcriber as rt_module
+    return rt_module
+
+
+def _import_transcriber():
+    import transcriber as tr_module
+    return tr_module
+
+
+def _import_gemini_live():
+    import gemini_live_client
+    return gemini_live_client
 
 APP_TITLE = "Voxify"
 ACCENT = "#2563EB"
@@ -63,8 +87,8 @@ AUX_BORDER = "#FB923C"
 MODE_BATCH_BG = "#1D4ED8"
 MODE_BATCH_BORDER = "#60A5FA"
 MODE_BATCH_TEXT = "#93C5FD"
-BATCH_MODEL = "voxtral-mini-2507"
-LIVE_MODELS = {"voxtral-mini-2507", "voxtral-small-2507"}
+BATCH_MODEL = "voxtral-mini-transcribe-2602"
+LIVE_MODELS = {"voxtral-small-2507", "voxtral-mini-transcribe-realtime-2602"}
 WIDGET_FULL_WIDTH = 200
 WIDGET_FULL_HEIGHT = 160
 WIDGET_MINI_WIDTH = 56
@@ -131,14 +155,16 @@ class VoxifyApp:
         self.page = page
         self.cfg = config.load()
 
-        self._recorder: Optional[rec_module.Recorder] = None
-        self._rt_transcriber: Optional[rt_module.RealtimeTranscriber] = None
+        self._recorder: Optional = None
+        self._rt_transcriber: Optional = None
         self._click_listener = None
         self._waiting_click = False
         self._is_recording = False
         self._is_chatting = False
+        self._chat_starting = False
         self._is_sharing_screen = False
         self._screen_share_paused = False
+        self._screen_capture_thread: Optional[threading.Thread] = None
         self._last_frame_bytes: Optional[bytes] = None
         self._last_frame_pixels: Optional["np.ndarray"] = None
         self._stopping = False
@@ -170,7 +196,6 @@ class VoxifyApp:
         self._last_live_typed_char = ""
         self._is_minimized = False
         self._auto_minimize_timer: Optional[threading.Timer] = None
-        self._screen_capture_thread: Optional[threading.Thread] = None
 
         self._wave_anim_running = False
         self._wave_anim_thread: Optional[threading.Thread] = None
@@ -179,7 +204,6 @@ class VoxifyApp:
         self._config_mtime = self._get_config_mtime()
         self._theme_name = "dark"
         self._device_id = self._get_or_create_device_id()
-        self._load_cached_license_state()
 
         self._apply_theme_globals()
 
@@ -484,11 +508,26 @@ class VoxifyApp:
 
         self.widget_shell = ft.Container(expand=True, margin=ft.Margin.all(0), padding=ft.Padding.symmetric(horizontal=12, vertical=12), border_radius=20, gradient=ft.LinearGradient(begin=ft.Alignment(-1, -1), end=ft.Alignment(1, 1), colors=[CARD, WIDGET_GRADIENT_END]), on_hover=self._on_widget_hover, content=ft.Stack(expand=True, controls=[self.full_mode_container, self.minimized_mode_container]))
         root = ft.WindowDragArea(maximizable=False, content=self.widget_shell)
-        self.page.add(root)
 
-        self._set_mode_badge()
-        self._set_action("Start", ACCENT, ACCENT, TEXT, self._on_action_click)
-        self._set_status("Ready", MUTED)
+        # ── Set initial UI state before first paint ──────────────────────
+        mode_value = (self.cfg.get("mode") or "Batch").strip().lower()
+        mode_label = "Live" if mode_value == "live" else "Batch"
+        self.mode_badge_text.value = mode_label.upper()
+        if mode_label == "Live":
+            self.mode_badge.bgcolor = ft.Colors.with_opacity(0.16, ACCENT)
+            self.mode_badge.border = ft.Border.all(1, ft.Colors.with_opacity(0.45, ACCENT))
+            self.mode_badge_text.color = ACCENT_GLOW
+        else:
+            self.mode_badge.bgcolor = ft.Colors.with_opacity(0.16, MODE_BATCH_BG)
+            self.mode_badge.border = ft.Border.all(1, ft.Colors.with_opacity(0.4, MODE_BATCH_BORDER))
+            self.mode_badge_text.color = MODE_BATCH_TEXT
+        self.action_label.value = "Start"
+        self.action_label.color = TEXT
+        self.status_text.value = "Ready"
+
+        self.page.add(root)
+        self.page.update()
+
         self._start_wave_animation()
         self._schedule_auto_minimize_timer()
 
@@ -649,15 +688,22 @@ class VoxifyApp:
         if self._is_chatting:
             self._stop_chat_mode()
             return
-        self._api_check_in_flight = False
-        self._waiting_click = False
-        self._stop_target_listener()
-        self.page.window.opacity = 1.0
-        if self._is_recording:
-            self._is_recording = False
-            if self._rt_transcriber: self._rt_transcriber.stop(); self._rt_transcriber = None
-            if self._recorder: self._recorder = None
-        self._start_chat_mode()
+        # Guard against rapid double-click
+        if hasattr(self, '_chat_starting') and self._chat_starting:
+            return
+        self._chat_starting = True
+        try:
+            self._api_check_in_flight = False
+            self._waiting_click = False
+            self._stop_target_listener()
+            self.page.window.opacity = 1.0
+            if self._is_recording:
+                self._is_recording = False
+                if self._rt_transcriber: self._rt_transcriber.stop(); self._rt_transcriber = None
+                if self._recorder: self._recorder = None
+            self._start_chat_mode()
+        finally:
+            self._chat_starting = False
 
     def _start_chat_mode(self) -> None:
         self._is_chatting = True
@@ -740,13 +786,11 @@ class VoxifyApp:
             context_compression = self.cfg.get("gemini_context_compression", False)
             idle_timeout = int(self.cfg.get("gemini_idle_timeout", 300))
 
-            screen_share_res = self.cfg.get("screen_share_resolution", "") or ""
-            self._gemini_live_client = gemini_live_client.GeminiLiveClient(
+            self._gemini_live_client = _import_gemini_live().GeminiLiveClient(
                 api_key=gemini_key if gemini_key else None,
                 ephemeral_token=ephemeral_token,
                 model=gemini_model,
                 voice_name=gemini_voice,
-                media_resolution=screen_share_res or None,
                 tools=tools,
                 system_instruction=system_instruction,
                 session_resumption=session_resumption,
@@ -828,10 +872,17 @@ class VoxifyApp:
         return {"success": False, "error": "Unknown tool"}
 
     def _stop_chat_mode(self) -> None:
+        if not self._is_chatting:
+            return
         self._is_chatting = False
         self._is_recording = False
         self._stop_screen_sharing()
-        if self._gemini_live_client: self._gemini_live_client.stop(); self._gemini_live_client = None
+        if self._gemini_live_client:
+            try:
+                self._gemini_live_client.stop()
+            except Exception:
+                pass
+            self._gemini_live_client = None
         self._set_status("Chat closed", MUTED)
         self._apply_theme_to_controls()
         self._reset_to_ready()
@@ -842,13 +893,18 @@ class VoxifyApp:
         self._set_status(display, SUCCESS)
 
     def _on_gemini_error(self, error: str) -> None:
-        if self._is_chatting:
-            self._is_chatting = False
-            if self._gemini_live_client:
-                try: self._gemini_live_client.stop()
-                except Exception: pass
-                self._gemini_live_client = None
-            self._on_transcription_error(f"Gemini Live: {error}")
+        if not self._is_chatting:
+            return
+        self._is_chatting = False
+        self._is_recording = False
+        if self._gemini_live_client:
+            try:
+                self._gemini_live_client.stop()
+            except Exception:
+                pass
+            self._gemini_live_client = None
+        self._apply_theme_to_controls()
+        self._on_transcription_error(f"Gemini Live: {error}")
 
     def _on_gemini_transcript(self, transcript: str) -> None:
         preview = (transcript[:50] + "..") if len(transcript) > 50 else transcript
@@ -860,11 +916,14 @@ class VoxifyApp:
         "high": 1024,
     }
 
+    # Google Gemini Live API spec: max 1 FPS for video frames
+    # FPS_TABLE: (change_threshold, frames_per_second)
     FPS_TABLE = [
-        (0.30, 0.5),
-        (0.10, 1.0),
-        (0.00, 2.0),
+        (0.30, 0.5),   # lots of motion → 0.5 FPS (2s interval)
+        (0.10, 0.67),  # moderate motion → 0.67 FPS (1.5s)
+        (0.00, 1.0),   # low motion → 1.0 FPS (1s)
     ]
+    # Minimum interval between frames = 1 / max_fps = 1.0s
 
     def _on_video_click(self, _event) -> None:
         self._register_widget_interaction()
@@ -874,15 +933,13 @@ class VoxifyApp:
             self._start_screen_sharing()
 
     def _start_screen_sharing(self) -> None:
-        if not self._is_chatting: return
+        if not self._is_chatting or not self._gemini_live_client:
+            return
         self._is_sharing_screen = True
         self._screen_share_paused = False
         self._last_frame_bytes = None
         self._last_frame_pixels = None
-        self.video_icon.name = ft.Icons.VIDEOCAM_ROUNDED
-        self.video_icon.color = TEXT
-        self.video_btn.bgcolor = ACCENT
-        self.video_btn.shadow = ft.BoxShadow(blur_radius=12, spread_radius=0, color=ft.Colors.with_opacity(0.4, ACCENT_GLOW))
+        self._update_video_btn_ui(sharing=True)
         self._set_status("Sharing screen", SUCCESS)
         self._screen_capture_thread = threading.Thread(target=self._run_screen_capture, daemon=True)
         self._screen_capture_thread.start()
@@ -893,84 +950,112 @@ class VoxifyApp:
         self._screen_share_paused = False
         self._last_frame_bytes = None
         self._last_frame_pixels = None
-        self.video_icon.name = ft.Icons.VIDEOCAM_OUTLINED
-        self.video_icon.color = ACCENT
-        self.video_btn.bgcolor = ft.Colors.with_opacity(0.2, CARD_ACTIVE)
-        self.video_btn.shadow = None
-        if self._is_chatting: self._set_status("Listening...", SUCCESS)
-        self.page.update()
+        # Wait for the capture thread to finish so the finally block runs cleanly
+        thread = getattr(self, '_screen_capture_thread', None)
+        if thread and thread is not threading.current_thread():
+            thread.join(timeout=2.0)
+        self._screen_capture_thread = None
+        self._update_video_btn_ui(sharing=False)
+        if self._is_chatting:
+            self._set_status("Listening...", SUCCESS)
 
-    def _pause_screen_sharing(self) -> None:
-        self._screen_share_paused = True
-        self.video_icon.name = ft.Icons.VIDEOCAM_OUTLINED
-        self.video_icon.color = MUTED_SOFT
-        self.video_btn.bgcolor = ft.Colors.with_opacity(0.2, CARD_ACTIVE)
-        self.video_btn.shadow = None
-        self._set_status("Screen share paused", MUTED)
+    def _update_video_btn_ui(self, sharing: bool) -> None:
+        if sharing:
+            self.video_icon.name = ft.Icons.VIDEOCAM_ROUNDED
+            self.video_icon.color = TEXT
+            self.video_btn.bgcolor = ACCENT
+            self.video_btn.gradient = ft.LinearGradient(
+                begin=ft.Alignment(-1, -1), end=ft.Alignment(1, 1),
+                colors=[ACCENT, ACCENT_GLOW],
+            )
+            self.video_btn.shadow = ft.BoxShadow(
+                blur_radius=14, spread_radius=2,
+                color=ft.Colors.with_opacity(0.5, ACCENT_GLOW),
+            )
+            self.video_btn.border = ft.Border.all(1, ft.Colors.with_opacity(0.6, ACCENT_GLOW))
+        else:
+            self.video_icon.name = ft.Icons.VIDEOCAM_OUTLINED
+            self.video_icon.color = ACCENT
+            self.video_btn.bgcolor = ft.Colors.with_opacity(0.2, CARD_ACTIVE)
+            self.video_btn.gradient = None
+            self.video_btn.shadow = None
+            self.video_btn.border = ft.Border.all(1, ft.Colors.with_opacity(0.2, BORDER))
         self.page.update()
-
-    def _resume_screen_sharing(self) -> None:
-        self._screen_share_paused = False
-        self.video_icon.name = ft.Icons.VIDEOCAM_ROUNDED
-        self.video_icon.color = TEXT
-        self.video_btn.bgcolor = ACCENT
-        self.video_btn.shadow = ft.BoxShadow(blur_radius=12, spread_radius=0, color=ft.Colors.with_opacity(0.4, ACCENT_GLOW))
-        self._set_status("Sharing screen", SUCCESS)
-        self.page.update()
-
-    def _compute_frame_sleep(self, current_pixels, total_pixels: int) -> float:
-        if self._last_frame_pixels is None or total_pixels == 0:
-            return self.FPS_TABLE[-1][1]
-        diff = cv2.absdiff(current_pixels, self._last_frame_pixels)
-        changed = float(np.count_nonzero(diff)) / total_pixels
-        for threshold, fps in self.FPS_TABLE:
-            if changed >= threshold:
-                return fps
-        return self.FPS_TABLE[-1][1]
 
     def _run_screen_capture(self) -> None:
+        from PIL import Image as PILImage
         import io
+
+        # ── Import guard ─────────────────────────────────────────────
         try:
-            import pyautogui
             import cv2
             import numpy as np
         except ImportError:
             self._is_sharing_screen = False
+            self._screen_share_paused = False
+            try: self.page.run_thread(lambda: self._update_video_btn_ui(False))
+            except Exception: pass
             return
+
+        try:
+            import mss
+            _use_mss = True
+        except ImportError:
+            _use_mss = False
+
+        if not _use_mss:
+            try:
+                import pyautogui
+            except ImportError:
+                self._is_sharing_screen = False
+                self._screen_share_paused = False
+                try: self.page.run_thread(lambda: self._update_video_btn_ui(False))
+                except Exception: pass
+                return
 
         resolution_key = self.cfg.get("screen_share_resolution", "medium")
         max_dim = self.RESOLUTION_MAP.get(resolution_key, 768)
-        jpeg_quality = int(self.cfg.get("screen_share_quality", 70))
-        pause_on_idle = bool(self.cfg.get("screen_share_pause_on_idle", True))
+        MIN_INTERVAL = 1.0
 
-        while self._is_sharing_screen and self._is_chatting:
-            try:
+        sct = mss.mss() if _use_mss else None
+        try:
+            while self._is_sharing_screen and self._is_chatting:
                 if self._screen_share_paused:
-                    time.sleep(0.5)
+                    time.sleep(0.3)
                     continue
 
-                screenshot = pyautogui.screenshot()
+                # ── Capture ──────────────────────────────────────────────
+                if _use_mss:
+                    raw = sct.grab(sct.monitors[1])
+                    screenshot = PILImage.frombytes("RGB", raw.size, raw.rgb)
+                else:
+                    screenshot = pyautogui.screenshot()
+
+                # ── Resize ───────────────────────────────────────────────
                 w, h = screenshot.size
                 scale = min(max_dim / max(w, h), 1.0)
                 if scale < 1.0:
                     new_w, new_h = int(w * scale), int(h * scale)
-                    screenshot = screenshot.resize((new_w, new_h), 3)
+                    screenshot = screenshot.resize(
+                        (new_w, new_h), PILImage.Resampling.LANCZOS
+                    )
 
                 frame_pixels = np.array(screenshot)
-                total = frame_pixels.size
 
+                # ── Skip identical frames ────────────────────────────────
                 if self._last_frame_pixels is not None:
-                    if pause_on_idle:
-                        diff = cv2.absdiff(frame_pixels, self._last_frame_pixels)
-                        changed_ratio = float(np.count_nonzero(diff)) / total
-                        if changed_ratio < 0.005:
-                            time.sleep(1.0)
-                            continue
+                    diff = cv2.absdiff(frame_pixels, self._last_frame_pixels)
+                    changed = float(np.count_nonzero(diff)) / frame_pixels.size
+                    if changed < 0.005:
+                        time.sleep(MIN_INTERVAL)
+                        continue
 
-                img_byte_arr = io.BytesIO()
-                screenshot.save(img_byte_arr, format="JPEG", quality=jpeg_quality)
-                frame_bytes = img_byte_arr.getvalue()
+                # ── Encode JPEG ──────────────────────────────────────────
+                img_buf = io.BytesIO()
+                screenshot.save(img_buf, format="JPEG", quality=85)
+                frame_bytes = img_buf.getvalue()
 
+                # ── Send if changed ──────────────────────────────────────
                 if frame_bytes != self._last_frame_bytes:
                     self._last_frame_bytes = frame_bytes
                     self._last_frame_pixels = frame_pixels
@@ -979,15 +1064,34 @@ class VoxifyApp:
                             self._gemini_live_client.send_video_frame, frame_bytes
                         )
 
-                sleep_time = self._compute_frame_sleep(frame_pixels, total)
-                time.sleep(min(sleep_time, 2.0))
+                # Adaptive sleep: more change = faster. Never exceed 1 FPS.
+                if self._last_frame_pixels is not None:
+                    diff = cv2.absdiff(frame_pixels, self._last_frame_pixels)
+                    changed = float(np.count_nonzero(diff)) / frame_pixels.size
+                    if changed > 0.30:
+                        sleep = 1.0
+                    elif changed > 0.10:
+                        sleep = 1.5
+                    else:
+                        sleep = 1.0
+                else:
+                    sleep = 1.0
+                time.sleep(max(sleep, MIN_INTERVAL))
 
+        except Exception:
+            pass
+        finally:
+            if sct:
+                try: sct.close()
+                except Exception: pass
+            self._is_sharing_screen = False
+            self._last_frame_bytes = None
+            self._last_frame_pixels = None
+            # Always reset button UI when the capture thread exits
+            try:
+                self.page.run_thread(lambda: self._update_video_btn_ui(False))
             except Exception:
-                break
-
-        self._is_sharing_screen = False
-        self._last_frame_bytes = None
-        self._last_frame_pixels = None
+                pass
 
     def _open_settings(self, _event) -> None:
         self._register_widget_interaction()
@@ -1089,7 +1193,9 @@ class VoxifyApp:
         return self._runtime_config
 
     def _warmup_startup(self) -> None:
-        try: rec_module.list_input_devices()
+        try: _get_recorder().list_input_devices()
+        except Exception: pass
+        try: self._load_cached_license_state()
         except Exception: pass
         self._load_runtime_config(force=True)
         try:
@@ -1160,7 +1266,7 @@ class VoxifyApp:
             self._ask_for_target_click()
 
     def _ask_for_target_click(self) -> None:
-        self._session_id = reliability.new_session_id(); self._api_check_in_flight = True
+        self._session_id = _import_reliability().new_session_id(); self._api_check_in_flight = True
         logger.info(f"Session {self._session_id}: checking license")
         self._set_status("Checking license", MUTED)
         threading.Thread(target=self._check_api_and_prepare_target, daemon=True).start()
@@ -1260,7 +1366,7 @@ class VoxifyApp:
         if runtime_cfg and runtime_cfg.in_rollout:
             endpointing_mode = runtime_cfg.endpointing_mode or endpointing_mode
         if preferred == "system":
-            supported, reason = rec_module.system_audio_support_status()
+            supported, reason = _get_recorder().system_audio_support_status()
             if not supported:
                 logger.warning(f"System audio unsupported: {reason}, falling back to mic")
                 preferred = "mic"
@@ -1271,7 +1377,7 @@ class VoxifyApp:
         last_exc = None
         for source in sources:
             logger.info(f"Trying recorder source={source}")
-            self._recorder = rec_module.Recorder(source=source, sample_rate=sample_rate, silence_trim_enabled=self._silence_trim_enabled(), reliability_mode=endpointing_mode)
+            self._recorder = _get_recorder().Recorder(source=source, sample_rate=sample_rate, silence_trim_enabled=self._silence_trim_enabled(), reliability_mode=endpointing_mode)
             try:
                 self._recorder.start()
                 self._is_recording = True
@@ -1294,14 +1400,14 @@ class VoxifyApp:
             return
         preferred = self.cfg.get("source", "mic")
         if preferred == "system":
-            supported, reason = rec_module.system_audio_support_status()
+            supported, reason = _get_recorder().system_audio_support_status()
             if not supported:
                 logger.warning(f"System audio unsupported: {reason}, falling back to mic")
                 preferred = "mic"
         logger.info(f"Starting live mode, source={preferred}")
         self._live_text_buffer.clear(); self._is_recording = True
         try:
-            self._rt_transcriber = rt_module.RealtimeTranscriber(api_key=api_key, sample_rate=int(self.cfg.get("sample_rate", 16000)), source=preferred, on_delta=lambda t: self.page.run_thread(self._type_live_delta, t), on_status=lambda s: self.page.run_thread(self._set_status, s, MUTED), on_done=lambda: self.page.run_thread(self._on_realtime_done), on_error=lambda e: self.page.run_thread(self._on_transcription_error, e))
+            self._rt_transcriber = _import_realtime_transcriber().RealtimeTranscriber(api_key=api_key, sample_rate=int(self.cfg.get("sample_rate", 16000)), source=preferred, on_delta=lambda t: self.page.run_thread(self._type_live_delta, t), on_status=lambda s: self.page.run_thread(self._set_status, s, MUTED), on_done=lambda: self.page.run_thread(self._on_realtime_done), on_error=lambda e: self.page.run_thread(self._on_transcription_error, e))
             self._rt_transcriber.start()
             logger.info("Live transcriber started")
             self._set_status("Listening", SUCCESS)
@@ -1324,7 +1430,7 @@ class VoxifyApp:
         try:
             wav_path = self._recorder.stop()
             logger.info(f"Audio captured to {wav_path}")
-            client = tr_module.TranscriptionClient(api_key=self._runtime_api_key, model=self._selected_batch_model(), license_token=self._license_token, device_id=self._device_id)
+            client = _import_transcriber().TranscriptionClient(api_key=self._runtime_api_key, model=self._selected_batch_model(), license_token=self._license_token, device_id=self._device_id)
             raw_text = client.transcribe(wav_path, language=self.cfg.get("language") or None)
             logger.info(f"Transcription received: {len(raw_text)} chars")
             processed = self._process_transcript(raw_text)
@@ -1335,7 +1441,7 @@ class VoxifyApp:
             self.page.run_thread(self._on_transcription_error, str(exc))
         finally:
             if wav_path:
-                tr_module.cleanup_temp(wav_path)
+                _import_transcriber().cleanup_temp(wav_path)
                 logger.debug(f"Temp file cleaned: {wav_path}")
 
     def _on_transcription_done(self, text: str) -> None:
@@ -1392,7 +1498,7 @@ class VoxifyApp:
 
     def _serialize_entitlement(self, ent: website_client.LicenseEntitlement | None) -> dict:
         if not ent: return {}
-        return {"license_id": ent.license_id, "status": ent.status, "plan": ent.plan, "billing_cycle": ent.billing_cycle, "quota_chars": ent.quota_chars, "used_chars": ent.used_chars, "remaining_chars": ent.remaining_chars, "can_transcribe": ent.can_transcribe}
+        return {"licenseId": ent.license_id, "status": ent.status, "plan": ent.plan, "billingCycle": ent.billing_cycle, "quotaChars": ent.quota_chars, "bonusChars": ent.bonus_chars, "usedChars": ent.used_chars, "usedWords": ent.used_words, "remainingChars": ent.remaining_chars, "seatLimit": ent.seat_limit, "activeSeats": ent.active_seats, "isSubscription": ent.is_subscription, "canTranscribe": ent.can_transcribe}
 
     def _process_transcript(self, raw_text: str) -> dictation_features.ProcessedTranscript:
         return dictation_features.process_transcript(raw_text=raw_text, profile=self.cfg.get("dictation_profile", "notes"), replacements=self.cfg.get("text_replacements", {}), personal_dictionary=self.cfg.get("personal_dictionary", []), voice_commands_enabled=bool(self.cfg.get("voice_commands_enabled", True)), command_prefix=self.cfg.get("command_prefix", "command"))

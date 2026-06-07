@@ -199,11 +199,11 @@ class SettingsDialog(ctk.CTkToplevel):
 
         self._section_label(scroll, "MODEL")
         self._model_map = {
-            "Mini": "voxtral-mini-2507",
+            "Mini": "voxtral-mini-transcribe-2602",
             "Small": "voxtral-small-2507",
         }
         self._model_reverse = {model_id: label for label, model_id in self._model_map.items()}
-        saved_model = cfg.get("model", "voxtral-mini-2507")
+        saved_model = cfg.get("model", "voxtral-mini-transcribe-2602")
         self._model_var = tk.StringVar(value=self._model_reverse.get(saved_model, "Mini"))
         ctk.CTkComboBox(
             scroll,
@@ -383,7 +383,7 @@ class SettingsDialog(ctk.CTkToplevel):
     def _save(self) -> None:
         cfg = config.load()
         cfg["api_key"] = self._key_var.get().strip()
-        cfg["model"] = self._model_map.get(self._model_var.get().strip(), "voxtral-mini-2507")
+        cfg["model"] = self._model_map.get(self._model_var.get().strip(), "voxtral-mini-transcribe-2602")
 
         selected_lang = self._lang_var.get()
         if selected_lang == "Custom...":
@@ -865,7 +865,7 @@ class FloatingApp(ctk.CTk):
         try:
             wav_path = self._recorder.stop()
             cfg = config.load()
-            client = tr_module.TranscriptionClient(api_key=cfg["api_key"], model=cfg.get("model", "voxtral-mini-2507"))
+            client = tr_module.TranscriptionClient(api_key=cfg["api_key"], model=cfg.get("model", "voxtral-mini-transcribe-2602"))
             text = client.transcribe(wav_path, language=cfg.get("language") or None)
             self.after(0, self._on_transcription_done, text)
         except Exception as e:

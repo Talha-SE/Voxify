@@ -111,11 +111,11 @@ def _apply_theme_constants(theme_name: str) -> None:
     SUCCESS = palette["SUCCESS"]
 
 MODEL_OPTIONS = [
-    ("Core", "voxtral-mini-2507"),
+    ("Core", "voxtral-mini-transcribe-2602"),
     ("Advanced", "voxtral-small-2507"),
 ]
 BATCH_MODEL_OPTIONS = [
-    ("Core", "voxtral-mini-2507"),
+    ("Core", "voxtral-mini-transcribe-2602"),
 ]
 
 TABS: list[tuple[str, str, str]] = [
@@ -342,7 +342,6 @@ def main(page: ft.Page) -> None:
             retry_limit = 2
 
         return {
-            "api_key": (api_key_field.value or "").strip(),
             "model": model_value,
             "gemini_model": gemini_model_field.value or "gemini-3.1-flash-live-preview",
             "gemini_voice": voice_field.value or "Puck",
@@ -366,15 +365,21 @@ def main(page: ft.Page) -> None:
             "personal_dictionary": _parse_multiline_list(personal_dictionary_field.value or ""),
             "text_replacements": _parse_replacements(text_replacements_field.value or ""),
             "screen_share_resolution": (screen_resolution_field.value or "medium").strip(),
-            "screen_share_quality": int(screen_quality_slider.value),
             "screen_share_pause_on_idle": bool(screen_pause_on_idle_switch.value),
         }
 
+    def _sync_dropdown_from_event(e) -> None:
+        """Flet may not update Dropdown.value when on_change fires; sync from event data."""
+        if e is not None and e.data and isinstance(e.control, ft.Dropdown):
+            e.control.value = e.data
+
     def _update_save_button_state(_e=None) -> None:
+        # Sync control value from event data if available (Flet 0.84 Dropdown fix)
+        _sync_dropdown_from_event(_e)
         current_ui = _get_current_ui_cfg()
         
         keys_to_compare = [
-            "api_key", "model", "gemini_model", "gemini_voice", "auto_type_delay", "mode", "source",
+            "model", "gemini_model", "gemini_voice", "auto_type_delay", "mode", "source",
             "always_on_top", "check_for_updates", "theme", "auto_minimize", "minimize_timeout", "pc_control_enabled",
             "live_retry_limit", "voice_commands_enabled", "command_prefix", "auto_fallback_enabled",
             "silence_trim_enabled", "send_reliability_events", "auto_install_updates", "restart_after_update",
@@ -431,42 +436,29 @@ def main(page: ft.Page) -> None:
                     is_dirty = True
                     break
 
+        # Always keep the save button active — user can tap it anytime
+        save_button.disabled = False
+        save_button.style = ft.ButtonStyle(
+            color=TEXT,
+            bgcolor=ACCENT_ALT,
+            overlay_color=ACCENT,
+            shape=ft.RoundedRectangleBorder(radius=10),
+            padding=ft.Padding(14, 10, 14, 10),
+        )
+        save_button.content = ft.Row(
+            tight=True,
+            spacing=6,
+            controls=[
+                ft.Icon(ft.Icons.SAVE, size=14, color=TEXT),
+                ft.Text("Save Changes", weight=ft.FontWeight.W_700)
+            ]
+        )
+
         if is_dirty:
-            save_button.disabled = False
-            save_button.style = ft.ButtonStyle(
-                color=TEXT,
-                bgcolor=ACCENT_ALT,
-                overlay_color=ACCENT,
-                shape=ft.RoundedRectangleBorder(radius=10),
-                padding=ft.Padding(14, 10, 14, 10),
-            )
-            save_button.content = ft.Row(
-                tight=True,
-                spacing=6,
-                controls=[
-                    ft.Icon(ft.Icons.SAVE, size=14, color=TEXT),
-                    ft.Text("Save Changes", weight=ft.FontWeight.W_700)
-                ]
-            )
             _update_status("Changes pending...", WARNING)
         else:
-            save_button.disabled = True
-            save_button.style = ft.ButtonStyle(
-                color=MUTED_SOFT,
-                bgcolor=ft.Colors.with_opacity(0.12, BORDER),
-                shape=ft.RoundedRectangleBorder(radius=10),
-                padding=ft.Padding(14, 10, 14, 10),
-            )
-            save_button.content = ft.Row(
-                tight=True,
-                spacing=6,
-                controls=[
-                    ft.Icon(ft.Icons.CHECK_CIRCLE_OUTLINE_ROUNDED, size=14, color=SUCCESS),
-                    ft.Text("Saved", weight=ft.FontWeight.W_700, color=SUCCESS)
-                ]
-            )
             _update_status("All changes saved", SUCCESS)
-            
+
         page.update()
 
     # Create controls without on_change in constructor
@@ -520,7 +512,7 @@ def main(page: ft.Page) -> None:
     )
     model_field = ft.Dropdown(
         label="Model",
-        value=_dropdown_value(MODEL_OPTIONS, cfg.get("model", "voxtral-mini-2507"), "Core"),
+        value=_dropdown_value(MODEL_OPTIONS, cfg.get("model", "voxtral-mini-transcribe-2602"), "Core"),
         options=_dropdown_options(MODEL_OPTIONS),
         **_field_style(),
     )
@@ -616,6 +608,7 @@ def main(page: ft.Page) -> None:
     )
 
     def _on_gender_change(e) -> None:
+        _sync_dropdown_from_event(e)
         gender = voice_gender_field.value
         voice_field.options = _build_voice_options(gender)
         if not any(v[0] == voice_field.value for v in GEMINI_VOICES if gender == "all" or v[1] == gender):
@@ -637,6 +630,7 @@ def main(page: ft.Page) -> None:
         model_hint_text.update()
 
     def on_mode_change(_event: ft.ControlEvent) -> None:
+        _sync_dropdown_from_event(_event)
         _sync_model_by_mode()
 
     def on_delay_change(_event: ft.ControlEvent) -> None:
@@ -1193,8 +1187,8 @@ def main(page: ft.Page) -> None:
 
     def _on_screen_quality_change(e) -> None:
         screen_quality_text.value = f"{int(screen_quality_slider.value)}%"
-        _update_save_button_state(e)
         screen_quality_text.update()
+        _update_save_button_state(e)
 
     screen_quality_slider.on_change = _on_screen_quality_change
     screen_resolution_field.on_change = lambda e: _update_save_button_state(e)
