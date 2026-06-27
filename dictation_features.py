@@ -5,6 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 import re
 from typing import Iterable
+import logging
+
+logger = logging.getLogger("dictation_features")
 
 
 VOICE_COMMAND_INSERTS = {
@@ -127,16 +130,27 @@ def process_transcript(
     command_prefix: str = "command",
 ) -> ProcessedTranscript:
     text = raw_text or ""
+    logger.info(f"process_transcript: raw_text='{text[:80]}' (len={len(text)})")
     actions: tuple[str, ...] = tuple()
 
     if voice_commands_enabled:
         text, prefixed_actions, consumed = _extract_prefixed_command(text, command_prefix)
         actions = prefixed_actions
+        if consumed:
+            logger.info(f"process_transcript: voice command consumed, remaining text='{text[:80]}'")
         if not consumed:
             text = _inline_commands(text)
+            logger.info(f"process_transcript: after inline commands, text='{text[:80]}'")
 
+    text_before = text
     text = _apply_replacements(text, replacements or {})
+    if text != text_before:
+        logger.info(f"process_transcript: replacements changed text to '{text[:80]}'")
+    text_before = text
     text = _apply_personal_dictionary(text, personal_dictionary or [])
+    if text != text_before:
+        logger.info(f"process_transcript: personal dict changed text to '{text[:80]}'")
     text = _apply_profile(text, profile=profile)
+    logger.info(f"process_transcript: final text='{text[:80]}' (len={len(text)}, profile={profile})")
     return ProcessedTranscript(text=text, actions=actions)
 

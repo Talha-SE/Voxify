@@ -12,7 +12,10 @@ import sys
 import time
 import threading
 import datetime
+import logging
 from typing import Callable, Literal, Optional
+
+logger = logging.getLogger("output_handler")
 
 try:
     import pyperclip
@@ -39,6 +42,16 @@ if _WIN_OK:
     KEYEVENTF_KEYUP = 0x0002
     KEYEVENTF_UNICODE = 0x0004
 
+    class MOUSEINPUT(ctypes.Structure):
+        _fields_ = [
+            ("dx", wintypes.LONG),
+            ("dy", wintypes.LONG),
+            ("mouseData", wintypes.DWORD),
+            ("dwFlags", wintypes.DWORD),
+            ("time", wintypes.DWORD),
+            ("dwExtraInfo", ctypes.c_size_t),
+        ]
+
     class KEYBDINPUT(ctypes.Structure):
         _fields_ = [
             ("wVk", wintypes.WORD),
@@ -49,7 +62,10 @@ if _WIN_OK:
         ]
 
     class _INPUTUNION(ctypes.Union):
-        _fields_ = [("ki", KEYBDINPUT)]
+        # MOUSEINPUT must be included so sizeof(INPUT) matches the
+        # Windows x64 ABI (40 bytes). Without it, SendInput fails with
+        # ERROR_INVALID_PARAMETER (87).
+        _fields_ = [("mi", MOUSEINPUT), ("ki", KEYBDINPUT)]
 
     class INPUT(ctypes.Structure):
         _anonymous_ = ("u",)
@@ -280,32 +296,56 @@ def type_text(text: str, interval: float = 0.03, x: Optional[int] = None, y: Opt
     if not text:
         return True
     
+    logger.info(f"type_text called: text='{text[:50]}...' (total_len={len(text)}), interval={interval}, x={x}, y={y}")
+
     if x is not None and y is not None:
         if not mouse_click(x, y):
+            logger.warning(f"mouse_click({x}, {y}) failed")
             return False
         time.sleep(0.2) # Small delay to ensure focus
 
     if _WIN_OK:
         normalized = text.replace("\r\n", "\n")
         try:
+            # Log the active window for debugging
+            hwnd = ctypes.windll.user32.GetForegroundWindow()
+            length = ctypes.windll.user32.GetWindowTextLengthW(hwnd)
+            if length > 0:
+                buff = ctypes.create_unicode_buffer(length + 1)
+                ctypes.windll.user32.GetWindowTextW(hwnd, buff, length + 1)
+                logger.info(f"Active window for typing: '{buff.value}' (hwnd={hwnd})")
+            else:
+                logger.info(f"Active window hwnd={hwnd} (no title)")
+
             for char in normalized:
                 if char in ("\n", "\r"):
-                    if not _send_key(0x0D): return False
+                    if not _send_key(0x0D):
+                        logger.warning(f"_send_key(0x0D) failed, falling back")
+                        raise RuntimeError("_send_key failed")
                 elif char == "\t":
-                    if not _send_key(0x09): return False
+                    if not _send_key(0x09):
+                        logger.warning(f"_send_key(0x09) failed, falling back")
+                        raise RuntimeError("_send_key failed")
                 else:
                     for unit in _iter_utf16_units(char):
-                        if not _send_unicode_unit(unit): return False
+                        if not _send_unicode_unit(unit):
+                            logger.warning(f"_send_unicode_unit failed for char={repr(char)} unit=U+{unit:04X}, falling back")
+                            raise RuntimeError("_send_unicode_unit failed")
                 if interval: time.sleep(interval)
+            logger.info(f"type_text: successfully typed {len(text)} chars via SendInput")
             return True
-        except Exception: pass
+        except Exception as exc:
+            logger.error(f"type_text SendInput failed: {exc}", exc_info=True)
 
     if _GUI_OK:
         try:
+            logger.info("Falling back to pyautogui.write")
             pyautogui.write(text, interval=interval)
             return True
-        except Exception: pass
+        except Exception as exc:
+            logger.error(f"type_text pyautogui failed: {exc}", exc_info=True)
 
+    logger.warning("type_text: all methods failed, falling back to clipboard copy")
     return copy_to_clipboard(text)
 
 

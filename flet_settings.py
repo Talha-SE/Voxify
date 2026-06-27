@@ -110,12 +110,15 @@ def _apply_theme_constants(theme_name: str) -> None:
     MUTED_SOFT = palette["MUTED_SOFT"]
     SUCCESS = palette["SUCCESS"]
 
+# NOTE: Only transcription-capable models are listed here.
+# voxtral-small-2507 is a chat completions model with audio input, NOT a
+# transcription model — it cannot be used with either realtime or batch
+# transcription APIs.
 MODEL_OPTIONS = [
-    ("Core", "voxtral-mini-transcribe-2602"),
-    ("Advanced", "voxtral-small-2507"),
+    ("Core", "voxtral-mini-2602"),
 ]
 BATCH_MODEL_OPTIONS = [
-    ("Core", "voxtral-mini-transcribe-2602"),
+    ("Core", "voxtral-mini-2602"),
 ]
 
 TABS: list[tuple[str, str, str]] = [
@@ -342,7 +345,6 @@ def main(page: ft.Page) -> None:
             retry_limit = 2
 
         return {
-            "api_key": (api_key_field.value or "").strip(),
             "model": model_value,
             "gemini_model": gemini_model_field.value or "gemini-3.1-flash-live-preview",
             "gemini_voice": voice_field.value or "Puck",
@@ -380,12 +382,12 @@ def main(page: ft.Page) -> None:
         current_ui = _get_current_ui_cfg()
         
         keys_to_compare = [
-            "api_key", "model", "gemini_model", "gemini_voice", "auto_type_delay", "mode", "source",
+            "model", "gemini_model", "gemini_voice", "auto_type_delay", "mode", "source",
             "always_on_top", "check_for_updates", "theme", "auto_minimize", "minimize_timeout", "pc_control_enabled",
             "live_retry_limit", "voice_commands_enabled", "command_prefix", "auto_fallback_enabled",
             "silence_trim_enabled", "send_reliability_events", "auto_install_updates", "restart_after_update",
             "personal_dictionary", "text_replacements",
-            "screen_share_resolution", "screen_share_quality", "screen_share_pause_on_idle",
+            "screen_share_resolution", "screen_share_pause_on_idle",
         ]
         
         is_dirty = False
@@ -513,7 +515,7 @@ def main(page: ft.Page) -> None:
     )
     model_field = ft.Dropdown(
         label="Model",
-        value=_dropdown_value(MODEL_OPTIONS, cfg.get("model", "voxtral-mini-transcribe-2602"), "Core"),
+        value=_dropdown_value(MODEL_OPTIONS, cfg.get("model", "voxtral-mini-2602"), "Core"),
         options=_dropdown_options(MODEL_OPTIONS),
         **_field_style(),
     )
@@ -626,7 +628,7 @@ def main(page: ft.Page) -> None:
         if model_field.value not in allowed_labels:
             model_field.value = allowed_labels[0]
         model_field.options = _dropdown_options(allowed_options)
-        model_hint_text.value = "Live supports Core and Advanced." if is_live_mode else "Batch supports Core only."
+        model_hint_text.value = "Live: Core → voxtral-mini-transcribe-realtime-2602" if is_live_mode else "Batch uses voxtral-mini-2602."
         model_field.update()
         model_hint_text.update()
 
@@ -846,47 +848,6 @@ def main(page: ft.Page) -> None:
         password=True,
         can_reveal_password=True,
         **_field_style(),
-    )
-    api_key_field = ft.TextField(
-        label="Private API key",
-        value=(cfg.get("api_key") or "").strip(),
-        password=True,
-        can_reveal_password=True,
-        hint_text="Mistral API key (optional override)",
-        **_field_style(),
-    )
-    api_key_field.on_change = lambda e: _update_save_button_state(e)
-
-    def _export_api(_e):
-        try:
-            root = tk.Tk()
-            root.withdraw()
-            root.attributes("-topmost", True)
-            file_path = filedialog.asksaveasfilename(
-                parent=root,
-                defaultextension=".txt",
-                filetypes=[("Text files", "*.txt")],
-                initialfile="api.txt",
-                title="Export API Key"
-            )
-            root.destroy()
-            if file_path:
-                key = api_key_field.value or ""
-                with open(file_path, "w", encoding="utf-8") as f:
-                    f.write(key)
-                _show_snack(f"API key exported to {Path(file_path).name}")
-        except Exception as exc:
-            _show_snack(f"Export failed: {exc}")
-
-    export_api_button = ft.OutlinedButton(
-        "Export API",
-        icon=ft.Icons.DOWNLOAD,
-        on_click=_export_api,
-        style=ft.ButtonStyle(
-            color=TEXT,
-            side=ft.BorderSide(1, BORDER),
-            shape=ft.RoundedRectangleBorder(radius=10),
-        ),
     )
     license_status_text = ft.Text("License not activated", size=11, color=MUTED, weight=ft.FontWeight.W_700)
     license_plan_text = ft.Text("", size=10, color=TEXT, weight=ft.FontWeight.W_600)
@@ -1199,7 +1160,7 @@ def main(page: ft.Page) -> None:
         controls=[
             _card("License & Quota", ft.Icons.VERIFIED_USER, [license_key_field, ft.Row(spacing=8, controls=[activate_license_button, refresh_license_button, clear_license_button]), license_status_text, license_plan_text, license_cycle_text, license_quota_text, license_seat_text]),
             _card("Purchase & Links", ft.Icons.LINK, [ft.Text("Upgrade or manage plans quickly.", size=10, color=MUTED), membership_link_button, onetime_link_button, gumroad_link_button, website_link_button]),
-            _card("Runtime", ft.Icons.MEMORY_OUTLINED, [api_source_note, api_key_field, export_api_button, model_field, model_hint_text]),
+            _card("Runtime", ft.Icons.MEMORY_OUTLINED, [api_source_note, model_field, model_hint_text]),
             _card("Updates & Telemetry", ft.Icons.UPDATE, [_setting_row("Check for updates", check_updates_switch), _setting_row("Auto-install updates", auto_install_updates_switch), _setting_row("Restart after install", restart_after_update_switch), _setting_row("Send reliability events", reliability_events_switch), update_status_text, check_now_button, update_notice]),
         ],
     )

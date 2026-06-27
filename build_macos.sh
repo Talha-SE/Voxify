@@ -30,6 +30,10 @@ python3 -m PyInstaller \
   --hidden-import pyperclip \
   --hidden-import pyautogui \
   --hidden-import requests \
+  --hidden-import mistralai \
+  --hidden-import mistralai.client \
+  --hidden-import mistralai.client.models \
+  --hidden-import mistralai.extra.realtime \
   app.py
 
 if [[ -n "${APPLE_CODESIGN_IDENTITY:-}" ]]; then

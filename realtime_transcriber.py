@@ -20,10 +20,13 @@ Usage
 """
 
 import asyncio
+import logging
 import threading
 from typing import Callable, Optional
 
 import recorder as rec_module
+
+logger = logging.getLogger("realtime_transcriber")
 
 REALTIME_MODEL   = "voxtral-mini-transcribe-realtime-2602"
 DEFAULT_SR       = 16_000
@@ -46,6 +49,7 @@ class RealtimeTranscriber:
         sample_rate: int = DEFAULT_SR,
         chunk_duration_ms: int = DEFAULT_CHUNK_MS,
         source: str = "mic",  # "mic" or "system"
+        mic_device: Optional[int | str] = None,
         on_delta:  Optional[Callable[[str], None]] = None,
         on_status: Optional[Callable[[str], None]] = None,
         on_done:   Optional[Callable[[], None]]    = None,
@@ -56,6 +60,7 @@ class RealtimeTranscriber:
         self.sample_rate      = sample_rate
         self.chunk_duration_ms = chunk_duration_ms
         self.source           = source  # "mic" or "system"
+        self.mic_device       = mic_device  # sounddevice device ID (int) or name pattern (str)
         self.on_delta  = on_delta
         self.on_status = on_status
         self.on_done   = on_done
@@ -70,11 +75,13 @@ class RealtimeTranscriber:
     def start(self) -> None:
         """Begin streaming mic audio and transcribing in a background thread."""
         if self._running:
+            logger.warning("start() called but already running")
             return
         self._stop_flag.clear()
         self._running = True
         self._thread = threading.Thread(target=self._run_loop, daemon=True)
         self._thread.start()
+        logger.info("RealtimeTranscriber started in background thread")
 
     def stop(self) -> None:
         """Signal the mic generator to stop; transcription ends gracefully."""
@@ -95,6 +102,7 @@ class RealtimeTranscriber:
         try:
             loop.run_until_complete(self._async_main())
         except Exception as exc:
+            logger.error(f"Unhandled exception in _run_loop: {exc}", exc_info=True)
             if self.on_error:
                 self.on_error(str(exc))
         finally:
@@ -121,9 +129,10 @@ class RealtimeTranscriber:
         # ── Import realtime types (requires the realtime dependency) ───
         try:
             from mistralai import Mistral
-            from mistralai.models import (
+            from mistralai.client.models import (
                 AudioFormat,
                 RealtimeTranscriptionSessionCreated,
+                RealtimeTranscriptionSessionUpdated,
                 TranscriptionStreamTextDelta,
                 TranscriptionStreamDone,
                 RealtimeTranscriptionError,
@@ -133,18 +142,18 @@ class RealtimeTranscriber:
             if self.on_error:
                 self.on_error(
                     f"Realtime package missing.\n"
-                    f"Install the realtime dependency and pyaudio.\n{exc}"
+                    f"Install the realtime dependency.\n{exc}"
                 )
             return
 
         # ── Verify audio dependencies ───────────────────────────────────────
         if self.source == "mic":
             try:
-                import pyaudio as _pa
+                import sounddevice as _sd
             except ImportError:
                 if self.on_error:
                     self.on_error(
-                        "pyaudio is not installed.\nRun:  pip install pyaudio"
+                        "sounddevice is not installed.\nRun:  pip install sounddevice"
                     )
                 return
         else:
@@ -160,11 +169,13 @@ class RealtimeTranscriber:
         if self.on_status:
             self.on_status("🔌 Connecting…")
 
+        logger.info("Creating Mistral client and starting transcribe_stream")
         client      = Mistral(api_key=self.api_key)
         audio_fmt   = AudioFormat(
             encoding="pcm_s16le", sample_rate=self.sample_rate
         )
         audio_stream = self._iter_microphone()
+        logger.info("Audio stream created, entering transcribe_stream loop")
 
         try:
             async for event in client.audio.realtime.transcribe_stream(
@@ -173,31 +184,46 @@ class RealtimeTranscriber:
                 audio_format=audio_fmt,
             ):
                 if self._stop_flag.is_set():
+                    logger.info("Stop flag set, breaking out of stream loop")
                     break
 
                 if isinstance(event, RealtimeTranscriptionSessionCreated):
+                    logger.info("Session created event received")
                     if self.on_status:
                         self.on_status("Live — speak now")
 
+                elif isinstance(event, RealtimeTranscriptionSessionUpdated):
+                    logger.info("Session updated event received")
+                    # Session parameters confirmed — no action needed
+
                 elif isinstance(event, TranscriptionStreamTextDelta):
+                    logger.info(f"Text delta received: '{event.text}' (len={len(event.text)})")
                     if self.on_delta and event.text:
                         self.on_delta(event.text)
 
                 elif isinstance(event, TranscriptionStreamDone):
+                    logger.info("Stream done event received")
                     break
 
                 elif isinstance(event, RealtimeTranscriptionError):
+                    logger.error(f"Realtime error event: {event.error}")
                     if self.on_error:
                         self.on_error(str(event.error))
                     break
 
                 elif isinstance(event, UnknownRealtimeEvent):
+                    logger.warning(f"Unknown event type received, ignoring")
                     continue  # ignore unknown events
 
+                else:
+                    logger.warning(f"Unexpected event type: {type(event).__name__}")
+
         except Exception as exc:
+            logger.error(f"Exception in transcribe_stream: {exc}", exc_info=True)
             if not self._stop_flag.is_set() and self.on_error:
                 self.on_error(str(exc))
         finally:
+            logger.info("transcribe_stream ended, calling on_done")
             if self.on_done:
                 self.on_done()
 
@@ -215,29 +241,79 @@ class RealtimeTranscriber:
                 yield chunk
 
     async def _iter_mic_audio(self):
-        """Capture from microphone via pyaudio."""
-        import pyaudio
-        p              = pyaudio.PyAudio()
-        chunk_samples  = int(self.sample_rate * self.chunk_duration_ms / 1000)
-        stream         = p.open(
-            format=pyaudio.paInt16,
-            channels=1,
-            rate=self.sample_rate,
-            input=True,
-            frames_per_buffer=chunk_samples,
-        )
+        """Capture from microphone via sounddevice with gain normalization."""
+        import sounddevice as sd
+        import numpy as np
+        chunk_samples = int(self.sample_rate * self.chunk_duration_ms / 1000)
         loop = asyncio.get_running_loop()
-        try:
-            while not self._stop_flag.is_set():
-                # Run blocking read off the event-loop thread
-                data = await loop.run_in_executor(
-                    None, stream.read, chunk_samples, False
+
+        # Target RMS level: -16 dBFS (good conversational level)
+        # 16-bit peak = 32768;  -16 dB = 32768 * 10^(-16/20) ≈ 5189
+        TARGET_RMS = 5189
+        MAX_GAIN   = 4.0   # 12 dB cap to avoid amplifying noise too much
+
+        # Use a queue to bridge the blocking callback with the async generator
+        import queue as _queue
+        audio_queue: _queue.Queue = _queue.Queue()
+        self._chunks_captured = 0
+
+        def callback(indata, frames, time_info, status):
+            if status:
+                logger.warning(f"sounddevice status: {status}")
+            # indata is (frames, channels) int16 numpy array — may be read-only
+            samples = np.frombuffer(indata, dtype=np.int16).copy()
+            # ── Measure RMS level (every chunk for first 5, then every 50th) ──
+            rms = np.sqrt(np.mean(samples.astype(np.float64) ** 2))
+            if self._chunks_captured <= 5 or self._chunks_captured % 50 == 0:
+                dbfs = 20 * np.log10(rms / 32768.0) if rms > 0 else -100
+                logger.info(
+                    f"Audio level: {dbfs:.1f} dBFS  (chunk #{self._chunks_captured})"
                 )
-                yield data
+            # ── Apply gain if quiet (normalise toward -16 dBFS) ──────────────
+            if 0 < rms < TARGET_RMS:
+                gain = min(TARGET_RMS / rms, MAX_GAIN)
+                samples = np.clip(
+                    samples.astype(np.float64) * gain, -32768, 32767
+                ).astype(np.int16)
+            audio_queue.put(samples.tobytes())
+
+        # ── Resolve microphone device ────────────────────────────────────────
+        device_kw = {}
+        if self.mic_device is not None:
+            device_kw["device"] = self.mic_device
+            logger.info(f"Using explicit mic device: {self.mic_device}")
+        else:
+            logger.info(f"Using default mic device (index {sd.default.device[0]})")
+
+        logger.info(f"Starting RawInputStream: sr={self.sample_rate}, channels=1, blocksize={chunk_samples}")
+        stream = sd.RawInputStream(
+            samplerate=self.sample_rate,
+            channels=1,
+            dtype="int16",
+            blocksize=chunk_samples,
+            **device_kw,
+            callback=callback,
+        )
+        try:
+            stream.start()
+            logger.info("RawInputStream started successfully")
+            while not self._stop_flag.is_set():
+                try:
+                    data = await loop.run_in_executor(
+                        None, audio_queue.get, True, 0.1
+                    )
+                    self._chunks_captured += 1
+                    if self._chunks_captured <= 3 or self._chunks_captured % 50 == 0:
+                        logger.info(f"Audio chunk #{self._chunks_captured}: {len(data)} bytes")
+                    yield data
+                except _queue.Empty:
+                    if self._chunks_captured == 0:
+                        logger.warning("No audio data captured yet (queue empty)")
+                    continue
         finally:
-            stream.stop_stream()
+            logger.info(f"Stopping RawInputStream after {self._chunks_captured} chunks")
+            stream.stop()
             stream.close()
-            p.terminate()
 
     async def _iter_system_audio(self):
         """Capture system/loopback audio via soundcard."""

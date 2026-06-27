@@ -1,0 +1,8 @@
+15:53:18 [INFO] app: ============================================================
+15:53:18 [INFO] app: Voxify starting up
+15:53:18 [INFO] app: ============================================================
+15:53:19 [INFO] VoxifyApp: ============================================================
+15:53:19 [INFO] VoxifyApp: VoxifyApp initializing — logging configured
+15:53:19 [INFO] VoxifyApp: ============================================================
+15:53:19 [INFO] flet_desktop: Starting Flet View app...
+15:53:19 [INFO] flet_desktop: Flet client found in cache: C:\Users\rajpu\.flet\client\flet-desktop-full-0.84.0

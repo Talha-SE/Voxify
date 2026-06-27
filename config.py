@@ -22,7 +22,7 @@ def _invalidate_cache() -> None:
 
 
 DEFAULT_CONFIG = {
-    "model": "voxtral-mini-transcribe-2602",
+    "model": "voxtral-mini-2602",
     "api_key": "",
     "language": "",          # kept for runtime compatibility; empty means auto-detect
     "sample_rate": 16000,
@@ -35,6 +35,7 @@ DEFAULT_CONFIG = {
     "hotkey": "ctrl+shift+space",  # global push-to-record hotkey
     "mode": "Live",         # Batch | Live
     "source": "mic",         # mic | system
+    "mic_device": "",        # sounddevice device index (int) or name substring; empty = default
     "check_for_updates": True,
     "ignored_update_version": "",
     "dictation_profile": "notes",  # email | chat | docs | notes | code_notes

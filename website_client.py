@@ -22,7 +22,7 @@ RELIABILITY_TIMEOUT = 3.0
 LICENSE_TIMEOUT = 8.0
 TRANSCRIBE_TIMEOUT = 75.0
 DOWNLOAD_TIMEOUT = 15.0
-DEFAULT_MODEL = "voxtral-mini-transcribe-2602"
+DEFAULT_MODEL = "voxtral-mini-2602"
 
 
 class WebsiteAPIError(RuntimeError):

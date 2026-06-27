@@ -4,11 +4,11 @@ echo.
 
 if exist dist\Voxify.exe del /q dist\Voxify.exe
 
-where python3.13 >nul 2>&1
+where python3.14 >nul 2>&1
 if errorlevel 1 (
     set PY=python
 ) else (
-    set PY=python3.13
+    set PY=python3.14
 )
 
 %PY% -m pip install pyinstaller -q
@@ -31,6 +31,10 @@ if errorlevel 1 (
     --hidden-import pyautogui ^
     --hidden-import mss ^
     --hidden-import requests ^
+    --hidden-import mistralai ^
+    --hidden-import mistralai.client ^
+    --hidden-import mistralai.client.models ^
+    --hidden-import mistralai.extra.realtime ^
     app.py
 
 if errorlevel 1 goto :build_failed

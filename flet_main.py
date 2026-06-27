@@ -13,14 +13,42 @@ from pathlib import Path
 from typing import Optional
 
 import flet as ft
-# Professional Logging Setup
+
+# ── Robust Logging Setup ───────────────────────────────────────────────────
+# Use basicConfig with force=True to ensure Flet subprocess writes to our file
+_log_dir = Path(__file__).parent
+_debug_log = _log_dir / "voxify_debug.log"
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    datefmt="%H:%M:%S",
+    filename=str(_debug_log),
+    filemode="a",
+    force=True,
+)
+
+# Suppress noisy flet/websocket transport debug messages
+logging.getLogger("flet").setLevel(logging.WARNING)
+logging.getLogger("flet_core").setLevel(logging.WARNING)
+logging.getLogger("flet_transport").setLevel(logging.WARNING)
+logging.getLogger("websockets").setLevel(logging.WARNING)
+logging.getLogger("websockets.client").setLevel(logging.WARNING)
+logging.getLogger("websockets.server").setLevel(logging.WARNING)
+
 logger = logging.getLogger("VoxifyApp")
-logger.setLevel(logging.INFO)
-if not logger.handlers:
-    handler = logging.StreamHandler()
-    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    handler.setFormatter(formatter)
-    logger.addHandler(handler)
+
+# Also add a stream handler for console visibility
+_stream_handler = logging.StreamHandler()
+_stream_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+_stream_handler.setLevel(logging.INFO)
+logger.addHandler(_stream_handler)
+
+logger.info("=" * 60)
+logger.info("VoxifyApp initializing — logging configured")
+logger.info("=" * 60)
+
+# Thread safety lock shared across callbacks
+_live_lock = threading.Lock()
 
 import config
 import app_info
@@ -87,8 +115,12 @@ AUX_BORDER = "#FB923C"
 MODE_BATCH_BG = "#1D4ED8"
 MODE_BATCH_BORDER = "#60A5FA"
 MODE_BATCH_TEXT = "#93C5FD"
-BATCH_MODEL = "voxtral-mini-transcribe-2602"
-LIVE_MODELS = {"voxtral-small-2507", "voxtral-mini-transcribe-realtime-2602"}
+BATCH_MODEL = "voxtral-mini-2602"
+LIVE_MODELS = {"voxtral-mini-transcribe-realtime-2602"}
+# Maps the user-facing config model to the actual realtime model for live mode.
+LIVE_MODEL_MAP = {
+    "voxtral-mini-2602": "voxtral-mini-transcribe-realtime-2602",
+}
 WIDGET_FULL_WIDTH = 200
 WIDGET_FULL_HEIGHT = 160
 WIDGET_MINI_WIDTH = 56
@@ -169,7 +201,8 @@ class VoxifyApp:
         self._last_frame_pixels: Optional["np.ndarray"] = None
         self._stopping = False
         self._gemini_live_client = None
-        self._live_text_buffer: list[str] = []
+        self._live_raw_text: str = ""           # full raw text (spaces inserted between deltas)
+        self._live_processed_marker: int = 0    # how many chars of processed text already typed
         self._live_paste_job = None
         self._runtime_api_key = ""
         self._api_last_check_at = 0.0
@@ -549,6 +582,12 @@ class VoxifyApp:
         return (self.cfg.get("mode") or "Live").strip().lower() == "live"
 
     def _selected_batch_model(self) -> str:
+        """Return the model to use for batch transcription.
+
+        If the user's selected model supports batch (it's a valid Mistral
+        transcription model), use it as-is. Otherwise fall back to the
+        default batch model.
+        """
         selected = (self.cfg.get("model") or BATCH_MODEL).strip().lower()
         if selected in LIVE_MODELS:
             return selected
@@ -1226,10 +1265,19 @@ class VoxifyApp:
     def _get_runtime_api_key(self) -> str:
         now = time.time()
         with self._api_lock:
-            if config.get("api_key", "").strip(): return config.get("api_key", "").strip()
-            if self._runtime_api_key and (now - self._api_last_check_at) < self._api_cache_ttl_sec: return self._runtime_api_key
+            cfg_key = config.get("api_key", "").strip()
+            if cfg_key:
+                logger.info("Using private API key from config")
+                self._runtime_api_key = cfg_key
+                return cfg_key
+            if self._runtime_api_key and (now - self._api_last_check_at) < self._api_cache_ttl_sec:
+                return self._runtime_api_key
+        
+        logger.info("Fetching gated runtime API key from website")
         bootstrap = website_client.get_desktop_bootstrap(token=self._license_token, device_id=self._device_id)
-        with self._api_lock: self._runtime_api_key = bootstrap.api_key.strip(); self._api_last_check_at = time.time()
+        with self._api_lock:
+            self._runtime_api_key = bootstrap.api_key.strip()
+            self._api_last_check_at = time.time()
         return self._runtime_api_key
 
     def _get_gemini_api_key(self) -> str:
@@ -1393,7 +1441,7 @@ class VoxifyApp:
         self._on_transcription_error(str(last_exc or "Unable to start recording source."))
 
     def _start_live_mode(self) -> None:
-        api_key = (self._runtime_api_key or "").strip()
+        api_key = self._get_runtime_api_key()
         if not api_key:
             logger.error("Live mode: API key is empty")
             self._on_transcription_error("Live mode key is unavailable. Refresh license from Settings and retry.")
@@ -1405,12 +1453,31 @@ class VoxifyApp:
                 logger.warning(f"System audio unsupported: {reason}, falling back to mic")
                 preferred = "mic"
         logger.info(f"Starting live mode, source={preferred}")
-        self._live_text_buffer.clear(); self._is_recording = True
+        self._live_raw_text = ""; self._live_processed_marker = 0; self._is_recording = True
         try:
-            self._rt_transcriber = _import_realtime_transcriber().RealtimeTranscriber(api_key=api_key, sample_rate=int(self.cfg.get("sample_rate", 16000)), source=preferred, on_delta=lambda t: self.page.run_thread(self._type_live_delta, t), on_status=lambda s: self.page.run_thread(self._set_status, s, MUTED), on_done=lambda: self.page.run_thread(self._on_realtime_done), on_error=lambda e: self.page.run_thread(self._on_transcription_error, e))
+            selected_model = self.cfg.get("model", "voxtral-mini-2602").strip().lower()
+            live_model = LIVE_MODEL_MAP.get(selected_model, "voxtral-mini-transcribe-realtime-2602")
+            logger.info(f"Live mode model: {live_model} (from config: {selected_model})")
+            raw_mic_dev = self.cfg.get("mic_device") or ""
+            mic_dev: int | str | None = None
+            if raw_mic_dev.strip():
+                try:
+                    mic_dev = int(raw_mic_dev.strip())
+                except ValueError:
+                    mic_dev = raw_mic_dev.strip()
+            self._rt_transcriber = _import_realtime_transcriber().RealtimeTranscriber(
+                api_key=api_key, model=live_model,
+                sample_rate=int(self.cfg.get("sample_rate", 16000)),
+                source=preferred, mic_device=mic_dev,
+                on_delta=lambda t: self.page.run_thread(self._type_live_delta, t),
+                on_status=lambda s: self.page.run_thread(self._set_status, s, MUTED),
+                on_done=lambda: self.page.run_thread(self._on_realtime_done),
+                on_error=lambda e: self.page.run_thread(self._on_transcription_error, e),
+            )
             self._rt_transcriber.start()
             logger.info("Live transcriber started")
-            self._set_status("Listening", SUCCESS)
+            # Avoid overwriting the status from rt_transcriber (e.g. "Connecting...")
+            # self._set_status("Listening", SUCCESS)
             self._set_action("Stop recording", CARD_SOFT, DANGER, DANGER, self._on_action_click)
         except Exception as exc:
             logger.error(f"Live mode failed: {exc}")
@@ -1466,7 +1533,10 @@ class VoxifyApp:
         self._set_action("Start", ACCENT, ACCENT, TEXT, self._on_action_click)
 
     def _stop_realtime(self) -> None:
+        logger.info("_stop_realtime called")
         self._is_recording = False
+        # Flush any remaining text in the buffer
+        self._flush_live_buffer()
         if self._rt_transcriber: self._rt_transcriber.stop(); self._rt_transcriber = None
         self._finalize_stop()
 
@@ -1474,16 +1544,45 @@ class VoxifyApp:
         self._stopping = False; self._reset_to_ready()
 
     def _type_live_delta(self, delta: str) -> None:
-        self._live_text_buffer.append(delta)
+        logger.info(f"_type_live_delta: '{delta[:60]}' (raw_len={len(delta)})")
+        with _live_lock:
+            # The API sends word-level text deltas without leading spaces.
+            # Accumulate the full text, inserting spaces between words so
+            # the raw text is a proper transcript.
+            if self._live_raw_text and not delta.startswith(
+                (" ", ".", ",", "!", "?", ";", ":", "\n", "\r", ")", "]", "}", "'", '"')
+            ):
+                delta = " " + delta
+            self._live_raw_text += delta
+        logger.debug(f"_type_live_delta: raw_text now {len(self._live_raw_text)} chars")
         if self._live_paste_job: self._live_paste_job.cancel()
-        timer = threading.Timer(0.2, self._flush_live_buffer); self._live_paste_job = timer; timer.daemon = True; timer.start()
+        # Use a short debounce so text appears responsively, but the
+        # accumulation guarantees spaces are correct regardless of timing.
+        timer = threading.Timer(0.15, self._flush_live_buffer); self._live_paste_job = timer; timer.daemon = True; timer.start()
 
     def _flush_live_buffer(self) -> None:
-        if not self._live_text_buffer: return
-        raw_chunk = "".join(self._live_text_buffer); self._live_text_buffer.clear()
-        processed = self._process_transcript(raw_chunk); output_handler.type_text(processed.text, interval=0.01)
+        with _live_lock:
+            raw = self._live_raw_text
+        processed = self._process_transcript(raw)
+        with _live_lock:
+            full = processed.text
+            old = self._live_processed_marker
+            if len(full) <= old:
+                logger.debug(f"_flush_live_buffer: nothing new to type (processed len={len(full)}, marker={old})")
+                return
+            text_to_type = full[old:]
+            self._live_processed_marker = len(full)
+        logger.info(f"_flush_live_buffer: new_text='{text_to_type[:80]}' (len={len(text_to_type)})")
+        if text_to_type:
+            result = output_handler.type_text(text_to_type, interval=0.01)
+            if result:
+                logger.info(f"_flush_live_buffer: type_text succeeded for '{text_to_type[:60]}'")
+            else:
+                logger.error(f"_flush_live_buffer: type_text FAILED for '{text_to_type[:60]}'")
 
     def _on_realtime_done(self) -> None:
+        logger.info("_on_realtime_done called")
+        self._flush_live_buffer()
         self._finalize_stop()
 
     def _stop_any_active_work(self) -> None:

@@ -14,7 +14,6 @@ import time
 from typing import Optional, Callable
 
 import numpy as np
-import pyaudio
 import sounddevice as sd
 import websockets
 
@@ -94,8 +93,7 @@ class GeminiLiveClient:
         self._interrupted = threading.Event()
         self._ai_speaking = threading.Event()
 
-        self._playback_stream: Optional[pyaudio.Stream] = None
-        self._py_audio: Optional[pyaudio.PyAudio] = None
+        self._playback_stream: Optional[sd.RawOutputStream] = None
 
         self._session_handle: Optional[str] = None
         self._message_index: int = 0
@@ -379,15 +377,14 @@ class GeminiLiveClient:
 
     def _run_playback(self) -> None:
         logger.info("Starting playback thread.")
-        self._py_audio = pyaudio.PyAudio()
         try:
-            self._playback_stream = self._py_audio.open(
-                format=pyaudio.paInt16,
+            self._playback_stream = sd.RawOutputStream(
+                samplerate=SAMPLE_RATE_OUTPUT,
                 channels=CHANNELS,
-                rate=SAMPLE_RATE_OUTPUT,
-                output=True,
-                frames_per_buffer=PLAYBACK_FRAMES,
+                dtype="int16",
+                blocksize=PLAYBACK_FRAMES,
             )
+            self._playback_stream.start()
             while self._running:
                 try:
                     if self._gating_audio.is_set():
@@ -421,7 +418,7 @@ class GeminiLiveClient:
 
             if self._playback_stream:
                 try:
-                    self._playback_stream.stop_stream()
+                    self._playback_stream.stop()
                     self._playback_stream.close()
                 except Exception:
                     pass
@@ -431,11 +428,6 @@ class GeminiLiveClient:
                 self._safe_error(f"Playback error: {exc}")
         finally:
             self._ai_speaking.clear()
-            if self._py_audio:
-                try:
-                    self._py_audio.terminate()
-                except Exception:
-                    pass
         logger.info("Playback thread terminated.")
 
     @staticmethod

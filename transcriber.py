@@ -15,7 +15,7 @@ import requests
 import website_client
 
 TRANSCRIPTION_URL = "https://api.mistral.ai/v1/audio/transcriptions"
-DEFAULT_MODEL = "voxtral-mini-transcribe-2602"
+DEFAULT_MODEL = "voxtral-mini-2602"
 TIMEOUT_SEC = 60
 
 

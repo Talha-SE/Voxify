@@ -31,9 +31,40 @@ import config
 import output_handler
 import recorder as rec_module
 import realtime_transcriber as rt_module
-import transcriber as tr_module
+import website_client
+import license_cache
+import uuid
+
+# ── Logging Setup ──────────────────────────────────────────────────────────
+import logging
+_log_file = Path(__file__).with_name("voxify_debug.log")
+logging.basicConfig(
+    level=logging.DEBUG,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    datefmt="%H:%M:%S",
+    filename=str(_log_file),
+    filemode="w",
+)
+logger = logging.getLogger("app")
+logger.info("=" * 60)
+logger.info("Voxify starting up")
+logger.info("=" * 60)
+# Also log to console via print for immediate feedback
+def _print_log_tail():
+    try:
+        with open(_log_file) as f:
+            tail = f.readlines()[-20:]
+        print("".join(tail), flush=True)
+    except Exception:
+        pass
+atexit.register(_print_log_tail)
+# ───────────────────────────────────────────────────────────────────────────
 
 APP_NAME = "Voxify"
+LIVE_MODEL_MAP = {
+    "voxtral-mini-2602": "voxtral-mini-transcribe-realtime-2602",
+    "voxtral-small-2507": "voxtral-small-2507",
+}
 WIN_W = 286
 WIN_H = 120
 CORNER_R = 18
@@ -168,42 +199,13 @@ class SettingsDialog(ctk.CTkToplevel):
         )
         scroll.pack(fill="both", expand=True, pady=(0, 10))
 
-        self._section_label(scroll, "API KEY")
-        self._key_var = tk.StringVar(value=cfg.get("api_key", ""))
-        self._key_entry = ctk.CTkEntry(
-            scroll,
-            textvariable=self._key_var,
-            show="•",
-            height=32,
-            corner_radius=9,
-            fg_color=COLORS["bg_card"],
-            border_color=COLORS["border"],
-            border_width=1,
-            placeholder_text="Enter your API key...",
-        )
-        self._key_entry.pack(fill="x", pady=(0, 6))
-
-        self._show_var = tk.BooleanVar(value=False)
-        ctk.CTkCheckBox(
-            scroll,
-            text="Show key",
-            variable=self._show_var,
-            command=self._toggle_show,
-            font=ctk.CTkFont(size=10),
-            text_color=COLORS["text_dim"],
-            checkbox_width=18,
-            checkbox_height=18,
-            fg_color=COLORS["accent"],
-            hover_color=COLORS["accent_hover"],
-        ).pack(anchor="w", pady=(0, 12))
-
         self._section_label(scroll, "MODEL")
         self._model_map = {
-            "Mini": "voxtral-mini-transcribe-2602",
+            "Mini": "voxtral-mini-2602",
             "Small": "voxtral-small-2507",
         }
         self._model_reverse = {model_id: label for label, model_id in self._model_map.items()}
-        saved_model = cfg.get("model", "voxtral-mini-transcribe-2602")
+        saved_model = cfg.get("model", "voxtral-mini-2602")
         self._model_var = tk.StringVar(value=self._model_reverse.get(saved_model, "Mini"))
         ctk.CTkComboBox(
             scroll,
@@ -369,9 +371,6 @@ class SettingsDialog(ctk.CTkToplevel):
             anchor="w",
         ).pack(fill="x", pady=(0, 8))
 
-    def _toggle_show(self) -> None:
-        self._key_entry.configure(show="" if self._show_var.get() else "•")
-
     def _on_language_change(self, choice: str) -> None:
         """Show or hide the custom language entry."""
         if choice == "Custom...":
@@ -382,8 +381,7 @@ class SettingsDialog(ctk.CTkToplevel):
 
     def _save(self) -> None:
         cfg = config.load()
-        cfg["api_key"] = self._key_var.get().strip()
-        cfg["model"] = self._model_map.get(self._model_var.get().strip(), "voxtral-mini-transcribe-2602")
+        cfg["model"] = self._model_map.get(self._model_var.get().strip(), "voxtral-mini-2602")
 
         selected_lang = self._lang_var.get()
         if selected_lang == "Custom...":
@@ -447,6 +445,30 @@ class FloatingApp(ctk.CTk):
         # ── Apply rounded corners (Windows 10/11) ───────────────────────────
         self.after(100, self._apply_rounded_corners)
         self.after(60, lambda: self._fade_to_alpha(0.98))
+
+    def _get_device_id(self) -> str:
+        cfg = config.load()
+        device_id = (cfg.get("device_id") or "").strip()
+        if device_id: return device_id
+        device_id = uuid.uuid4().hex
+        cfg["device_id"] = device_id
+        config.save(cfg)
+        return device_id
+
+    def _get_runtime_api_key(self) -> str:
+        cfg = config.load()
+        cfg_key = (cfg.get("api_key") or "").strip()
+        if cfg_key: return cfg_key
+        
+        # Try to get gated key
+        try:
+            state = license_cache.load_state()
+            token = (state.get("token") or "").strip()
+            if not token: return ""
+            bootstrap = website_client.get_desktop_bootstrap(token=token, device_id=self._get_device_id())
+            return (bootstrap.api_key or "").strip()
+        except Exception:
+            return ""
 
     def _apply_window_icon(self) -> None:
         logo_path = branding.resolve_logo_path()
@@ -695,10 +717,9 @@ class FloatingApp(ctk.CTk):
 
     def _ask_for_target_click(self) -> None:
         """Dim window and wait for user to click the typing target."""
-        cfg = config.load()
-        api_key = cfg.get("api_key", "").strip()
+        api_key = self._get_runtime_api_key()
         if not api_key:
-            messagebox.showwarning("API Key Missing", "Please add your API key in Settings.")
+            messagebox.showwarning("API Key Required", "License required. Activate in Settings.")
             return
 
         self._waiting_click = True
@@ -773,7 +794,7 @@ class FloatingApp(ctk.CTk):
     def _start_recording(self) -> None:
         """Called after target is selected — actually start recording."""
         cfg = config.load()
-        api_key = cfg.get("api_key", "").strip()
+        api_key = self._get_runtime_api_key()
         self._stopping = False
 
         self._set_action_style(
@@ -865,7 +886,8 @@ class FloatingApp(ctk.CTk):
         try:
             wav_path = self._recorder.stop()
             cfg = config.load()
-            client = tr_module.TranscriptionClient(api_key=cfg["api_key"], model=cfg.get("model", "voxtral-mini-transcribe-2602"))
+            api_key = self._get_runtime_api_key()
+            client = tr_module.TranscriptionClient(api_key=api_key, model=cfg.get("model", "voxtral-mini-2602"))
             text = client.transcribe(wav_path, language=cfg.get("language") or None)
             self.after(0, self._on_transcription_done, text)
         except Exception as e:
@@ -917,15 +939,28 @@ class FloatingApp(ctk.CTk):
             pass
 
     def _on_transcription_error(self, err: str) -> None:
+        logger.error(f"Transcription error: {err}")
         self._reset_to_ready()
         messagebox.showerror("Transcription Error", err)
 
     def _start_realtime(self, api_key: str, cfg: dict) -> None:
         self._live_text_buffer.clear()
         source = cfg.get("source", "mic")
-        
+        logger.info(f"_start_realtime: source={source}, model from cfg={cfg.get('model', 'default')}")
+
+        if source == "system":
+            supported, _ = rec_module.system_audio_support_status()
+            if not supported:
+                logger.warning("System audio not supported, falling back to mic")
+                source = "mic"
+
+        selected_model = cfg.get("model", "voxtral-mini-2602").strip().lower()
+        live_model = LIVE_MODEL_MAP.get(selected_model, "voxtral-mini-transcribe-realtime-2602")
+        logger.info(f"Using live model: {live_model}")
+
         self._rt_transcriber = rt_module.RealtimeTranscriber(
             api_key=api_key,
+            model=live_model,
             sample_rate=cfg.get("sample_rate", 16000),
             source=source,
             on_delta =lambda t: self.after(0, self._type_live_delta, t),
@@ -964,6 +999,7 @@ class FloatingApp(ctk.CTk):
         self._set_status_message(status)
 
     def _stop_realtime(self) -> None:
+        logger.info("_stop_realtime called")
         self._is_recording = False
         self._progress.stop()
         
@@ -973,6 +1009,7 @@ class FloatingApp(ctk.CTk):
         self._flush_live_buffer()
         
         if self._rt_transcriber:
+            logger.info("Stopping rt_transcriber")
             self._rt_transcriber.stop()
             self._rt_transcriber = None
         
@@ -984,16 +1021,21 @@ class FloatingApp(ctk.CTk):
         self._set_status_message("Completed")
 
     def _type_live_delta(self, delta: str) -> None:
+        logger.info(f"_type_live_delta: '{delta}' (len={len(delta)})")
         self._live_text_buffer.append(delta)
+        logger.debug(f"Buffer now has {len(self._live_text_buffer)} items, total chars: {sum(len(d) for d in self._live_text_buffer)}")
         if self._live_paste_job:
             self.after_cancel(self._live_paste_job)
         delay_ms = 50 if len(delta) > 10 else 300
         self._live_paste_job = self.after(delay_ms, self._flush_live_buffer)
 
     def _flush_live_buffer(self) -> None:
-        if not self._live_text_buffer: return
+        if not self._live_text_buffer:
+            logger.debug("_flush_live_buffer: buffer empty, nothing to flush")
+            return
         text_chunk = "".join(self._live_text_buffer)
         self._live_text_buffer.clear()
+        logger.info(f"_flush_live_buffer: typing '{text_chunk}' (len={len(text_chunk)})")
         threading.Thread(
             target=lambda: output_handler.type_text(text_chunk, interval=0.01),
             daemon=True,
@@ -1001,6 +1043,7 @@ class FloatingApp(ctk.CTk):
         self._live_paste_job = None
 
     def _on_realtime_done(self) -> None:
+        logger.info("_on_realtime_done called")
         self._is_recording = False
         self._progress.stop()
         self._flush_live_buffer()

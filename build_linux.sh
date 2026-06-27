@@ -29,6 +29,10 @@ python3 -m PyInstaller \
   --hidden-import pyperclip \
   --hidden-import pyautogui \
   --hidden-import requests \
+  --hidden-import mistralai \
+  --hidden-import mistralai.client \
+  --hidden-import mistralai.client.models \
+  --hidden-import mistralai.extra.realtime \
   app.py
 
 python3 package_release.py --platform linux
