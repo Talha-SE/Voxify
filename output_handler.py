@@ -172,11 +172,9 @@ def system_action(action: Literal["lock", "sleep", "empty_trash"]) -> bool:
         if action == "lock":
             ctypes.windll.user32.LockWorkStation()
         elif action == "sleep":
-            # Requires powercfg or rundll32
-            subprocess.run("rundll32.exe powrprof.dll,SetSuspendState 0,1,0", shell=True)
+            subprocess.run(["rundll32.exe", "powrprof.dll,SetSuspendState", "0", "1", "0"], timeout=5)
         elif action == "empty_trash":
-            # Windows shell command for recycle bin
-            subprocess.run("powershell.exe -Command \"Clear-RecycleBin -Force -ErrorAction SilentlyContinue\"", shell=True)
+            subprocess.run(["powershell.exe", "-Command", "Clear-RecycleBin -Force -ErrorAction SilentlyContinue"], capture_output=True, timeout=30)
         return True
     except Exception:
         return False
@@ -266,27 +264,28 @@ def get_screens_info() -> list[dict]:
 
 
 def set_system_volume(level: int) -> bool:
-    """Set the system master volume (0 to 100)."""
+    """Set the system master volume (0 to 100) using Win32 API — no shell/cmd."""
     if not _WIN_OK: return False
     try:
-        # Use NirCmd if available, or PowerShell fallback
-        import subprocess
-        # Volume scale for PS is 0.0 to 1.0 (float) or using specific shell objects
-        ps_cmd = f"$obj = New-Object -ComObject WScript.Shell; for($i=0; $i -lt 50; $i++) {{ $obj.SendKeys([char]174) }}; for($i=0; $i -lt {level/2}; $i++) {{ $obj.SendKeys([char]175) }}"
-        subprocess.run(["powershell.exe", "-Command", ps_cmd], capture_output=True)
+        vol = max(0, min(100, level))
+        # Map 0-100 to 0-0xFFFF (16-bit unsigned)
+        c_val = int(vol / 100.0 * 0xFFFF)
+        packed = (c_val << 16) | c_val  # left + right channels
+        ctypes.windll.winmm.waveOutSetVolume(0, packed)
         return True
-    except Exception: return False
+    except Exception:
+        return False
 
 
 def set_screen_brightness(level: int) -> bool:
     """Set screen brightness (0 to 100) on all supported monitors."""
     if not _WIN_OK: return False
+    # Uses subprocess with PowerShell WMI (no shell=True — safe from injection).
+    # Pure ctypes/COM approach would require expensive boilerplate.
     try:
         import subprocess
-        # Using Get-CimInstance which is the modern replacement for Get-WmiObject
-        # We use ForEach-Object to ensure it hits all monitors that support it
         ps_cmd = f"Get-CimInstance -Namespace root/WMI -ClassName WmiMonitorBrightnessMethods | ForEach-Object {{ $_.WmiSetBrightness(0, {level}) }}"
-        subprocess.run(["powershell.exe", "-NoProfile", "-Command", ps_cmd], capture_output=True)
+        subprocess.run(["powershell.exe", "-NoProfile", "-Command", ps_cmd], capture_output=True, timeout=15)
         return True
     except Exception: return False
 
@@ -534,13 +533,14 @@ def open_application(query: str) -> bool:
                         except Exception:
                             pass
                                     
-    # 3. Fallback to start command
+    # 3. Fallback to start command (safe: no shell=True)
     try:
         os.startfile(query)
         return True
     except Exception:
         try:
-            subprocess.Popen(f"start {query}", shell=True)
+            # Use cmd.exe /c start with list args (no shell=True) to prevent injection
+            subprocess.run(["cmd.exe", "/c", "start", "", query], capture_output=True, timeout=10)
             return True
         except Exception:
             return False

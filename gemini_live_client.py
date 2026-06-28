@@ -554,12 +554,6 @@ class GeminiLiveClient:
             self._playback_stream.start()
             while self._running:
                 try:
-                    if self._gating_audio.is_set():
-                        self._clear_queue(self._output_queue)
-                        self._ai_speaking.clear()
-                        sd.sleep(50)
-                        continue
-
                     data = self._output_queue.get(timeout=0.2)
                     if not self._running:
                         break
@@ -726,10 +720,9 @@ class GeminiLiveClient:
                     if "inlineData" in part:
                         mime = part["inlineData"].get("mimeType", "")
                         if mime.startswith("audio/"):
-                            if not self._gating_audio.is_set():
-                                raw_audio = base64.b64decode(part["inlineData"]["data"])
-                                arr = np.frombuffer(raw_audio, dtype=np.int16)
-                                self._output_queue.put(arr)
+                            raw_audio = base64.b64decode(part["inlineData"]["data"])
+                            arr = np.frombuffer(raw_audio, dtype=np.int16)
+                            self._output_queue.put(arr)
                     if "text" in part:
                         text_part = part["text"]
                         if self.on_transcript:
@@ -771,12 +764,8 @@ class GeminiLiveClient:
 
         self._tool_call_in_progress.clear()
         self._set_state(ChatState.LISTENING)
-        self._gating_audio.set()
+        # Clear any remaining "thinking" audio from the queue
         self._clear_queue(self._output_queue)
-        threading.Thread(
-            target=lambda: (time.sleep(0.6), self._gating_audio.clear()),
-            daemon=True,
-        ).start()
 
     # ── Safe callbacks ───────────────────────────────────────────────────────
 

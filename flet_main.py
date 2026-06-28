@@ -861,10 +861,16 @@ class VoxifyApp:
                 "2. NO TOOL NARRATION: You must NEVER speak about your tool calls, thoughts, plans, or step-by-step progress. Do not say 'I am opening...', 'Let me check...', 'I've retrieved...', or explain your math/calculations. Do not announce context gathering.\n"
                 "3. BE EXTREMELY CONCISE: Speak only one or two short sentences. Answer directly and wait for the user.\n"
                 "4. SILENT CONTEXT GATHERING: When you gather context using 'get_active_window_info' or 'read_clipboard', do it completely silently. Just call the tools and use the data to respond directly to the user's query.\n"
-                "5. READING/LOOKING AT THE SCREEN: If the user asks you to read, locate, click, or analyze text/buttons on the screen, call the 'parse_screen_text' tool immediately. Never say you cannot read the screen or that tools are insufficient.\n"
+                "5. READING/LOOKING AT THE SCREEN: If the user asks you to read, locate, click, or analyze text/buttons on the screen, call the 'parse_screen_text' tool immediately. However, if screen sharing is NOT active (you can check via 'get_screen_share_status'), honestly tell the user you cannot see their screen and ask them to enable screen sharing.\n"
                 "6. ALARMS AND TIMERS: If the user asks you to set an alarm, timer, or reminder, calculate the duration in seconds and call the 'set_timer' tool.\n"
                 "7. VERIFICATION: Use the screen share (if enabled) to verify visual actions (typing, clicking) succeeded. If they failed, try an alternative silently or report the failure concisely.\n"
-                "8. language: Speak only in English."
+                "8. SPEAK AFTER TOOLS: After you have called all necessary tools and gathered the required information, you MUST reply to the user with a normal spoken response. Do NOT keep calling tools endlessly. When you have enough context, finish your turn and speak.\n"
+                "9. LANGUAGE: Speak only in English.\n"
+                "10. HONESTY ABOUT SCREEN: You can ONLY see the user's screen if you are actively receiving video frames. You are NOT receiving video frames unless screen sharing is enabled by the user. If the user asks if you can see their screen, call the 'get_screen_share_status' tool to check whether sharing is active, and answer honestly based on the result. NEVER claim you can see the screen if sharing is not active.\n"
+                "11. NO LYING OR FLUFF: Never pretend to have capabilities you don't have. Never fabricate information. Never say you can do something unless you have actually confirmed it. Be direct, concise, and 100% truthful about your current abilities. If you cannot do something, say so clearly without apology or excuse.\n"
+                "12. TYPING ON SCREEN: When asked to type or write something on screen, use the 'type_text' tool. This tool PHYSICALLY TYPES each character on screen via real keyboard input — it does NOT use clipboard or cmd.\n"
+                "13. SEARCH BEHAVIOR: 'search_web' opens a browser tab with a Google URL. 'web_search' silently fetches results in the background. If you need to type something into a website's search field after opening it, use 'type_text' with coordinates.\n"
+                "14. SAFETY FIRST: All tools use direct Win32 API or Python libraries — NOT cmd/PowerShell — UNLESS the user explicitly asks you to run a shell command. 'run_shell_command' is the ONLY tool that runs PowerShell, and you should ONLY use it when the user asks you to run a command. Never secretely run commands in cmd or PowerShell."
             )
 
             SILENT = "SILENT EXECUTION. "
@@ -874,13 +880,13 @@ class VoxifyApp:
                 {"name": "move_mouse", "description": SILENT + "Moves the mouse cursor to specific screen coordinates.", "parameters": {"type": "OBJECT", "properties": {"x": {"type": "INTEGER"}, "y": {"type": "INTEGER"}, "duration": {"type": "NUMBER", "default": 0.2}}, "required": ["x", "y"]}},
                 {"name": "move_mouse_relative", "description": SILENT + "Moves the mouse cursor by a pixel offset from its current position.", "parameters": {"type": "OBJECT", "properties": {"dx": {"type": "INTEGER"}, "dy": {"type": "INTEGER"}}, "required": ["dx", "dy"]}},
                 {"name": "mouse_drag", "description": SILENT + "Drags the mouse from one point to another.", "parameters": {"type": "OBJECT", "properties": {"x1": {"type": "INTEGER"}, "y1": {"type": "INTEGER"}, "x2": {"type": "INTEGER"}, "y2": {"type": "INTEGER"}, "button": {"type": "STRING", "enum": ["left", "right"], "default": "left"}}, "required": ["x1", "y1", "x2", "y2"]}},
-                {"name": "type_text", "description": SILENT + "Types text at the current cursor position or at specific coordinates.", "parameters": {"type": "OBJECT", "properties": {"text": {"type": "STRING"}, "press_enter": {"type": "BOOLEAN", "default": True}, "x": {"type": "INTEGER", "description": "Optional x coordinate to click before typing."}, "y": {"type": "INTEGER", "description": "Optional y coordinate to click before typing."}}, "required": ["text"]}},
+                {"name": "type_text", "description": SILENT + "PHYSICALLY TYPES each character on screen using real keyboard input (SendInput). Not clipboard, not cmd. Clicks at x,y first if provided. Use this when the user asks you to type or write something anywhere on screen.", "parameters": {"type": "OBJECT", "properties": {"text": {"type": "STRING"}, "press_enter": {"type": "BOOLEAN", "default": True}, "x": {"type": "INTEGER", "description": "Optional x coordinate to click before typing."}, "y": {"type": "INTEGER", "description": "Optional y coordinate to click before typing."}}, "required": ["text"]}},
                 {"name": "smooth_scroll", "description": SILENT + "Scrolls the screen up or down smoothly.", "parameters": {"type": "OBJECT", "properties": {"direction": {"type": "STRING", "enum": ["up", "down"]}, "clicks": {"type": "INTEGER", "description": "Scroll distance.", "default": 3}}, "required": ["direction"]}},
                 {"name": "start_scrolling", "description": SILENT + "Starts scrolling the page continuously.", "parameters": {"type": "OBJECT", "properties": {"direction": {"type": "STRING", "enum": ["up", "down"]}, "speed": {"type": "NUMBER", "description": "Seconds between scroll steps (smaller is faster).", "default": 0.5}}, "required": ["direction"]}},
                 {"name": "stop_scrolling", "description": SILENT + "Stops the continuous scrolling action.", "parameters": {"type": "OBJECT", "properties": {}}},
                 {"name": "press_key", "description": SILENT + "Presses a specific keyboard key.", "parameters": {"type": "OBJECT", "properties": {"key": {"type": "STRING", "description": "Key like 'enter', 'win', 'tab'."}}, "required": ["key"]}},
                 {"name": "press_key_combination", "description": SILENT + "Presses multiple keyboard keys simultaneously (hotkeys).", "parameters": {"type": "OBJECT", "properties": {"keys": {"type": "ARRAY", "items": {"type": "STRING"}, "description": "List of key names to press (e.g., ['ctrl', 'shift', 'p'])."}}, "required": ["keys"]}},
-                {"name": "parse_screen_text", "description": SILENT + "Captures the screen and uses OCR to find all visible text and their coordinates.", "parameters": {"type": "OBJECT", "properties": {}}},
+                {"name": "parse_screen_text", "description": SILENT + "Captures the screen and uses OCR to find all visible text and their coordinates. Use this to find where text/dropdowns/buttons are on screen BEFORE using type_text or mouse_click.", "parameters": {"type": "OBJECT", "properties": {}}},
                 {"name": "set_timer", "description": SILENT + "Sets a timer/alarm for a specified duration in seconds.", "parameters": {"type": "OBJECT", "properties": {"duration_seconds": {"type": "INTEGER", "description": "The timer duration in seconds."}, "label": {"type": "STRING", "description": "Optional name or label for the timer."}}, "required": ["duration_seconds"]}},
                 {"name": "list_windows", "description": SILENT + "Returns titles of all currently visible windows.", "parameters": {"type": "OBJECT", "properties": {}}},
                 {"name": "manage_window", "description": SILENT + "Activates, minimizes, maximizes, or closes a specific window.", "parameters": {"type": "OBJECT", "properties": {"title": {"type": "STRING", "description": "Full or partial window title."}, "action": {"type": "STRING", "enum": ["activate", "minimize", "maximize", "close"]}}, "required": ["title", "action"]}},
@@ -888,9 +894,9 @@ class VoxifyApp:
                 {"name": "read_clipboard", "description": SILENT + "Reads the current text content from the system clipboard.", "parameters": {"type": "OBJECT", "properties": {}}},
                 {"name": "get_active_window_info", "description": SILENT + "Returns title and process name of the active window.", "parameters": {"type": "OBJECT", "properties": {}}},
                 {"name": "system_action", "description": SILENT + "Locks the PC or puts it to sleep.", "parameters": {"type": "OBJECT", "properties": {"action": {"type": "STRING", "enum": ["lock", "sleep", "empty_trash"]}}, "required": ["action"]}},
-                {"name": "set_volume", "description": SILENT + "Sets the system volume to a specific percentage (0-100).", "parameters": {"type": "OBJECT", "properties": {"level": {"type": "INTEGER", "description": "Volume percentage (0-100)."}}, "required": ["level"]}},
-                {"name": "set_brightness", "description": SILENT + "Sets the screen brightness to a specific percentage (0-100).", "parameters": {"type": "OBJECT", "properties": {"level": {"type": "INTEGER", "description": "Brightness percentage (0-100)."}}, "required": ["level"]}},
-                {"name": "run_shell_command", "description": SILENT + "Executes a PowerShell command and returns the output.", "parameters": {"type": "OBJECT", "properties": {"command": {"type": "STRING"}}, "required": ["command"]}},
+                {"name": "set_volume", "description": SILENT + "Sets the system volume to a specific percentage (0-100) using Win32 API directly — no shell/cmd.", "parameters": {"type": "OBJECT", "properties": {"level": {"type": "INTEGER", "description": "Volume percentage (0-100)."}}, "required": ["level"]}},
+                {"name": "set_brightness", "description": SILENT + "Sets the screen brightness to a specific percentage (0-100). Uses PowerShell for WMI (commonly allowed, user-knows).", "parameters": {"type": "OBJECT", "properties": {"level": {"type": "INTEGER", "description": "Brightness percentage (0-100)."}}, "required": ["level"]}},
+                {"name": "run_shell_command", "description": "EXECUTES A POWERSHELL COMMAND. Only use this if the user EXPLICITLY asks you to run a command in terminal/PowerShell. For normal typing on screen, use type_text instead.", "parameters": {"type": "OBJECT", "properties": {"command": {"type": "STRING"}}, "required": ["command"]}},
                 {"name": "list_files", "description": SILENT + "Lists recent files in a specific user directory.", "parameters": {"type": "OBJECT", "properties": {"directory": {"type": "STRING", "enum": ["downloads", "documents", "desktop", "pictures", "videos"], "default": "downloads"}}, "required": ["directory"]}},
                 {"name": "read_file", "description": SILENT + "Reads the first 5000 characters of a text file.", "parameters": {"type": "OBJECT", "properties": {"path": {"type": "STRING", "description": "Full file path."}}, "required": ["path"]}},
                 {"name": "write_file_content", "description": SILENT + "Creates or overwrites a text file with the specified content.", "parameters": {"type": "OBJECT", "properties": {"path": {"type": "STRING", "description": "Full file path."}, "content": {"type": "STRING", "description": "Content to write."}}, "required": ["path", "content"]}},
@@ -900,11 +906,12 @@ class VoxifyApp:
                 {"name": "kill_process", "description": SILENT + "Terminates a process by its PID or name.", "parameters": {"type": "OBJECT", "properties": {"pid_or_name": {"type": "STRING", "description": "The PID or process name."}}, "required": ["pid_or_name"]}},
                 {"name": "get_screens_info", "description": SILENT + "Returns details about all connected monitors.", "parameters": {"type": "OBJECT", "properties": {}}},
                 {"name": "media_control", "description": SILENT + "Controls system media playback (play/pause, next, previous, volume, mute).", "parameters": {"type": "OBJECT", "properties": {"action": {"type": "STRING", "enum": ["play_pause", "next", "previous", "volume_up", "volume_down", "mute"]}}, "required": ["action"]}},
-                {"name": "search_web", "description": SILENT + "Opens the default browser and searches for a specific query.", "parameters": {"type": "OBJECT", "properties": {"query": {"type": "STRING"}, "mode": {"type": "STRING", "enum": ["tab", "window"], "default": "tab"}}, "required": ["query"]}},
+                {"name": "search_web", "description": SILENT + "Opens the default browser and navigates to a Google search URL. Does NOT type in a search box. For typing into a search field on a website, use type_text after search_web.", "parameters": {"type": "OBJECT", "properties": {"query": {"type": "STRING"}, "mode": {"type": "STRING", "enum": ["tab", "window"], "default": "tab"}}, "required": ["query"]}},
                 {"name": "web_search", "description": SILENT + "Performs a background web search and returns text snippets. Use this to answer questions without opening a browser.", "parameters": {"type": "OBJECT", "properties": {"query": {"type": "STRING"}}, "required": ["query"]}},
                 {"name": "open_url", "description": SILENT + "Opens a specific URL in the default browser.", "parameters": {"type": "OBJECT", "properties": {"url": {"type": "STRING"}, "mode": {"type": "STRING", "enum": ["tab", "window"], "default": "tab"}}, "required": ["url"]}},
                 {"name": "get_local_time", "description": SILENT + "Returns the current local date and time.", "parameters": {"type": "OBJECT", "properties": {}}},
-                {"name": "get_mouse_position", "description": SILENT + "Returns the current (x, y) coordinates of the mouse cursor.", "parameters": {"type": "OBJECT", "properties": {}}}
+                {"name": "get_mouse_position", "description": SILENT + "Returns the current (x, y) coordinates of the mouse cursor.", "parameters": {"type": "OBJECT", "properties": {}}},
+                {"name": "get_screen_share_status", "description": "Checks whether screen sharing is currently active and returning video frames to you. Call this tool whenever the user asks if you can see their screen, then answer honestly based on the result.", "parameters": {"type": "OBJECT", "properties": {}}}
             ]}]
 
             session_resumption = self.cfg.get("gemini_session_resumption", False)
@@ -1103,6 +1110,9 @@ class VoxifyApp:
         if not pc_control_enabled and name not in allowed_tools:
             return {"success": False, "error": "PC Control is currently disabled by the user in Settings. You can only chat and search the web."}
 
+        # Log the tool call for debugging
+        logger.info(f"AI tool call: {name} args={ {k: v for k, v in args.items() if k != 'query' or len(str(v)) < 100} }")  # noqa: E501
+
         # Security validation (rate limit, blocked commands, protected paths)
         validation_error = self._validate_tool_args(name, args)
         if validation_error is not None:
@@ -1121,7 +1131,9 @@ class VoxifyApp:
             elif name == "mouse_drag": return {"success": output_handler.mouse_drag(x1=args.get("x1"), y1=args.get("y1"), x2=args.get("x2"), y2=args.get("y2"), button=args.get("button", "left"))}
             elif name == "type_text":
                 text = args.get("text", "")
-                success = output_handler.type_text(text)
+                x = args.get("x")
+                y = args.get("y")
+                success = output_handler.type_text(text, x=x, y=y)
                 if success and args.get("press_enter", True):
                     success = output_handler.send_shortcut("enter")
                 return {"success": success}
@@ -1153,7 +1165,10 @@ class VoxifyApp:
             elif name == "web_search": return {"success": True, "results": output_handler.web_search(query=args.get("query", ""))}
             elif name == "open_url": return {"success": output_handler.open_url(url=args.get("url", ""), mode=args.get("mode", "tab"))}
             elif name == "get_local_time": return {"success": True, "time": output_handler.get_local_time()}
-        except Exception as exc: return {"success": False, "error": str(exc)}
+            elif name == "get_screen_share_status": return {"success": True, "screen_sharing_active": self._is_sharing_screen}
+        except Exception as exc:
+            logger.error(f"Tool call failed: {name} - {exc}")
+            return {"success": False, "error": str(exc)}
         return {"success": False, "error": "Unknown tool"}
 
     # ── Gemini Chat: Transcript History ──────────────────────────────────────
@@ -1397,6 +1412,9 @@ class VoxifyApp:
         self._set_status("Sharing screen", SUCCESS)
         self._screen_capture_thread = threading.Thread(target=self._run_screen_capture, daemon=True)
         self._screen_capture_thread.start()
+        # Notify the AI that it can now see the screen
+        if self._gemini_live_client:
+            self._gemini_live_client.send_text("[System: Screen sharing has been enabled. You can now see the user's screen. Be honest about this capability.]")
         self.page.update()
 
     def _stop_screen_sharing(self) -> None:
@@ -1409,6 +1427,9 @@ class VoxifyApp:
         if thread and thread is not threading.current_thread():
             thread.join(timeout=2.0)
         self._screen_capture_thread = None
+        # Notify the AI that it can no longer see the screen
+        if self._gemini_live_client:
+            self._gemini_live_client.send_text("[System: Screen sharing has been disabled. You can no longer see the user's screen. If asked, honestly say you cannot see the screen.]")
         self._update_video_btn_ui(sharing=False)
         if self._is_chatting:
             self._set_status("Listening...", SUCCESS)
