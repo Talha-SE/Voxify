@@ -51,6 +51,7 @@ class RealtimeTranscriber:
         source: str = "mic",  # "mic" or "system"
         mic_device: Optional[int | str] = None,
         on_delta:  Optional[Callable[[str], None]] = None,
+        on_segment: Optional[Callable[[str], None]] = None,
         on_status: Optional[Callable[[str], None]] = None,
         on_done:   Optional[Callable[[], None]]    = None,
         on_error:  Optional[Callable[[str], None]] = None,
@@ -61,10 +62,11 @@ class RealtimeTranscriber:
         self.chunk_duration_ms = chunk_duration_ms
         self.source           = source  # "mic" or "system"
         self.mic_device       = mic_device  # sounddevice device ID (int) or name pattern (str)
-        self.on_delta  = on_delta
-        self.on_status = on_status
-        self.on_done   = on_done
-        self.on_error  = on_error
+        self.on_delta   = on_delta
+        self.on_segment = on_segment
+        self.on_status  = on_status
+        self.on_done    = on_done
+        self.on_error   = on_error
 
         self._stop_flag = threading.Event()
         self._thread: Optional[threading.Thread] = None
@@ -134,6 +136,7 @@ class RealtimeTranscriber:
                 RealtimeTranscriptionSessionCreated,
                 RealtimeTranscriptionSessionUpdated,
                 TranscriptionStreamTextDelta,
+                TranscriptionStreamSegmentDelta,
                 TranscriptionStreamDone,
                 RealtimeTranscriptionError,
             )
@@ -200,6 +203,11 @@ class RealtimeTranscriber:
                     logger.info(f"Text delta received: '{event.text}' (len={len(event.text)})")
                     if self.on_delta and event.text:
                         self.on_delta(event.text)
+
+                elif isinstance(event, TranscriptionStreamSegmentDelta):
+                    logger.info(f"Segment received: '{event.text}' (start={event.start}, end={event.end})")
+                    if self.on_segment and event.text:
+                        self.on_segment(event.text)
 
                 elif isinstance(event, TranscriptionStreamDone):
                     logger.info("Stream done event received")

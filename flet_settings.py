@@ -369,6 +369,18 @@ def main(page: ft.Page) -> None:
             "text_replacements": _parse_replacements(text_replacements_field.value or ""),
             "screen_share_resolution": (screen_resolution_field.value or "medium").strip(),
             "screen_share_pause_on_idle": bool(screen_pause_on_idle_switch.value),
+            # ── Safety & Security ────────────────────────────────────────
+            "gemini_tool_confirmation_enabled": bool(tool_confirmation_switch.value),
+            "gemini_shell_command_blocked": bool(shell_block_switch.value),
+            "gemini_tool_rate_limit": int((tool_rate_limit_field.value or "10").strip()),
+            "gemini_shell_timeout_max": int((shell_timeout_field.value or "30").strip()),
+            "gemini_transcript_max_messages": int((transcript_size_field.value or "20").strip()),
+            "gemini_show_transcript_panel": bool(show_transcript_switch.value),
+            # ── Advanced ─────────────────────────────────────────────────
+            "gemini_idle_timeout": int((idle_timeout_slider.value or "300").strip()),
+            "gemini_thinking_level": str((thinking_level_field.value or "minimal").strip()),
+            "gemini_session_resumption": bool(session_resumption_switch.value),
+            "gemini_context_compression": bool(context_compression_switch.value),
         }
 
     def _sync_dropdown_from_event(e) -> None:
@@ -388,6 +400,13 @@ def main(page: ft.Page) -> None:
             "silence_trim_enabled", "send_reliability_events", "auto_install_updates", "restart_after_update",
             "personal_dictionary", "text_replacements",
             "screen_share_resolution", "screen_share_pause_on_idle",
+            # ── Safety & Security ────────────────────────────────────────
+            "gemini_tool_confirmation_enabled", "gemini_shell_command_blocked",
+            "gemini_tool_rate_limit", "gemini_shell_timeout_max",
+            "gemini_transcript_max_messages", "gemini_show_transcript_panel",
+            # ── Advanced ─────────────────────────────────────────────────
+            "gemini_idle_timeout", "gemini_thinking_level",
+            "gemini_session_resumption", "gemini_context_compression",
         ]
         
         is_dirty = False
@@ -1142,6 +1161,75 @@ def main(page: ft.Page) -> None:
     screen_resolution_field.on_change = lambda e: _update_save_button_state(e)
     screen_pause_on_idle_switch.on_change = lambda e: _update_save_button_state(e)
 
+    # ── Safety & Security settings ───────────────────────────────────────
+    tool_confirmation_switch = ft.Switch(
+        value=bool(cfg.get("gemini_tool_confirmation_enabled", True)),
+        active_color=ACCENT_ALT,
+    )
+    shell_block_switch = ft.Switch(
+        value=bool(cfg.get("gemini_shell_command_blocked", True)),
+        active_color=ACCENT_ALT,
+    )
+    show_transcript_switch = ft.Switch(
+        value=bool(cfg.get("gemini_show_transcript_panel", False)),
+        active_color=ACCENT_ALT,
+    )
+    tool_rate_limit_field = ft.Dropdown(
+        label="Tool call rate limit (per min)",
+        value=str(cfg.get("gemini_tool_rate_limit", 10)),
+        options=[ft.dropdown.Option(str(v)) for v in [5, 10, 20, 50]],
+        **_field_style(),
+    )
+    shell_timeout_field = ft.Dropdown(
+        label="Shell command timeout",
+        value=str(cfg.get("gemini_shell_timeout_max", 30)),
+        options=[ft.dropdown.Option(str(v)) for v in [10, 15, 30]],
+        **_field_style(),
+    )
+    transcript_size_field = ft.Dropdown(
+        label="Transcript history size",
+        value=str(cfg.get("gemini_transcript_max_messages", 20)),
+        options=[ft.dropdown.Option(str(v)) for v in [10, 20, 50, 100]],
+        **_field_style(),
+    )
+
+    # ── Advanced settings ────────────────────────────────────────────────
+    idle_timeout_slider = ft.Dropdown(
+        label="Idle timeout (seconds)",
+        value=str(cfg.get("gemini_idle_timeout", 300)),
+        options=[ft.dropdown.Option(str(v)) for v in [60, 120, 300, 600]],
+        **_field_style(),
+    )
+    thinking_level_field = ft.Dropdown(
+        label="Thinking level",
+        value=str(cfg.get("gemini_thinking_level", "minimal")),
+        options=[
+            ft.dropdown.Option("minimal", "Minimal"),
+            ft.dropdown.Option("normal", "Normal"),
+            ft.dropdown.Option("high", "Deep"),
+        ],
+        **_field_style(),
+    )
+    session_resumption_switch = ft.Switch(
+        value=bool(cfg.get("gemini_session_resumption", False)),
+        active_color=ACCENT_ALT,
+    )
+    context_compression_switch = ft.Switch(
+        value=bool(cfg.get("gemini_context_compression", False)),
+        active_color=ACCENT_ALT,
+    )
+
+    tool_confirmation_switch.on_change = lambda e: _update_save_button_state(e)
+    shell_block_switch.on_change = lambda e: _update_save_button_state(e)
+    show_transcript_switch.on_change = lambda e: _update_save_button_state(e)
+    tool_rate_limit_field.on_change = lambda e: _update_save_button_state(e)
+    shell_timeout_field.on_change = lambda e: _update_save_button_state(e)
+    transcript_size_field.on_change = lambda e: _update_save_button_state(e)
+    idle_timeout_slider.on_change = lambda e: _update_save_button_state(e)
+    thinking_level_field.on_change = lambda e: _update_save_button_state(e)
+    session_resumption_switch.on_change = lambda e: _update_save_button_state(e)
+    context_compression_switch.on_change = lambda e: _update_save_button_state(e)
+
     assistant_content = ft.Column(
         spacing=10,
         controls=[
@@ -1151,6 +1239,22 @@ def main(page: ft.Page) -> None:
                 ft.Text("The AI sees your screen in real time. Adjust the capture resolution below.", size=10, color=MUTED),
                 screen_resolution_field,
                 _setting_row("Skip idle frames", screen_pause_on_idle_switch),
+            ]),
+            _card("Safety & Security", ft.Icons.SHIELD_OUTLINED, [
+                ft.Text("Protect your system from unintended AI actions.", size=10, color=MUTED),
+                _setting_row("Confirm dangerous actions", tool_confirmation_switch),
+                _setting_row("Block dangerous shell commands", shell_block_switch),
+                tool_rate_limit_field,
+                shell_timeout_field,
+                transcript_size_field,
+                _setting_row("Show transcript by default", show_transcript_switch),
+            ]),
+            _card("Advanced", ft.Icons.TUNE_OUTLINED, [
+                ft.Text("Fine-tune Gemini session behavior.", size=10, color=MUTED),
+                idle_timeout_slider,
+                thinking_level_field,
+                _setting_row("Session resumption", session_resumption_switch),
+                _setting_row("Context compression", context_compression_switch),
             ]),
         ],
     )

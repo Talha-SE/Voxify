@@ -1,8 +1,1223 @@
-15:53:18 [INFO] app: ============================================================
-15:53:18 [INFO] app: Voxify starting up
-15:53:18 [INFO] app: ============================================================
-15:53:19 [INFO] VoxifyApp: ============================================================
-15:53:19 [INFO] VoxifyApp: VoxifyApp initializing — logging configured
-15:53:19 [INFO] VoxifyApp: ============================================================
-15:53:19 [INFO] flet_desktop: Starting Flet View app...
-15:53:19 [INFO] flet_desktop: Flet client found in cache: C:\Users\rajpu\.flet\client\flet-desktop-full-0.84.0
+05:18:27 [INFO] app: ============================================================
+05:18:27 [INFO] app: Voxify starting up
+05:18:27 [INFO] app: ============================================================
+05:18:28 [INFO] VoxifyApp: ============================================================
+05:18:28 [INFO] VoxifyApp: VoxifyApp initializing — logging configured
+05:18:28 [INFO] VoxifyApp: ============================================================
+05:18:28 [INFO] flet_desktop: Starting Flet View app...
+05:18:28 [INFO] flet_desktop: Flet client found in cache: C:\Users\rajpu\.flet\client\flet-desktop-full-0.84.0
+05:18:32 [WARNING] VoxifyApp: Ephemeral token failed, falling back to API key: Failed to generate ephemeral token from Gemini API.
+05:18:34 [INFO] GeminiLive: State: disconnected -> connecting
+05:18:34 [INFO] GeminiLive: Starting Gemini Live Chat (Model: gemini-3.1-flash-live-preview, Voice: Erinome)
+05:18:34 [INFO] GeminiLive: Gemini Live async loop started.
+05:18:34 [INFO] GeminiLive: Connecting to Gemini Live WebSocket...
+05:18:35 [INFO] GeminiLive: WebSocket connected. Sending setup message.
+05:18:35 [INFO] GeminiLive: Gemini setup acknowledged. Session ready.
+05:18:35 [INFO] GeminiLive: State: connecting -> connected
+05:18:35 [INFO] GeminiLive: Starting mic capture thread.
+05:18:35 [INFO] GeminiLive: Starting playback thread.
+05:18:35 [INFO] GeminiLive: Starting audio send loop.
+05:18:35 [INFO] GeminiLive: Starting receive audio loop.
+05:18:41 [INFO] GeminiLive: State: connected -> ai_speaking
+05:18:41 [INFO] GeminiLive: State: ai_speaking -> listening
+05:18:41 [INFO] GeminiLive: State: listening -> ai_speaking
+05:18:41 [INFO] GeminiLive: State: ai_speaking -> listening
+05:18:41 [INFO] GeminiLive: State: listening -> ai_speaking
+05:18:42 [INFO] GeminiLive: State: ai_speaking -> listening
+05:18:51 [INFO] GeminiLive: State: listening -> tool_call
+05:18:51 [INFO] GeminiLive: State: tool_call -> listening
+05:19:05 [INFO] GeminiLive: State: listening -> ai_speaking
+05:19:05 [INFO] GeminiLive: State: ai_speaking -> listening
+05:19:05 [INFO] GeminiLive: State: listening -> ai_speaking
+05:19:08 [INFO] GeminiLive: State: ai_speaking -> listening
+05:19:12 [INFO] GeminiLive: State: listening -> tool_call
+05:19:12 [INFO] GeminiLive: State: tool_call -> listening
+05:19:19 [INFO] GeminiLive: State: listening -> tool_call
+05:19:20 [INFO] GeminiLive: State: tool_call -> listening
+05:19:26 [INFO] GeminiLive: State: listening -> tool_call
+05:19:27 [INFO] GeminiLive: State: tool_call -> listening
+05:19:42 [INFO] GeminiLive: State: listening -> tool_call
+05:19:42 [INFO] GeminiLive: State: tool_call -> listening
+05:19:52 [INFO] GeminiLive: State: listening -> tool_call
+05:19:52 [INFO] GeminiLive: State: tool_call -> listening
+05:19:56 [INFO] GeminiLive: Input mute ON
+05:19:57 [INFO] GeminiLive: Input mute OFF
+05:20:03 [INFO] GeminiLive: State: listening -> tool_call
+05:20:03 [INFO] GeminiLive: State: tool_call -> listening
+05:20:32 [INFO] GeminiLive: Stopping Gemini Live Chat session...
+05:20:33 [INFO] GeminiLive: Mic capture thread terminated.
+05:20:33 [INFO] GeminiLive: Playback thread terminated.
+05:20:33 [INFO] GeminiLive: Audio send loop terminated.
+05:20:33 [INFO] GeminiLive: Receive audio loop terminated.
+05:20:34 [INFO] VoxifyApp: Action button clicked
+05:20:34 [INFO] VoxifyApp: Starting transcription flow
+05:20:34 [INFO] VoxifyApp: Session 92a73a61b3cc4adb8dc9a51a8fd1cf92: checking license
+05:20:34 [INFO] VoxifyApp: Refreshing license session
+05:20:34 [INFO] VoxifyApp: License OK: plan=starter, remaining=49760
+05:20:34 [INFO] VoxifyApp: Fetching live runtime API key
+05:20:34 [INFO] VoxifyApp: Fetching gated runtime API key from website
+05:20:35 [INFO] VoxifyApp: Listening for target click
+05:20:35 [INFO] VoxifyApp: Mouse listener started
+05:20:36 [INFO] VoxifyApp: Target clicked at (1082, 617)
+05:20:36 [INFO] VoxifyApp: Target selected, starting recording
+05:20:36 [INFO] VoxifyApp: Starting Live mode recording, source=mic, sample_rate=16000
+05:20:36 [INFO] VoxifyApp: Starting live mode, source=mic
+05:20:36 [INFO] VoxifyApp: Live mode model: voxtral-mini-transcribe-realtime-2602 (from config: voxtral-mini-2602)
+05:20:36 [INFO] realtime_transcriber: RealtimeTranscriber started in background thread
+05:20:36 [INFO] VoxifyApp: Live transcriber started
+05:20:36 [INFO] GeminiLive: Gemini Live async loop terminated.
+05:20:36 [INFO] GeminiLive: Cleaning up resources...
+05:20:36 [INFO] GeminiLive: Resource cleanup complete.
+05:20:37 [INFO] realtime_transcriber: Creating Mistral client and starting transcribe_stream
+05:20:38 [INFO] realtime_transcriber: Audio stream created, entering transcribe_stream loop
+05:20:39 [INFO] realtime_transcriber: Session created event received
+05:20:39 [INFO] realtime_transcriber: Using default mic device (index 1)
+05:20:39 [INFO] realtime_transcriber: Starting RawInputStream: sr=16000, channels=1, blocksize=1920
+05:20:39 [INFO] realtime_transcriber: RawInputStream started successfully
+05:20:39 [INFO] realtime_transcriber: Session updated event received
+05:20:39 [WARNING] realtime_transcriber: No audio data captured yet (queue empty)
+05:20:39 [INFO] realtime_transcriber: Audio level: -84.9 dBFS  (chunk #0)
+05:20:39 [INFO] realtime_transcriber: Audio chunk #1: 3840 bytes
+05:20:39 [INFO] realtime_transcriber: Audio level: -76.1 dBFS  (chunk #1)
+05:20:39 [INFO] realtime_transcriber: Audio chunk #2: 3840 bytes
+05:20:39 [INFO] realtime_transcriber: Audio level: -72.7 dBFS  (chunk #2)
+05:20:39 [INFO] realtime_transcriber: Audio chunk #3: 3840 bytes
+05:20:39 [INFO] realtime_transcriber: Audio level: -46.3 dBFS  (chunk #3)
+05:20:39 [INFO] realtime_transcriber: Audio level: -41.9 dBFS  (chunk #4)
+05:20:39 [INFO] realtime_transcriber: Audio level: -41.0 dBFS  (chunk #5)
+05:20:42 [INFO] realtime_transcriber: Text delta received: 'As' (len=2)
+05:20:42 [INFO] VoxifyApp: _type_live_delta: 'As' (raw_len=2)
+05:20:42 [INFO] realtime_transcriber: Text delta received: ' you' (len=4)
+05:20:42 [INFO] VoxifyApp: _type_live_delta: ' you' (raw_len=4)
+05:20:42 [INFO] dictation_features: process_transcript: raw_text='As you' (len=6)
+05:20:42 [INFO] dictation_features: process_transcript: after inline commands, text='As you'
+05:20:42 [INFO] dictation_features: process_transcript: final text='As you' (len=6, profile=notes)
+05:20:42 [INFO] VoxifyApp: _flush_live_buffer: new_text='As you' (len=6)
+05:20:42 [INFO] output_handler: type_text called: text='As you...' (total_len=6), interval=0.01, x=None, y=None
+05:20:42 [INFO] output_handler: Active window for typing: 'gemini_live_client.py - BreviosChip - Visual Studio Code' (hwnd=66934)
+05:20:42 [INFO] output_handler: type_text: successfully typed 6 chars via SendInput
+05:20:42 [INFO] VoxifyApp: _flush_live_buffer: type_text succeeded for 'As you'
+05:20:42 [INFO] realtime_transcriber: Text delta received: ' can' (len=4)
+05:20:42 [INFO] VoxifyApp: _type_live_delta: ' can' (raw_len=4)
+05:20:42 [INFO] dictation_features: process_transcript: raw_text='As you can' (len=10)
+05:20:42 [INFO] dictation_features: process_transcript: after inline commands, text='As you can'
+05:20:42 [INFO] dictation_features: process_transcript: final text='As you can' (len=10, profile=notes)
+05:20:42 [INFO] VoxifyApp: _flush_live_buffer: new_text=' can' (len=4)
+05:20:42 [INFO] output_handler: type_text called: text=' can...' (total_len=4), interval=0.01, x=None, y=None
+05:20:42 [INFO] output_handler: Active window for typing: 'gemini_live_client.py - BreviosChip - Visual Studio Code' (hwnd=66934)
+05:20:42 [INFO] output_handler: type_text: successfully typed 4 chars via SendInput
+05:20:42 [INFO] VoxifyApp: _flush_live_buffer: type_text succeeded for ' can'
+05:20:42 [INFO] realtime_transcriber: Text delta received: ' see' (len=4)
+05:20:42 [INFO] VoxifyApp: _type_live_delta: ' see' (raw_len=4)
+05:20:43 [INFO] dictation_features: process_transcript: raw_text='As you can see' (len=14)
+05:20:43 [INFO] dictation_features: process_transcript: after inline commands, text='As you can see'
+05:20:43 [INFO] dictation_features: process_transcript: final text='As you can see' (len=14, profile=notes)
+05:20:43 [INFO] VoxifyApp: _flush_live_buffer: new_text=' see' (len=4)
+05:20:43 [INFO] output_handler: type_text called: text=' see...' (total_len=4), interval=0.01, x=None, y=None
+05:20:43 [INFO] output_handler: Active window for typing: 'gemini_live_client.py - BreviosChip - Visual Studio Code' (hwnd=66934)
+05:20:43 [INFO] output_handler: type_text: successfully typed 4 chars via SendInput
+05:20:43 [INFO] VoxifyApp: _flush_live_buffer: type_text succeeded for ' see'
+05:20:43 [INFO] realtime_transcriber: Text delta received: ' that' (len=5)
+05:20:43 [INFO] VoxifyApp: _type_live_delta: ' that' (raw_len=5)
+05:20:43 [INFO] dictation_features: process_transcript: raw_text='As you can see that' (len=19)
+05:20:43 [INFO] dictation_features: process_transcript: after inline commands, text='As you can see that'
+05:20:43 [INFO] dictation_features: process_transcript: final text='As you can see that' (len=19, profile=notes)
+05:20:43 [INFO] VoxifyApp: _flush_live_buffer: new_text=' that' (len=5)
+05:20:43 [INFO] output_handler: type_text called: text=' that...' (total_len=5), interval=0.01, x=None, y=None
+05:20:43 [INFO] output_handler: Active window for typing: 'gemini_live_client.py - BreviosChip - Visual Studio Code' (hwnd=66934)
+05:20:43 [INFO] output_handler: type_text: successfully typed 5 chars via SendInput
+05:20:43 [INFO] VoxifyApp: _flush_live_buffer: type_text succeeded for ' that'
+05:20:45 [INFO] realtime_transcriber: Audio chunk #50: 3840 bytes
+05:20:45 [INFO] realtime_transcriber: Audio level: -34.2 dBFS  (chunk #50)
+05:20:45 [INFO] realtime_transcriber: Text delta received: ' There' (len=6)
+05:20:45 [INFO] VoxifyApp: _type_live_delta: ' There' (raw_len=6)
+05:20:46 [INFO] dictation_features: process_transcript: raw_text='As you can see that There' (len=25)
+05:20:46 [INFO] dictation_features: process_transcript: after inline commands, text='As you can see that There'
+05:20:46 [INFO] dictation_features: process_transcript: final text='As you can see that There' (len=25, profile=notes)
+05:20:46 [INFO] VoxifyApp: _flush_live_buffer: new_text=' There' (len=6)
+05:20:46 [INFO] output_handler: type_text called: text=' There...' (total_len=6), interval=0.01, x=None, y=None
+05:20:46 [INFO] output_handler: Active window for typing: 'gemini_live_client.py - BreviosChip - Visual Studio Code' (hwnd=66934)
+05:20:46 [INFO] output_handler: type_text: successfully typed 6 chars via SendInput
+05:20:46 [INFO] VoxifyApp: _flush_live_buffer: type_text succeeded for ' There'
+05:20:46 [INFO] realtime_transcriber: Text delta received: ' is' (len=3)
+05:20:46 [INFO] VoxifyApp: _type_live_delta: ' is' (raw_len=3)
+05:20:46 [INFO] realtime_transcriber: Text delta received: ' a' (len=2)
+05:20:46 [INFO] VoxifyApp: _type_live_delta: ' a' (raw_len=2)
+05:20:46 [INFO] dictation_features: process_transcript: raw_text='As you can see that There is a' (len=30)
+05:20:46 [INFO] dictation_features: process_transcript: after inline commands, text='As you can see that There is a'
+05:20:46 [INFO] dictation_features: process_transcript: final text='As you can see that There is a' (len=30, profile=notes)
+05:20:46 [INFO] VoxifyApp: _flush_live_buffer: new_text=' is a' (len=5)
+05:20:46 [INFO] output_handler: type_text called: text=' is a...' (total_len=5), interval=0.01, x=None, y=None
+05:20:46 [INFO] output_handler: Active window for typing: 'gemini_live_client.py - BreviosChip - Visual Studio Code' (hwnd=66934)
+05:20:46 [INFO] output_handler: type_text: successfully typed 5 chars via SendInput
+05:20:46 [INFO] VoxifyApp: _flush_live_buffer: type_text succeeded for ' is a'
+05:20:46 [INFO] realtime_transcriber: Text delta received: ' thing' (len=6)
+05:20:46 [INFO] VoxifyApp: _type_live_delta: ' thing' (raw_len=6)
+05:20:46 [INFO] dictation_features: process_transcript: raw_text='As you can see that There is a thing' (len=36)
+05:20:46 [INFO] dictation_features: process_transcript: after inline commands, text='As you can see that There is a thing'
+05:20:46 [INFO] dictation_features: process_transcript: final text='As you can see that There is a thing' (len=36, profile=notes)
+05:20:46 [INFO] VoxifyApp: _flush_live_buffer: new_text=' thing' (len=6)
+05:20:46 [INFO] output_handler: type_text called: text=' thing...' (total_len=6), interval=0.01, x=None, y=None
+05:20:46 [INFO] output_handler: Active window for typing: 'gemini_live_client.py - BreviosChip - Visual Studio Code' (hwnd=66934)
+05:20:47 [INFO] output_handler: type_text: successfully typed 6 chars via SendInput
+05:20:47 [INFO] VoxifyApp: _flush_live_buffer: type_text succeeded for ' thing'
+05:20:47 [INFO] realtime_transcriber: Text delta received: ' that' (len=5)
+05:20:47 [INFO] VoxifyApp: _type_live_delta: ' that' (raw_len=5)
+05:20:47 [INFO] dictation_features: process_transcript: raw_text='As you can see that There is a thing that' (len=41)
+05:20:47 [INFO] dictation_features: process_transcript: after inline commands, text='As you can see that There is a thing that'
+05:20:47 [INFO] dictation_features: process_transcript: final text='As you can see that There is a thing that' (len=41, profile=notes)
+05:20:47 [INFO] VoxifyApp: _flush_live_buffer: new_text=' that' (len=5)
+05:20:47 [INFO] output_handler: type_text called: text=' that...' (total_len=5), interval=0.01, x=None, y=None
+05:20:47 [INFO] output_handler: Active window for typing: 'gemini_live_client.py - BreviosChip - Visual Studio Code' (hwnd=66934)
+05:20:47 [INFO] output_handler: type_text: successfully typed 5 chars via SendInput
+05:20:47 [INFO] VoxifyApp: _flush_live_buffer: type_text succeeded for ' that'
+05:20:47 [INFO] realtime_transcriber: Text delta received: ' I' (len=2)
+05:20:47 [INFO] VoxifyApp: _type_live_delta: ' I' (raw_len=2)
+05:20:48 [INFO] dictation_features: process_transcript: raw_text='As you can see that There is a thing that I' (len=43)
+05:20:48 [INFO] dictation_features: process_transcript: after inline commands, text='As you can see that There is a thing that I'
+05:20:48 [INFO] dictation_features: process_transcript: final text='As you can see that There is a thing that I' (len=43, profile=notes)
+05:20:48 [INFO] VoxifyApp: _flush_live_buffer: new_text=' I' (len=2)
+05:20:48 [INFO] output_handler: type_text called: text=' I...' (total_len=2), interval=0.01, x=None, y=None
+05:20:48 [INFO] output_handler: Active window for typing: 'gemini_live_client.py - BreviosChip - Visual Studio Code' (hwnd=66934)
+05:20:48 [INFO] output_handler: type_text: successfully typed 2 chars via SendInput
+05:20:48 [INFO] VoxifyApp: _flush_live_buffer: type_text succeeded for ' I'
+05:20:48 [INFO] realtime_transcriber: Text delta received: ' asked' (len=6)
+05:20:48 [INFO] realtime_transcriber: Text delta received: ' them' (len=5)
+05:20:48 [INFO] VoxifyApp: _type_live_delta: ' asked' (raw_len=6)
+05:20:48 [INFO] VoxifyApp: _type_live_delta: ' them' (raw_len=5)
+05:20:48 [INFO] dictation_features: process_transcript: raw_text='As you can see that There is a thing that I asked them' (len=54)
+05:20:48 [INFO] dictation_features: process_transcript: after inline commands, text='As you can see that There is a thing that I asked them'
+05:20:48 [INFO] dictation_features: process_transcript: final text='As you can see that There is a thing that I asked them' (len=54, profile=notes)
+05:20:48 [INFO] VoxifyApp: _flush_live_buffer: new_text=' asked them' (len=11)
+05:20:48 [INFO] output_handler: type_text called: text=' asked them...' (total_len=11), interval=0.01, x=None, y=None
+05:20:48 [INFO] output_handler: Active window for typing: 'gemini_live_client.py - BreviosChip - Visual Studio Code' (hwnd=66934)
+05:20:48 [INFO] output_handler: type_text: successfully typed 11 chars via SendInput
+05:20:48 [INFO] VoxifyApp: _flush_live_buffer: type_text succeeded for ' asked them'
+05:20:50 [INFO] realtime_transcriber: Text delta received: ' something' (len=10)
+05:20:50 [INFO] VoxifyApp: _type_live_delta: ' something' (raw_len=10)
+05:20:50 [INFO] realtime_transcriber: Text delta received: '.' (len=1)
+05:20:50 [INFO] VoxifyApp: _type_live_delta: '.' (raw_len=1)
+05:20:50 [INFO] realtime_transcriber: Text delta received: ' It' (len=3)
+05:20:50 [INFO] VoxifyApp: _type_live_delta: ' It' (raw_len=3)
+05:20:50 [INFO] dictation_features: process_transcript: raw_text='As you can see that There is a thing that I asked them something. It' (len=68)
+05:20:50 [INFO] dictation_features: process_transcript: after inline commands, text='As you can see that There is a thing that I asked them something. It'
+05:20:50 [INFO] dictation_features: process_transcript: final text='As you can see that There is a thing that I asked them something. It' (len=68, profile=notes)
+05:20:50 [INFO] VoxifyApp: _flush_live_buffer: new_text=' something. It' (len=14)
+05:20:50 [INFO] output_handler: type_text called: text=' something. It...' (total_len=14), interval=0.01, x=None, y=None
+05:20:50 [INFO] output_handler: Active window for typing: 'gemini_live_client.py - BreviosChip - Visual Studio Code' (hwnd=66934)
+05:20:50 [INFO] realtime_transcriber: Text delta received: ' was' (len=4)
+05:20:50 [INFO] VoxifyApp: _type_live_delta: ' was' (raw_len=4)
+05:20:50 [INFO] output_handler: type_text: successfully typed 14 chars via SendInput
+05:20:50 [INFO] VoxifyApp: _flush_live_buffer: type_text succeeded for ' something. It'
+05:20:51 [INFO] dictation_features: process_transcript: raw_text='As you can see that There is a thing that I asked them something. It was' (len=72)
+05:20:51 [INFO] dictation_features: process_transcript: after inline commands, text='As you can see that There is a thing that I asked them something. It was'
+05:20:51 [INFO] dictation_features: process_transcript: final text='As you can see that There is a thing that I asked them something. It was' (len=72, profile=notes)
+05:20:51 [INFO] VoxifyApp: _flush_live_buffer: new_text=' was' (len=4)
+05:20:51 [INFO] output_handler: type_text called: text=' was...' (total_len=4), interval=0.01, x=None, y=None
+05:20:51 [INFO] output_handler: Active window for typing: 'gemini_live_client.py - BreviosChip - Visual Studio Code' (hwnd=66934)
+05:20:51 [INFO] output_handler: type_text: successfully typed 4 chars via SendInput
+05:20:51 [INFO] VoxifyApp: _flush_live_buffer: type_text succeeded for ' was'
+05:20:51 [INFO] realtime_transcriber: Text delta received: ' listening' (len=10)
+05:20:51 [INFO] VoxifyApp: _type_live_delta: ' listening' (raw_len=10)
+05:20:51 [INFO] realtime_transcriber: Text delta received: ' to' (len=3)
+05:20:51 [INFO] VoxifyApp: _type_live_delta: ' to' (raw_len=3)
+05:20:51 [INFO] realtime_transcriber: Audio chunk #100: 3840 bytes
+05:20:51 [INFO] dictation_features: process_transcript: raw_text='As you can see that There is a thing that I asked them something. It was listeni' (len=85)
+05:20:51 [INFO] dictation_features: process_transcript: after inline commands, text='As you can see that There is a thing that I asked them something. It was listeni'
+05:20:51 [INFO] dictation_features: process_transcript: final text='As you can see that There is a thing that I asked them something. It was listeni' (len=85, profile=notes)
+05:20:51 [INFO] VoxifyApp: _flush_live_buffer: new_text=' listening to' (len=13)
+05:20:51 [INFO] output_handler: type_text called: text=' listening to...' (total_len=13), interval=0.01, x=None, y=None
+05:20:51 [INFO] output_handler: Active window for typing: 'gemini_live_client.py - BreviosChip - Visual Studio Code' (hwnd=66934)
+05:20:51 [INFO] realtime_transcriber: Audio level: -38.2 dBFS  (chunk #100)
+05:20:51 [INFO] output_handler: type_text: successfully typed 13 chars via SendInput
+05:20:51 [INFO] VoxifyApp: _flush_live_buffer: type_text succeeded for ' listening to'
+05:20:51 [INFO] realtime_transcriber: Text delta received: ' me' (len=3)
+05:20:51 [INFO] VoxifyApp: _type_live_delta: ' me' (raw_len=3)
+05:20:51 [INFO] realtime_transcriber: Text delta received: '.' (len=1)
+05:20:51 [INFO] VoxifyApp: _type_live_delta: '.' (raw_len=1)
+05:20:51 [INFO] dictation_features: process_transcript: raw_text='As you can see that There is a thing that I asked them something. It was listeni' (len=89)
+05:20:51 [INFO] dictation_features: process_transcript: after inline commands, text='As you can see that There is a thing that I asked them something. It was listeni'
+05:20:51 [INFO] dictation_features: process_transcript: final text='As you can see that There is a thing that I asked them something. It was listeni' (len=89, profile=notes)
+05:20:51 [INFO] VoxifyApp: _flush_live_buffer: new_text=' me.' (len=4)
+05:20:51 [INFO] output_handler: type_text called: text=' me....' (total_len=4), interval=0.01, x=None, y=None
+05:20:51 [INFO] output_handler: Active window for typing: 'gemini_live_client.py - BreviosChip - Visual Studio Code' (hwnd=66934)
+05:20:51 [INFO] output_handler: type_text: successfully typed 4 chars via SendInput
+05:20:51 [INFO] VoxifyApp: _flush_live_buffer: type_text succeeded for ' me.'
+05:20:52 [INFO] realtime_transcriber: Text delta received: ' The' (len=4)
+05:20:52 [INFO] VoxifyApp: _type_live_delta: ' The' (raw_len=4)
+05:20:52 [INFO] dictation_features: process_transcript: raw_text='As you can see that There is a thing that I asked them something. It was listeni' (len=93)
+05:20:52 [INFO] dictation_features: process_transcript: after inline commands, text='As you can see that There is a thing that I asked them something. It was listeni'
+05:20:52 [INFO] dictation_features: process_transcript: final text='As you can see that There is a thing that I asked them something. It was listeni' (len=93, profile=notes)
+05:20:52 [INFO] VoxifyApp: _flush_live_buffer: new_text=' The' (len=4)
+05:20:52 [INFO] output_handler: type_text called: text=' The...' (total_len=4), interval=0.01, x=None, y=None
+05:20:52 [INFO] output_handler: Active window for typing: 'gemini_live_client.py - BreviosChip - Visual Studio Code' (hwnd=66934)
+05:20:52 [INFO] output_handler: type_text: successfully typed 4 chars via SendInput
+05:20:52 [INFO] VoxifyApp: _flush_live_buffer: type_text succeeded for ' The'
+05:20:52 [INFO] realtime_transcriber: Text delta received: ' Gemini' (len=7)
+05:20:52 [INFO] VoxifyApp: _type_live_delta: ' Gemini' (raw_len=7)
+05:20:52 [INFO] dictation_features: process_transcript: raw_text='As you can see that There is a thing that I asked them something. It was listeni' (len=100)
+05:20:52 [INFO] dictation_features: process_transcript: after inline commands, text='As you can see that There is a thing that I asked them something. It was listeni'
+05:20:52 [INFO] dictation_features: process_transcript: final text='As you can see that There is a thing that I asked them something. It was listeni' (len=100, profile=notes)
+05:20:52 [INFO] VoxifyApp: _flush_live_buffer: new_text=' Gemini' (len=7)
+05:20:52 [INFO] output_handler: type_text called: text=' Gemini...' (total_len=7), interval=0.01, x=None, y=None
+05:20:52 [INFO] output_handler: Active window for typing: 'gemini_live_client.py - BreviosChip - Visual Studio Code' (hwnd=66934)
+05:20:53 [INFO] output_handler: type_text: successfully typed 7 chars via SendInput
+05:20:53 [INFO] VoxifyApp: _flush_live_buffer: type_text succeeded for ' Gemini'
+05:20:53 [INFO] realtime_transcriber: Text delta received: ' Live' (len=5)
+05:20:53 [INFO] VoxifyApp: _type_live_delta: ' Live' (raw_len=5)
+05:20:53 [INFO] realtime_transcriber: Text delta received: ' was' (len=4)
+05:20:53 [INFO] VoxifyApp: _type_live_delta: ' was' (raw_len=4)
+05:20:53 [INFO] dictation_features: process_transcript: raw_text='As you can see that There is a thing that I asked them something. It was listeni' (len=109)
+05:20:53 [INFO] dictation_features: process_transcript: after inline commands, text='As you can see that There is a thing that I asked them something. It was listeni'
+05:20:53 [INFO] dictation_features: process_transcript: final text='As you can see that There is a thing that I asked them something. It was listeni' (len=109, profile=notes)
+05:20:53 [INFO] VoxifyApp: _flush_live_buffer: new_text=' Live was' (len=9)
+05:20:53 [INFO] output_handler: type_text called: text=' Live was...' (total_len=9), interval=0.01, x=None, y=None
+05:20:53 [INFO] output_handler: Active window for typing: 'gemini_live_client.py - BreviosChip - Visual Studio Code' (hwnd=66934)
+05:20:53 [INFO] output_handler: type_text: successfully typed 9 chars via SendInput
+05:20:53 [INFO] VoxifyApp: _flush_live_buffer: type_text succeeded for ' Live was'
+05:20:53 [INFO] realtime_transcriber: Text delta received: ' listening' (len=10)
+05:20:53 [INFO] VoxifyApp: _type_live_delta: ' listening' (raw_len=10)
+05:20:53 [INFO] realtime_transcriber: Text delta received: ' to' (len=3)
+05:20:53 [INFO] VoxifyApp: _type_live_delta: ' to' (raw_len=3)
+05:20:53 [INFO] realtime_transcriber: Text delta received: ' my' (len=3)
+05:20:53 [INFO] VoxifyApp: _type_live_delta: ' my' (raw_len=3)
+05:20:54 [INFO] dictation_features: process_transcript: raw_text='As you can see that There is a thing that I asked them something. It was listeni' (len=125)
+05:20:54 [INFO] dictation_features: process_transcript: after inline commands, text='As you can see that There is a thing that I asked them something. It was listeni'
+05:20:54 [INFO] dictation_features: process_transcript: final text='As you can see that There is a thing that I asked them something. It was listeni' (len=125, profile=notes)
+05:20:54 [INFO] VoxifyApp: _flush_live_buffer: new_text=' listening to my' (len=16)
+05:20:54 [INFO] output_handler: type_text called: text=' listening to my...' (total_len=16), interval=0.01, x=None, y=None
+05:20:54 [INFO] output_handler: Active window for typing: 'gemini_live_client.py - BreviosChip - Visual Studio Code' (hwnd=66934)
+05:20:54 [INFO] output_handler: type_text: successfully typed 16 chars via SendInput
+05:20:54 [INFO] VoxifyApp: _flush_live_buffer: type_text succeeded for ' listening to my'
+05:20:54 [INFO] realtime_transcriber: Text delta received: ' voice' (len=6)
+05:20:54 [INFO] VoxifyApp: _type_live_delta: ' voice' (raw_len=6)
+05:20:54 [INFO] realtime_transcriber: Text delta received: '.' (len=1)
+05:20:54 [INFO] VoxifyApp: _type_live_delta: '.' (raw_len=1)
+05:20:54 [INFO] dictation_features: process_transcript: raw_text='As you can see that There is a thing that I asked them something. It was listeni' (len=132)
+05:20:54 [INFO] dictation_features: process_transcript: after inline commands, text='As you can see that There is a thing that I asked them something. It was listeni'
+05:20:54 [INFO] dictation_features: process_transcript: final text='As you can see that There is a thing that I asked them something. It was listeni' (len=132, profile=notes)
+05:20:54 [INFO] VoxifyApp: _flush_live_buffer: new_text=' voice.' (len=7)
+05:20:54 [INFO] output_handler: type_text called: text=' voice....' (total_len=7), interval=0.01, x=None, y=None
+05:20:54 [INFO] output_handler: Active window for typing: 'gemini_live_client.py - BreviosChip - Visual Studio Code' (hwnd=66934)
+05:20:54 [INFO] output_handler: type_text: successfully typed 7 chars via SendInput
+05:20:54 [INFO] VoxifyApp: _flush_live_buffer: type_text succeeded for ' voice.'
+05:20:55 [INFO] realtime_transcriber: Text delta received: ' But' (len=4)
+05:20:55 [INFO] VoxifyApp: _type_live_delta: ' But' (raw_len=4)
+05:20:55 [INFO] dictation_features: process_transcript: raw_text='As you can see that There is a thing that I asked them something. It was listeni' (len=136)
+05:20:55 [INFO] dictation_features: process_transcript: after inline commands, text='As you can see that There is a thing that I asked them something. It was listeni'
+05:20:55 [INFO] dictation_features: process_transcript: final text='As you can see that There is a thing that I asked them something. It was listeni' (len=136, profile=notes)
+05:20:55 [INFO] VoxifyApp: _flush_live_buffer: new_text=' But' (len=4)
+05:20:55 [INFO] output_handler: type_text called: text=' But...' (total_len=4), interval=0.01, x=None, y=None
+05:20:55 [INFO] output_handler: Active window for typing: 'gemini_live_client.py - BreviosChip - Visual Studio Code' (hwnd=66934)
+05:20:55 [INFO] output_handler: type_text: successfully typed 4 chars via SendInput
+05:20:55 [INFO] VoxifyApp: _flush_live_buffer: type_text succeeded for ' But'
+05:20:55 [INFO] realtime_transcriber: Text delta received: ' instead' (len=8)
+05:20:55 [INFO] VoxifyApp: _type_live_delta: ' instead' (raw_len=8)
+05:20:55 [INFO] dictation_features: process_transcript: raw_text='As you can see that There is a thing that I asked them something. It was listeni' (len=144)
+05:20:55 [INFO] dictation_features: process_transcript: after inline commands, text='As you can see that There is a thing that I asked them something. It was listeni'
+05:20:55 [INFO] dictation_features: process_transcript: final text='As you can see that There is a thing that I asked them something. It was listeni' (len=144, profile=notes)
+05:20:55 [INFO] VoxifyApp: _flush_live_buffer: new_text=' instead' (len=8)
+05:20:55 [INFO] output_handler: type_text called: text=' instead...' (total_len=8), interval=0.01, x=None, y=None
+05:20:55 [INFO] output_handler: Active window for typing: 'gemini_live_client.py - BreviosChip - Visual Studio Code' (hwnd=66934)
+05:20:55 [INFO] realtime_transcriber: Text delta received: ' of' (len=3)
+05:20:55 [INFO] VoxifyApp: _type_live_delta: ' of' (raw_len=3)
+05:20:55 [INFO] output_handler: type_text: successfully typed 8 chars via SendInput
+05:20:55 [INFO] VoxifyApp: _flush_live_buffer: type_text succeeded for ' instead'
+05:20:55 [INFO] dictation_features: process_transcript: raw_text='As you can see that There is a thing that I asked them something. It was listeni' (len=147)
+05:20:55 [INFO] dictation_features: process_transcript: after inline commands, text='As you can see that There is a thing that I asked them something. It was listeni'
+05:20:55 [INFO] dictation_features: process_transcript: final text='As you can see that There is a thing that I asked them something. It was listeni' (len=147, profile=notes)
+05:20:55 [INFO] VoxifyApp: _flush_live_buffer: new_text=' of' (len=3)
+05:20:55 [INFO] output_handler: type_text called: text=' of...' (total_len=3), interval=0.01, x=None, y=None
+05:20:55 [INFO] output_handler: Active window for typing: 'gemini_live_client.py - BreviosChip - Visual Studio Code' (hwnd=66934)
+05:20:55 [INFO] output_handler: type_text: successfully typed 3 chars via SendInput
+05:20:55 [INFO] VoxifyApp: _flush_live_buffer: type_text succeeded for ' of'
+05:20:56 [INFO] realtime_transcriber: Text delta received: ' answering' (len=10)
+05:20:56 [INFO] VoxifyApp: _type_live_delta: ' answering' (raw_len=10)
+05:20:56 [INFO] dictation_features: process_transcript: raw_text='As you can see that There is a thing that I asked them something. It was listeni' (len=157)
+05:20:56 [INFO] dictation_features: process_transcript: after inline commands, text='As you can see that There is a thing that I asked them something. It was listeni'
+05:20:56 [INFO] dictation_features: process_transcript: final text='As you can see that There is a thing that I asked them something. It was listeni' (len=157, profile=notes)
+05:20:56 [INFO] VoxifyApp: _flush_live_buffer: new_text=' answering' (len=10)
+05:20:56 [INFO] output_handler: type_text called: text=' answering...' (total_len=10), interval=0.01, x=None, y=None
+05:20:56 [INFO] output_handler: Active window for typing: 'gemini_live_client.py - BreviosChip - Visual Studio Code' (hwnd=66934)
+05:20:56 [INFO] output_handler: type_text: successfully typed 10 chars via SendInput
+05:20:56 [INFO] VoxifyApp: _flush_live_buffer: type_text succeeded for ' answering'
+05:20:57 [INFO] realtime_transcriber: Audio chunk #150: 3840 bytes
+05:20:57 [INFO] realtime_transcriber: Text delta received: ' me' (len=3)
+05:20:57 [INFO] VoxifyApp: _type_live_delta: ' me' (raw_len=3)
+05:20:57 [INFO] realtime_transcriber: Audio level: -35.2 dBFS  (chunk #150)
+05:20:57 [INFO] realtime_transcriber: Text delta received: ',' (len=1)
+05:20:57 [INFO] VoxifyApp: _type_live_delta: ',' (raw_len=1)
+05:20:57 [INFO] dictation_features: process_transcript: raw_text='As you can see that There is a thing that I asked them something. It was listeni' (len=161)
+05:20:57 [INFO] dictation_features: process_transcript: after inline commands, text='As you can see that There is a thing that I asked them something. It was listeni'
+05:20:57 [INFO] dictation_features: process_transcript: final text='As you can see that There is a thing that I asked them something. It was listeni' (len=161, profile=notes)
+05:20:57 [INFO] VoxifyApp: _flush_live_buffer: new_text=' me,' (len=4)
+05:20:57 [INFO] output_handler: type_text called: text=' me,...' (total_len=4), interval=0.01, x=None, y=None
+05:20:57 [INFO] output_handler: Active window for typing: 'gemini_live_client.py - BreviosChip - Visual Studio Code' (hwnd=66934)
+05:20:57 [INFO] output_handler: type_text: successfully typed 4 chars via SendInput
+05:20:57 [INFO] VoxifyApp: _flush_live_buffer: type_text succeeded for ' me,'
+05:20:58 [INFO] realtime_transcriber: Text delta received: ' it' (len=3)
+05:20:58 [INFO] VoxifyApp: _type_live_delta: ' it' (raw_len=3)
+05:20:58 [INFO] realtime_transcriber: Text delta received: ' is' (len=3)
+05:20:58 [INFO] VoxifyApp: _type_live_delta: ' is' (raw_len=3)
+05:20:58 [INFO] dictation_features: process_transcript: raw_text='As you can see that There is a thing that I asked them something. It was listeni' (len=167)
+05:20:58 [INFO] dictation_features: process_transcript: after inline commands, text='As you can see that There is a thing that I asked them something. It was listeni'
+05:20:58 [INFO] dictation_features: process_transcript: final text='As you can see that There is a thing that I asked them something. It was listeni' (len=167, profile=notes)
+05:20:58 [INFO] VoxifyApp: _flush_live_buffer: new_text=' it is' (len=6)
+05:20:58 [INFO] output_handler: type_text called: text=' it is...' (total_len=6), interval=0.01, x=None, y=None
+05:20:58 [INFO] output_handler: Active window for typing: 'gemini_live_client.py - BreviosChip - Visual Studio Code' (hwnd=66934)
+05:20:58 [INFO] output_handler: type_text: successfully typed 6 chars via SendInput
+05:20:58 [INFO] VoxifyApp: _flush_live_buffer: type_text succeeded for ' it is'
+05:20:58 [INFO] realtime_transcriber: Text delta received: ' just' (len=5)
+05:20:58 [INFO] VoxifyApp: _type_live_delta: ' just' (raw_len=5)
+05:20:58 [INFO] dictation_features: process_transcript: raw_text='As you can see that There is a thing that I asked them something. It was listeni' (len=172)
+05:20:58 [INFO] dictation_features: process_transcript: after inline commands, text='As you can see that There is a thing that I asked them something. It was listeni'
+05:20:58 [INFO] dictation_features: process_transcript: final text='As you can see that There is a thing that I asked them something. It was listeni' (len=172, profile=notes)
+05:20:58 [INFO] VoxifyApp: _flush_live_buffer: new_text=' just' (len=5)
+05:20:58 [INFO] output_handler: type_text called: text=' just...' (total_len=5), interval=0.01, x=None, y=None
+05:20:58 [INFO] output_handler: Active window for typing: 'gemini_live_client.py - BreviosChip - Visual Studio Code' (hwnd=66934)
+05:20:58 [INFO] output_handler: type_text: successfully typed 5 chars via SendInput
+05:20:58 [INFO] VoxifyApp: _flush_live_buffer: type_text succeeded for ' just'
+05:20:58 [INFO] realtime_transcriber: Text delta received: ' listening' (len=10)
+05:20:58 [INFO] VoxifyApp: _type_live_delta: ' listening' (raw_len=10)
+05:20:59 [INFO] realtime_transcriber: Text delta received: ' and' (len=4)
+05:20:59 [INFO] VoxifyApp: _type_live_delta: ' and' (raw_len=4)
+05:20:59 [INFO] dictation_features: process_transcript: raw_text='As you can see that There is a thing that I asked them something. It was listeni' (len=186)
+05:20:59 [INFO] dictation_features: process_transcript: after inline commands, text='As you can see that There is a thing that I asked them something. It was listeni'
+05:20:59 [INFO] dictation_features: process_transcript: final text='As you can see that There is a thing that I asked them something. It was listeni' (len=186, profile=notes)
+05:20:59 [INFO] VoxifyApp: _flush_live_buffer: new_text=' listening and' (len=14)
+05:20:59 [INFO] output_handler: type_text called: text=' listening and...' (total_len=14), interval=0.01, x=None, y=None
+05:20:59 [INFO] output_handler: Active window for typing: 'gemini_live_client.py - BreviosChip - Visual Studio Code' (hwnd=66934)
+05:20:59 [INFO] realtime_transcriber: Text delta received: ' then' (len=5)
+05:20:59 [INFO] VoxifyApp: _type_live_delta: ' then' (raw_len=5)
+05:20:59 [INFO] output_handler: type_text: successfully typed 14 chars via SendInput
+05:20:59 [INFO] VoxifyApp: _flush_live_buffer: type_text succeeded for ' listening and'
+05:20:59 [INFO] dictation_features: process_transcript: raw_text='As you can see that There is a thing that I asked them something. It was listeni' (len=191)
+05:20:59 [INFO] dictation_features: process_transcript: after inline commands, text='As you can see that There is a thing that I asked them something. It was listeni'
+05:20:59 [INFO] dictation_features: process_transcript: final text='As you can see that There is a thing that I asked them something. It was listeni' (len=191, profile=notes)
+05:20:59 [INFO] VoxifyApp: _flush_live_buffer: new_text=' then' (len=5)
+05:20:59 [INFO] output_handler: type_text called: text=' then...' (total_len=5), interval=0.01, x=None, y=None
+05:20:59 [INFO] output_handler: Active window for typing: 'gemini_live_client.py - BreviosChip - Visual Studio Code' (hwnd=66934)
+05:20:59 [INFO] output_handler: type_text: successfully typed 5 chars via SendInput
+05:20:59 [INFO] VoxifyApp: _flush_live_buffer: type_text succeeded for ' then'
+05:21:00 [INFO] realtime_transcriber: Text delta received: ' calling' (len=8)
+05:21:00 [INFO] VoxifyApp: _type_live_delta: ' calling' (raw_len=8)
+05:21:00 [INFO] realtime_transcriber: Text delta received: ' the' (len=4)
+05:21:00 [INFO] VoxifyApp: _type_live_delta: ' the' (raw_len=4)
+05:21:00 [INFO] realtime_transcriber: Text delta received: ' two' (len=4)
+05:21:00 [INFO] VoxifyApp: _type_live_delta: ' two' (raw_len=4)
+05:21:00 [INFO] dictation_features: process_transcript: raw_text='As you can see that There is a thing that I asked them something. It was listeni' (len=207)
+05:21:00 [INFO] dictation_features: process_transcript: after inline commands, text='As you can see that There is a thing that I asked them something. It was listeni'
+05:21:00 [INFO] dictation_features: process_transcript: final text='As you can see that There is a thing that I asked them something. It was listeni' (len=207, profile=notes)
+05:21:00 [INFO] VoxifyApp: _flush_live_buffer: new_text=' calling the two' (len=16)
+05:21:00 [INFO] output_handler: type_text called: text=' calling the two...' (total_len=16), interval=0.01, x=None, y=None
+05:21:00 [INFO] output_handler: Active window for typing: 'gemini_live_client.py - BreviosChip - Visual Studio Code' (hwnd=66934)
+05:21:00 [INFO] output_handler: type_text: successfully typed 16 chars via SendInput
+05:21:00 [INFO] VoxifyApp: _flush_live_buffer: type_text succeeded for ' calling the two'
+05:21:00 [INFO] realtime_transcriber: Text delta received: ' and' (len=4)
+05:21:00 [INFO] VoxifyApp: _type_live_delta: ' and' (raw_len=4)
+05:21:01 [INFO] dictation_features: process_transcript: raw_text='As you can see that There is a thing that I asked them something. It was listeni' (len=211)
+05:21:01 [INFO] dictation_features: process_transcript: after inline commands, text='As you can see that There is a thing that I asked them something. It was listeni'
+05:21:01 [INFO] dictation_features: process_transcript: final text='As you can see that There is a thing that I asked them something. It was listeni' (len=211, profile=notes)
+05:21:01 [INFO] VoxifyApp: _flush_live_buffer: new_text=' and' (len=4)
+05:21:01 [INFO] output_handler: type_text called: text=' and...' (total_len=4), interval=0.01, x=None, y=None
+05:21:01 [INFO] output_handler: Active window for typing: 'gemini_live_client.py - BreviosChip - Visual Studio Code' (hwnd=66934)
+05:21:01 [INFO] output_handler: type_text: successfully typed 4 chars via SendInput
+05:21:01 [INFO] VoxifyApp: _flush_live_buffer: type_text succeeded for ' and'
+05:21:01 [INFO] realtime_transcriber: Text delta received: ' something' (len=10)
+05:21:01 [INFO] VoxifyApp: _type_live_delta: ' something' (raw_len=10)
+05:21:01 [INFO] dictation_features: process_transcript: raw_text='As you can see that There is a thing that I asked them something. It was listeni' (len=221)
+05:21:01 [INFO] dictation_features: process_transcript: after inline commands, text='As you can see that There is a thing that I asked them something. It was listeni'
+05:21:01 [INFO] dictation_features: process_transcript: final text='As you can see that There is a thing that I asked them something. It was listeni' (len=221, profile=notes)
+05:21:01 [INFO] VoxifyApp: _flush_live_buffer: new_text=' something' (len=10)
+05:21:01 [INFO] output_handler: type_text called: text=' something...' (total_len=10), interval=0.01, x=None, y=None
+05:21:01 [INFO] output_handler: Active window for typing: 'gemini_live_client.py - BreviosChip - Visual Studio Code' (hwnd=66934)
+05:21:01 [INFO] realtime_transcriber: Text delta received: ' like' (len=5)
+05:21:01 [INFO] VoxifyApp: _type_live_delta: ' like' (raw_len=5)
+05:21:01 [INFO] output_handler: type_text: successfully typed 10 chars via SendInput
+05:21:01 [INFO] VoxifyApp: _flush_live_buffer: type_text succeeded for ' something'
+05:21:01 [INFO] dictation_features: process_transcript: raw_text='As you can see that There is a thing that I asked them something. It was listeni' (len=226)
+05:21:01 [INFO] dictation_features: process_transcript: after inline commands, text='As you can see that There is a thing that I asked them something. It was listeni'
+05:21:01 [INFO] dictation_features: process_transcript: final text='As you can see that There is a thing that I asked them something. It was listeni' (len=226, profile=notes)
+05:21:01 [INFO] VoxifyApp: _flush_live_buffer: new_text=' like' (len=5)
+05:21:01 [INFO] output_handler: type_text called: text=' like...' (total_len=5), interval=0.01, x=None, y=None
+05:21:01 [INFO] output_handler: Active window for typing: 'gemini_live_client.py - BreviosChip - Visual Studio Code' (hwnd=66934)
+05:21:01 [INFO] output_handler: type_text: successfully typed 5 chars via SendInput
+05:21:01 [INFO] VoxifyApp: _flush_live_buffer: type_text succeeded for ' like'
+05:21:01 [INFO] realtime_transcriber: Text delta received: ' that' (len=5)
+05:21:01 [INFO] VoxifyApp: _type_live_delta: ' that' (raw_len=5)
+05:21:01 [INFO] realtime_transcriber: Text delta received: '.' (len=1)
+05:21:01 [INFO] VoxifyApp: _type_live_delta: '.' (raw_len=1)
+05:21:02 [INFO] dictation_features: process_transcript: raw_text='As you can see that There is a thing that I asked them something. It was listeni' (len=232)
+05:21:02 [INFO] dictation_features: process_transcript: after inline commands, text='As you can see that There is a thing that I asked them something. It was listeni'
+05:21:02 [INFO] dictation_features: process_transcript: final text='As you can see that There is a thing that I asked them something. It was listeni' (len=232, profile=notes)
+05:21:02 [INFO] VoxifyApp: _flush_live_buffer: new_text=' that.' (len=6)
+05:21:02 [INFO] output_handler: type_text called: text=' that....' (total_len=6), interval=0.01, x=None, y=None
+05:21:02 [INFO] output_handler: Active window for typing: 'gemini_live_client.py - BreviosChip - Visual Studio Code' (hwnd=66934)
+05:21:02 [INFO] output_handler: type_text: successfully typed 6 chars via SendInput
+05:21:02 [INFO] VoxifyApp: _flush_live_buffer: type_text succeeded for ' that.'
+05:21:02 [INFO] realtime_transcriber: Text delta received: ' I' (len=2)
+05:21:02 [INFO] VoxifyApp: _type_live_delta: ' I' (raw_len=2)
+05:21:02 [INFO] dictation_features: process_transcript: raw_text='As you can see that There is a thing that I asked them something. It was listeni' (len=234)
+05:21:02 [INFO] dictation_features: process_transcript: after inline commands, text='As you can see that There is a thing that I asked them something. It was listeni'
+05:21:02 [INFO] dictation_features: process_transcript: final text='As you can see that There is a thing that I asked them something. It was listeni' (len=234, profile=notes)
+05:21:02 [INFO] VoxifyApp: _flush_live_buffer: new_text=' I' (len=2)
+05:21:02 [INFO] output_handler: type_text called: text=' I...' (total_len=2), interval=0.01, x=None, y=None
+05:21:02 [INFO] output_handler: Active window for typing: 'gemini_live_client.py - BreviosChip - Visual Studio Code' (hwnd=66934)
+05:21:02 [INFO] output_handler: type_text: successfully typed 2 chars via SendInput
+05:21:02 [INFO] VoxifyApp: _flush_live_buffer: type_text succeeded for ' I'
+05:21:02 [INFO] realtime_transcriber: Text delta received: ' don' (len=4)
+05:21:02 [INFO] VoxifyApp: _type_live_delta: ' don' (raw_len=4)
+05:21:02 [INFO] realtime_transcriber: Text delta received: ''t' (len=2)
+05:21:02 [INFO] VoxifyApp: _type_live_delta: ''t' (raw_len=2)
+05:21:02 [INFO] realtime_transcriber: Text delta received: ' know' (len=5)
+05:21:02 [INFO] VoxifyApp: _type_live_delta: ' know' (raw_len=5)
+05:21:02 [INFO] realtime_transcriber: Text delta received: ' if' (len=3)
+05:21:02 [INFO] VoxifyApp: _type_live_delta: ' if' (raw_len=3)
+05:21:03 [INFO] dictation_features: process_transcript: raw_text='As you can see that There is a thing that I asked them something. It was listeni' (len=248)
+05:21:03 [INFO] dictation_features: process_transcript: after inline commands, text='As you can see that There is a thing that I asked them something. It was listeni'
+05:21:03 [INFO] dictation_features: process_transcript: final text='As you can see that There is a thing that I asked them something. It was listeni' (len=248, profile=notes)
+05:21:03 [INFO] VoxifyApp: _flush_live_buffer: new_text=' don't know if' (len=14)
+05:21:03 [INFO] output_handler: type_text called: text=' don't know if...' (total_len=14), interval=0.01, x=None, y=None
+05:21:03 [INFO] output_handler: Active window for typing: 'gemini_live_client.py - BreviosChip - Visual Studio Code' (hwnd=66934)
+05:21:03 [INFO] realtime_transcriber: Text delta received: ' it' (len=3)
+05:21:03 [INFO] VoxifyApp: _type_live_delta: ' it' (raw_len=3)
+05:21:03 [INFO] realtime_transcriber: Audio chunk #200: 3840 bytes
+05:21:03 [INFO] output_handler: type_text: successfully typed 14 chars via SendInput
+05:21:03 [INFO] VoxifyApp: _flush_live_buffer: type_text succeeded for ' don't know if'
+05:21:03 [INFO] realtime_transcriber: Text delta received: ' is' (len=3)
+05:21:03 [INFO] VoxifyApp: _type_live_delta: ' is' (raw_len=3)
+05:21:03 [INFO] realtime_transcriber: Text delta received: ' a' (len=2)
+05:21:03 [INFO] VoxifyApp: _type_live_delta: ' a' (raw_len=2)
+05:21:03 [INFO] realtime_transcriber: Audio level: -44.8 dBFS  (chunk #200)
+05:21:03 [INFO] dictation_features: process_transcript: raw_text='As you can see that There is a thing that I asked them something. It was listeni' (len=256)
+05:21:03 [INFO] dictation_features: process_transcript: after inline commands, text='As you can see that There is a thing that I asked them something. It was listeni'
+05:21:03 [INFO] dictation_features: process_transcript: final text='As you can see that There is a thing that I asked them something. It was listeni' (len=256, profile=notes)
+05:21:03 [INFO] VoxifyApp: _flush_live_buffer: new_text=' it is a' (len=8)
+05:21:03 [INFO] output_handler: type_text called: text=' it is a...' (total_len=8), interval=0.01, x=None, y=None
+05:21:03 [INFO] output_handler: Active window for typing: 'gemini_live_client.py - BreviosChip - Visual Studio Code' (hwnd=66934)
+05:21:03 [INFO] output_handler: type_text: successfully typed 8 chars via SendInput
+05:21:03 [INFO] VoxifyApp: _flush_live_buffer: type_text succeeded for ' it is a'
+05:21:03 [INFO] realtime_transcriber: Text delta received: ' problem' (len=8)
+05:21:03 [INFO] VoxifyApp: _type_live_delta: ' problem' (raw_len=8)
+05:21:03 [INFO] realtime_transcriber: Text delta received: ' with' (len=5)
+05:21:03 [INFO] VoxifyApp: _type_live_delta: ' with' (raw_len=5)
+05:21:04 [INFO] dictation_features: process_transcript: raw_text='As you can see that There is a thing that I asked them something. It was listeni' (len=269)
+05:21:04 [INFO] dictation_features: process_transcript: after inline commands, text='As you can see that There is a thing that I asked them something. It was listeni'
+05:21:04 [INFO] dictation_features: process_transcript: final text='As you can see that There is a thing that I asked them something. It was listeni' (len=269, profile=notes)
+05:21:04 [INFO] VoxifyApp: _flush_live_buffer: new_text=' problem with' (len=13)
+05:21:04 [INFO] output_handler: type_text called: text=' problem with...' (total_len=13), interval=0.01, x=None, y=None
+05:21:04 [INFO] output_handler: Active window for typing: 'gemini_live_client.py - BreviosChip - Visual Studio Code' (hwnd=66934)
+05:21:04 [INFO] realtime_transcriber: Text delta received: ' the' (len=4)
+05:21:04 [INFO] VoxifyApp: _type_live_delta: ' the' (raw_len=4)
+05:21:04 [INFO] output_handler: type_text: successfully typed 13 chars via SendInput
+05:21:04 [INFO] VoxifyApp: _flush_live_buffer: type_text succeeded for ' problem with'
+05:21:04 [INFO] dictation_features: process_transcript: raw_text='As you can see that There is a thing that I asked them something. It was listeni' (len=273)
+05:21:04 [INFO] dictation_features: process_transcript: after inline commands, text='As you can see that There is a thing that I asked them something. It was listeni'
+05:21:04 [INFO] dictation_features: process_transcript: final text='As you can see that There is a thing that I asked them something. It was listeni' (len=273, profile=notes)
+05:21:04 [INFO] VoxifyApp: _flush_live_buffer: new_text=' the' (len=4)
+05:21:04 [INFO] output_handler: type_text called: text=' the...' (total_len=4), interval=0.01, x=None, y=None
+05:21:04 [INFO] output_handler: Active window for typing: 'gemini_live_client.py - BreviosChip - Visual Studio Code' (hwnd=66934)
+05:21:04 [INFO] output_handler: type_text: successfully typed 4 chars via SendInput
+05:21:04 [INFO] VoxifyApp: _flush_live_buffer: type_text succeeded for ' the'
+05:21:04 [INFO] realtime_transcriber: Text delta received: ' voice' (len=6)
+05:21:04 [INFO] realtime_transcriber: Text delta received: ' of' (len=3)
+05:21:04 [INFO] VoxifyApp: _type_live_delta: ' voice' (raw_len=6)
+05:21:04 [INFO] VoxifyApp: _type_live_delta: ' of' (raw_len=3)
+05:21:04 [INFO] realtime_transcriber: Text delta received: ' the' (len=4)
+05:21:04 [INFO] VoxifyApp: _type_live_delta: ' the' (raw_len=4)
+05:21:04 [INFO] dictation_features: process_transcript: raw_text='As you can see that There is a thing that I asked them something. It was listeni' (len=286)
+05:21:04 [INFO] dictation_features: process_transcript: after inline commands, text='As you can see that There is a thing that I asked them something. It was listeni'
+05:21:04 [INFO] dictation_features: process_transcript: final text='As you can see that There is a thing that I asked them something. It was listeni' (len=286, profile=notes)
+05:21:04 [INFO] VoxifyApp: _flush_live_buffer: new_text=' voice of the' (len=13)
+05:21:04 [INFO] output_handler: type_text called: text=' voice of the...' (total_len=13), interval=0.01, x=None, y=None
+05:21:04 [INFO] output_handler: Active window for typing: 'gemini_live_client.py - BreviosChip - Visual Studio Code' (hwnd=66934)
+05:21:05 [INFO] output_handler: type_text: successfully typed 13 chars via SendInput
+05:21:05 [INFO] VoxifyApp: _flush_live_buffer: type_text succeeded for ' voice of the'
+05:21:05 [INFO] realtime_transcriber: Text delta received: ' Gemini' (len=7)
+05:21:05 [INFO] VoxifyApp: _type_live_delta: ' Gemini' (raw_len=7)
+05:21:05 [INFO] dictation_features: process_transcript: raw_text='As you can see that There is a thing that I asked them something. It was listeni' (len=293)
+05:21:05 [INFO] dictation_features: process_transcript: after inline commands, text='As you can see that There is a thing that I asked them something. It was listeni'
+05:21:05 [INFO] dictation_features: process_transcript: final text='As you can see that There is a thing that I asked them something. It was listeni' (len=293, profile=notes)
+05:21:05 [INFO] VoxifyApp: _flush_live_buffer: new_text=' Gemini' (len=7)
+05:21:05 [INFO] output_handler: type_text called: text=' Gemini...' (total_len=7), interval=0.01, x=None, y=None
+05:21:05 [INFO] output_handler: Active window for typing: 'gemini_live_client.py - BreviosChip - Visual Studio Code' (hwnd=66934)
+05:21:05 [INFO] output_handler: type_text: successfully typed 7 chars via SendInput
+05:21:05 [INFO] VoxifyApp: _flush_live_buffer: type_text succeeded for ' Gemini'
+05:21:05 [INFO] realtime_transcriber: Text delta received: ' or' (len=3)
+05:21:05 [INFO] VoxifyApp: _type_live_delta: ' or' (raw_len=3)
+05:21:05 [INFO] dictation_features: process_transcript: raw_text='As you can see that There is a thing that I asked them something. It was listeni' (len=296)
+05:21:05 [INFO] dictation_features: process_transcript: after inline commands, text='As you can see that There is a thing that I asked them something. It was listeni'
+05:21:05 [INFO] dictation_features: process_transcript: final text='As you can see that There is a thing that I asked them something. It was listeni' (len=296, profile=notes)
+05:21:05 [INFO] VoxifyApp: _flush_live_buffer: new_text=' or' (len=3)
+05:21:05 [INFO] output_handler: type_text called: text=' or...' (total_len=3), interval=0.01, x=None, y=None
+05:21:05 [INFO] output_handler: Active window for typing: 'gemini_live_client.py - BreviosChip - Visual Studio Code' (hwnd=66934)
+05:21:05 [INFO] output_handler: type_text: successfully typed 3 chars via SendInput
+05:21:05 [INFO] VoxifyApp: _flush_live_buffer: type_text succeeded for ' or'
+05:21:05 [INFO] realtime_transcriber: Text delta received: ' maybe' (len=6)
+05:21:05 [INFO] VoxifyApp: _type_live_delta: ' maybe' (raw_len=6)
+05:21:05 [INFO] dictation_features: process_transcript: raw_text='As you can see that There is a thing that I asked them something. It was listeni' (len=302)
+05:21:05 [INFO] dictation_features: process_transcript: after inline commands, text='As you can see that There is a thing that I asked them something. It was listeni'
+05:21:05 [INFO] dictation_features: process_transcript: final text='As you can see that There is a thing that I asked them something. It was listeni' (len=302, profile=notes)
+05:21:05 [INFO] VoxifyApp: _flush_live_buffer: new_text=' maybe' (len=6)
+05:21:05 [INFO] output_handler: type_text called: text=' maybe...' (total_len=6), interval=0.01, x=None, y=None
+05:21:05 [INFO] output_handler: Active window for typing: 'gemini_live_client.py - BreviosChip - Visual Studio Code' (hwnd=66934)
+05:21:05 [INFO] output_handler: type_text: successfully typed 6 chars via SendInput
+05:21:05 [INFO] VoxifyApp: _flush_live_buffer: type_text succeeded for ' maybe'
+05:21:06 [INFO] realtime_transcriber: Text delta received: ' it' (len=3)
+05:21:06 [INFO] VoxifyApp: _type_live_delta: ' it' (raw_len=3)
+05:21:06 [INFO] realtime_transcriber: Text delta received: ' is' (len=3)
+05:21:06 [INFO] VoxifyApp: _type_live_delta: ' is' (raw_len=3)
+05:21:06 [INFO] dictation_features: process_transcript: raw_text='As you can see that There is a thing that I asked them something. It was listeni' (len=308)
+05:21:06 [INFO] dictation_features: process_transcript: after inline commands, text='As you can see that There is a thing that I asked them something. It was listeni'
+05:21:06 [INFO] dictation_features: process_transcript: final text='As you can see that There is a thing that I asked them something. It was listeni' (len=308, profile=notes)
+05:21:06 [INFO] VoxifyApp: _flush_live_buffer: new_text=' it is' (len=6)
+05:21:06 [INFO] output_handler: type_text called: text=' it is...' (total_len=6), interval=0.01, x=None, y=None
+05:21:06 [INFO] output_handler: Active window for typing: 'gemini_live_client.py - BreviosChip - Visual Studio Code' (hwnd=66934)
+05:21:06 [INFO] output_handler: type_text: successfully typed 6 chars via SendInput
+05:21:06 [INFO] VoxifyApp: _flush_live_buffer: type_text succeeded for ' it is'
+05:21:06 [INFO] realtime_transcriber: Text delta received: ' our' (len=4)
+05:21:06 [INFO] VoxifyApp: _type_live_delta: ' our' (raw_len=4)
+05:21:06 [INFO] dictation_features: process_transcript: raw_text='As you can see that There is a thing that I asked them something. It was listeni' (len=312)
+05:21:06 [INFO] dictation_features: process_transcript: after inline commands, text='As you can see that There is a thing that I asked them something. It was listeni'
+05:21:06 [INFO] dictation_features: process_transcript: final text='As you can see that There is a thing that I asked them something. It was listeni' (len=312, profile=notes)
+05:21:06 [INFO] VoxifyApp: _flush_live_buffer: new_text=' our' (len=4)
+05:21:06 [INFO] output_handler: type_text called: text=' our...' (total_len=4), interval=0.01, x=None, y=None
+05:21:06 [INFO] output_handler: Active window for typing: 'gemini_live_client.py - BreviosChip - Visual Studio Code' (hwnd=66934)
+05:21:06 [INFO] output_handler: type_text: successfully typed 4 chars via SendInput
+05:21:06 [INFO] VoxifyApp: _flush_live_buffer: type_text succeeded for ' our'
+05:21:06 [INFO] realtime_transcriber: Text delta received: ' two' (len=4)
+05:21:06 [INFO] VoxifyApp: _type_live_delta: ' two' (raw_len=4)
+05:21:06 [INFO] dictation_features: process_transcript: raw_text='As you can see that There is a thing that I asked them something. It was listeni' (len=316)
+05:21:06 [INFO] dictation_features: process_transcript: after inline commands, text='As you can see that There is a thing that I asked them something. It was listeni'
+05:21:06 [INFO] dictation_features: process_transcript: final text='As you can see that There is a thing that I asked them something. It was listeni' (len=316, profile=notes)
+05:21:06 [INFO] VoxifyApp: _flush_live_buffer: new_text=' two' (len=4)
+05:21:06 [INFO] output_handler: type_text called: text=' two...' (total_len=4), interval=0.01, x=None, y=None
+05:21:06 [INFO] output_handler: Active window for typing: 'gemini_live_client.py - BreviosChip - Visual Studio Code' (hwnd=66934)
+05:21:06 [INFO] output_handler: type_text: successfully typed 4 chars via SendInput
+05:21:06 [INFO] VoxifyApp: _flush_live_buffer: type_text succeeded for ' two'
+05:21:06 [INFO] realtime_transcriber: Text delta received: ' that' (len=5)
+05:21:06 [INFO] VoxifyApp: _type_live_delta: ' that' (raw_len=5)
+05:21:07 [INFO] dictation_features: process_transcript: raw_text='As you can see that There is a thing that I asked them something. It was listeni' (len=321)
+05:21:07 [INFO] dictation_features: process_transcript: after inline commands, text='As you can see that There is a thing that I asked them something. It was listeni'
+05:21:07 [INFO] dictation_features: process_transcript: final text='As you can see that There is a thing that I asked them something. It was listeni' (len=321, profile=notes)
+05:21:07 [INFO] VoxifyApp: _flush_live_buffer: new_text=' that' (len=5)
+05:21:07 [INFO] output_handler: type_text called: text=' that...' (total_len=5), interval=0.01, x=None, y=None
+05:21:07 [INFO] output_handler: Active window for typing: 'gemini_live_client.py - BreviosChip - Visual Studio Code' (hwnd=66934)
+05:21:07 [INFO] output_handler: type_text: successfully typed 5 chars via SendInput
+05:21:07 [INFO] VoxifyApp: _flush_live_buffer: type_text succeeded for ' that'
+05:21:08 [INFO] realtime_transcriber: Text delta received: ' Because' (len=8)
+05:21:08 [INFO] VoxifyApp: _type_live_delta: ' Because' (raw_len=8)
+05:21:08 [INFO] dictation_features: process_transcript: raw_text='As you can see that There is a thing that I asked them something. It was listeni' (len=329)
+05:21:08 [INFO] dictation_features: process_transcript: after inline commands, text='As you can see that There is a thing that I asked them something. It was listeni'
+05:21:08 [INFO] dictation_features: process_transcript: final text='As you can see that There is a thing that I asked them something. It was listeni' (len=329, profile=notes)
+05:21:08 [INFO] VoxifyApp: _flush_live_buffer: new_text=' Because' (len=8)
+05:21:08 [INFO] output_handler: type_text called: text=' Because...' (total_len=8), interval=0.01, x=None, y=None
+05:21:08 [INFO] output_handler: Active window for typing: 'gemini_live_client.py - BreviosChip - Visual Studio Code' (hwnd=66934)
+05:21:08 [INFO] output_handler: type_text: successfully typed 8 chars via SendInput
+05:21:08 [INFO] VoxifyApp: _flush_live_buffer: type_text succeeded for ' Because'
+05:21:08 [INFO] realtime_transcriber: Text delta received: ' it' (len=3)
+05:21:08 [INFO] VoxifyApp: _type_live_delta: ' it' (raw_len=3)
+05:21:09 [INFO] dictation_features: process_transcript: raw_text='As you can see that There is a thing that I asked them something. It was listeni' (len=332)
+05:21:09 [INFO] dictation_features: process_transcript: after inline commands, text='As you can see that There is a thing that I asked them something. It was listeni'
+05:21:09 [INFO] dictation_features: process_transcript: final text='As you can see that There is a thing that I asked them something. It was listeni' (len=332, profile=notes)
+05:21:09 [INFO] VoxifyApp: _flush_live_buffer: new_text=' it' (len=3)
+05:21:09 [INFO] output_handler: type_text called: text=' it...' (total_len=3), interval=0.01, x=None, y=None
+05:21:09 [INFO] output_handler: Active window for typing: 'gemini_live_client.py - BreviosChip - Visual Studio Code' (hwnd=66934)
+05:21:09 [INFO] output_handler: type_text: successfully typed 3 chars via SendInput
+05:21:09 [INFO] VoxifyApp: _flush_live_buffer: type_text succeeded for ' it'
+05:21:09 [INFO] realtime_transcriber: Text delta received: ' just' (len=5)
+05:21:09 [INFO] VoxifyApp: _type_live_delta: ' just' (raw_len=5)
+05:21:09 [INFO] realtime_transcriber: Audio chunk #250: 3840 bytes
+05:21:09 [INFO] dictation_features: process_transcript: raw_text='As you can see that There is a thing that I asked them something. It was listeni' (len=337)
+05:21:09 [INFO] dictation_features: process_transcript: after inline commands, text='As you can see that There is a thing that I asked them something. It was listeni'
+05:21:09 [INFO] dictation_features: process_transcript: final text='As you can see that There is a thing that I asked them something. It was listeni' (len=337, profile=notes)
+05:21:09 [INFO] VoxifyApp: _flush_live_buffer: new_text=' just' (len=5)
+05:21:09 [INFO] output_handler: type_text called: text=' just...' (total_len=5), interval=0.01, x=None, y=None
+05:21:09 [INFO] output_handler: Active window for typing: 'gemini_live_client.py - BreviosChip - Visual Studio Code' (hwnd=66934)
+05:21:09 [INFO] output_handler: type_text: successfully typed 5 chars via SendInput
+05:21:09 [INFO] VoxifyApp: _flush_live_buffer: type_text succeeded for ' just'
+05:21:09 [INFO] realtime_transcriber: Audio level: -44.0 dBFS  (chunk #250)
+05:21:09 [INFO] realtime_transcriber: Text delta received: ' list' (len=5)
+05:21:09 [INFO] VoxifyApp: _type_live_delta: ' list' (raw_len=5)
+05:21:09 [INFO] realtime_transcriber: Text delta received: 'ens' (len=3)
+05:21:09 [INFO] VoxifyApp: _type_live_delta: 'ens' (raw_len=3)
+05:21:09 [INFO] realtime_transcriber: Text delta received: '.' (len=1)
+05:21:09 [INFO] VoxifyApp: _type_live_delta: '.' (raw_len=1)
+05:21:09 [INFO] dictation_features: process_transcript: raw_text='As you can see that There is a thing that I asked them something. It was listeni' (len=346)
+05:21:09 [INFO] dictation_features: process_transcript: after inline commands, text='As you can see that There is a thing that I asked them something. It was listeni'
+05:21:09 [INFO] dictation_features: process_transcript: final text='As you can see that There is a thing that I asked them something. It was listeni' (len=346, profile=notes)
+05:21:09 [INFO] VoxifyApp: _flush_live_buffer: new_text=' listens.' (len=9)
+05:21:09 [INFO] output_handler: type_text called: text=' listens....' (total_len=9), interval=0.01, x=None, y=None
+05:21:09 [INFO] output_handler: Active window for typing: 'gemini_live_client.py - BreviosChip - Visual Studio Code' (hwnd=66934)
+05:21:10 [INFO] output_handler: type_text: successfully typed 9 chars via SendInput
+05:21:10 [INFO] VoxifyApp: _flush_live_buffer: type_text succeeded for ' listens.'
+05:21:10 [INFO] realtime_transcriber: Text delta received: ' It' (len=3)
+05:21:10 [INFO] VoxifyApp: _type_live_delta: ' It' (raw_len=3)
+05:21:10 [INFO] dictation_features: process_transcript: raw_text='As you can see that There is a thing that I asked them something. It was listeni' (len=349)
+05:21:10 [INFO] dictation_features: process_transcript: after inline commands, text='As you can see that There is a thing that I asked them something. It was listeni'
+05:21:10 [INFO] dictation_features: process_transcript: final text='As you can see that There is a thing that I asked them something. It was listeni' (len=349, profile=notes)
+05:21:10 [INFO] VoxifyApp: _flush_live_buffer: new_text=' It' (len=3)
+05:21:10 [INFO] output_handler: type_text called: text=' It...' (total_len=3), interval=0.01, x=None, y=None
+05:21:10 [INFO] output_handler: Active window for typing: 'gemini_live_client.py - BreviosChip - Visual Studio Code' (hwnd=66934)
+05:21:10 [INFO] output_handler: type_text: successfully typed 3 chars via SendInput
+05:21:10 [INFO] VoxifyApp: _flush_live_buffer: type_text succeeded for ' It'
+05:21:11 [INFO] realtime_transcriber: Text delta received: ' list' (len=5)
+05:21:11 [INFO] VoxifyApp: _type_live_delta: ' list' (raw_len=5)
+05:21:11 [INFO] realtime_transcriber: Text delta received: 'ens' (len=3)
+05:21:11 [INFO] VoxifyApp: _type_live_delta: 'ens' (raw_len=3)
+05:21:11 [INFO] realtime_transcriber: Text delta received: ' and' (len=4)
+05:21:11 [INFO] VoxifyApp: _type_live_delta: ' and' (raw_len=4)
+05:21:11 [INFO] dictation_features: process_transcript: raw_text='As you can see that There is a thing that I asked them something. It was listeni' (len=361)
+05:21:11 [INFO] dictation_features: process_transcript: after inline commands, text='As you can see that There is a thing that I asked them something. It was listeni'
+05:21:11 [INFO] dictation_features: process_transcript: final text='As you can see that There is a thing that I asked them something. It was listeni' (len=361, profile=notes)
+05:21:11 [INFO] VoxifyApp: _flush_live_buffer: new_text=' listens and' (len=12)
+05:21:11 [INFO] output_handler: type_text called: text=' listens and...' (total_len=12), interval=0.01, x=None, y=None
+05:21:11 [INFO] output_handler: Active window for typing: 'gemini_live_client.py - BreviosChip - Visual Studio Code' (hwnd=66934)
+05:21:11 [INFO] realtime_transcriber: Text delta received: ' then' (len=5)
+05:21:11 [INFO] VoxifyApp: _type_live_delta: ' then' (raw_len=5)
+05:21:11 [INFO] output_handler: type_text: successfully typed 12 chars via SendInput
+05:21:11 [INFO] VoxifyApp: _flush_live_buffer: type_text succeeded for ' listens and'
+05:21:11 [INFO] dictation_features: process_transcript: raw_text='As you can see that There is a thing that I asked them something. It was listeni' (len=366)
+05:21:11 [INFO] dictation_features: process_transcript: after inline commands, text='As you can see that There is a thing that I asked them something. It was listeni'
+05:21:11 [INFO] dictation_features: process_transcript: final text='As you can see that There is a thing that I asked them something. It was listeni' (len=366, profile=notes)
+05:21:11 [INFO] VoxifyApp: _flush_live_buffer: new_text=' then' (len=5)
+05:21:11 [INFO] output_handler: type_text called: text=' then...' (total_len=5), interval=0.01, x=None, y=None
+05:21:11 [INFO] output_handler: Active window for typing: 'gemini_live_client.py - BreviosChip - Visual Studio Code' (hwnd=66934)
+05:21:11 [INFO] output_handler: type_text: successfully typed 5 chars via SendInput
+05:21:11 [INFO] VoxifyApp: _flush_live_buffer: type_text succeeded for ' then'
+05:21:12 [INFO] realtime_transcriber: Text delta received: ' gave' (len=5)
+05:21:12 [INFO] VoxifyApp: _type_live_delta: ' gave' (raw_len=5)
+05:21:12 [INFO] realtime_transcriber: Text delta received: ' me' (len=3)
+05:21:12 [INFO] VoxifyApp: _type_live_delta: ' me' (raw_len=3)
+05:21:12 [INFO] dictation_features: process_transcript: raw_text='As you can see that There is a thing that I asked them something. It was listeni' (len=374)
+05:21:12 [INFO] dictation_features: process_transcript: after inline commands, text='As you can see that There is a thing that I asked them something. It was listeni'
+05:21:12 [INFO] dictation_features: process_transcript: final text='As you can see that There is a thing that I asked them something. It was listeni' (len=374, profile=notes)
+05:21:12 [INFO] VoxifyApp: _flush_live_buffer: new_text=' gave me' (len=8)
+05:21:12 [INFO] output_handler: type_text called: text=' gave me...' (total_len=8), interval=0.01, x=None, y=None
+05:21:12 [INFO] output_handler: Active window for typing: 'gemini_live_client.py - BreviosChip - Visual Studio Code' (hwnd=66934)
+05:21:12 [INFO] output_handler: type_text: successfully typed 8 chars via SendInput
+05:21:12 [INFO] VoxifyApp: _flush_live_buffer: type_text succeeded for ' gave me'
+05:21:13 [INFO] realtime_transcriber: Text delta received: ' the' (len=4)
+05:21:13 [INFO] VoxifyApp: _type_live_delta: ' the' (raw_len=4)
+05:21:13 [INFO] dictation_features: process_transcript: raw_text='As you can see that There is a thing that I asked them something. It was listeni' (len=378)
+05:21:13 [INFO] dictation_features: process_transcript: after inline commands, text='As you can see that There is a thing that I asked them something. It was listeni'
+05:21:13 [INFO] dictation_features: process_transcript: final text='As you can see that There is a thing that I asked them something. It was listeni' (len=378, profile=notes)
+05:21:13 [INFO] VoxifyApp: _flush_live_buffer: new_text=' the' (len=4)
+05:21:13 [INFO] output_handler: type_text called: text=' the...' (total_len=4), interval=0.01, x=None, y=None
+05:21:13 [INFO] output_handler: Active window for typing: 'gemini_live_client.py - BreviosChip - Visual Studio Code' (hwnd=66934)
+05:21:13 [INFO] output_handler: type_text: successfully typed 4 chars via SendInput
+05:21:13 [INFO] VoxifyApp: _flush_live_buffer: type_text succeeded for ' the'
+05:21:13 [INFO] realtime_transcriber: Text delta received: ' speaking' (len=9)
+05:21:13 [INFO] VoxifyApp: _type_live_delta: ' speaking' (raw_len=9)
+05:21:13 [INFO] realtime_transcriber: Text delta received: '.' (len=1)
+05:21:13 [INFO] VoxifyApp: _type_live_delta: '.' (raw_len=1)
+05:21:13 [INFO] dictation_features: process_transcript: raw_text='As you can see that There is a thing that I asked them something. It was listeni' (len=388)
+05:21:13 [INFO] dictation_features: process_transcript: after inline commands, text='As you can see that There is a thing that I asked them something. It was listeni'
+05:21:13 [INFO] dictation_features: process_transcript: final text='As you can see that There is a thing that I asked them something. It was listeni' (len=388, profile=notes)
+05:21:13 [INFO] VoxifyApp: _flush_live_buffer: new_text=' speaking.' (len=10)
+05:21:13 [INFO] output_handler: type_text called: text=' speaking....' (total_len=10), interval=0.01, x=None, y=None
+05:21:13 [INFO] output_handler: Active window for typing: 'gemini_live_client.py - BreviosChip - Visual Studio Code' (hwnd=66934)
+05:21:14 [INFO] output_handler: type_text: successfully typed 10 chars via SendInput
+05:21:14 [INFO] VoxifyApp: _flush_live_buffer: type_text succeeded for ' speaking.'
+05:21:14 [INFO] realtime_transcriber: Text delta received: ' It' (len=3)
+05:21:14 [INFO] VoxifyApp: _type_live_delta: ' It' (raw_len=3)
+05:21:14 [INFO] realtime_transcriber: Text delta received: ''s' (len=2)
+05:21:14 [INFO] VoxifyApp: _type_live_delta: ''s' (raw_len=2)
+05:21:14 [INFO] dictation_features: process_transcript: raw_text='As you can see that There is a thing that I asked them something. It was listeni' (len=393)
+05:21:14 [INFO] dictation_features: process_transcript: after inline commands, text='As you can see that There is a thing that I asked them something. It was listeni'
+05:21:14 [INFO] dictation_features: process_transcript: final text='As you can see that There is a thing that I asked them something. It was listeni' (len=393, profile=notes)
+05:21:14 [INFO] VoxifyApp: _flush_live_buffer: new_text=' It's' (len=5)
+05:21:14 [INFO] output_handler: type_text called: text=' It's...' (total_len=5), interval=0.01, x=None, y=None
+05:21:14 [INFO] output_handler: Active window for typing: 'gemini_live_client.py - BreviosChip - Visual Studio Code' (hwnd=66934)
+05:21:14 [INFO] output_handler: type_text: successfully typed 5 chars via SendInput
+05:21:14 [INFO] VoxifyApp: _flush_live_buffer: type_text succeeded for ' It's'
+05:21:15 [INFO] realtime_transcriber: Text delta received: ' spoken' (len=7)
+05:21:15 [INFO] VoxifyApp: _type_live_delta: ' spoken' (raw_len=7)
+05:21:15 [INFO] realtime_transcriber: Text delta received: '.' (len=1)
+05:21:15 [INFO] VoxifyApp: _type_live_delta: '.' (raw_len=1)
+05:21:15 [INFO] realtime_transcriber: Audio chunk #300: 3840 bytes
+05:21:15 [INFO] realtime_transcriber: Text delta received: ' But' (len=4)
+05:21:15 [INFO] VoxifyApp: _type_live_delta: ' But' (raw_len=4)
+05:21:15 [INFO] realtime_transcriber: Audio level: -64.3 dBFS  (chunk #300)
+05:21:15 [INFO] dictation_features: process_transcript: raw_text='As you can see that There is a thing that I asked them something. It was listeni' (len=405)
+05:21:15 [INFO] dictation_features: process_transcript: after inline commands, text='As you can see that There is a thing that I asked them something. It was listeni'
+05:21:15 [INFO] dictation_features: process_transcript: final text='As you can see that There is a thing that I asked them something. It was listeni' (len=405, profile=notes)
+05:21:15 [INFO] VoxifyApp: _flush_live_buffer: new_text=' spoken. But' (len=12)
+05:21:15 [INFO] output_handler: type_text called: text=' spoken. But...' (total_len=12), interval=0.01, x=None, y=None
+05:21:15 [INFO] output_handler: Active window for typing: 'gemini_live_client.py - BreviosChip - Visual Studio Code' (hwnd=66934)
+05:21:15 [INFO] output_handler: type_text: successfully typed 12 chars via SendInput
+05:21:15 [INFO] VoxifyApp: _flush_live_buffer: type_text succeeded for ' spoken. But'
+05:21:15 [INFO] realtime_transcriber: Text delta received: ' again' (len=6)
+05:21:15 [INFO] VoxifyApp: _type_live_delta: ' again' (raw_len=6)
+05:21:15 [INFO] realtime_transcriber: Text delta received: ',' (len=1)
+05:21:15 [INFO] VoxifyApp: _type_live_delta: ',' (raw_len=1)
+05:21:15 [INFO] realtime_transcriber: Text delta received: ' when' (len=5)
+05:21:15 [INFO] VoxifyApp: _type_live_delta: ' when' (raw_len=5)
+05:21:15 [INFO] realtime_transcriber: Text delta received: ' I' (len=2)
+05:21:15 [INFO] VoxifyApp: _type_live_delta: ' I' (raw_len=2)
+05:21:16 [INFO] dictation_features: process_transcript: raw_text='As you can see that There is a thing that I asked them something. It was listeni' (len=419)
+05:21:16 [INFO] dictation_features: process_transcript: after inline commands, text='As you can see that There is a thing that I asked them something. It was listeni'
+05:21:16 [INFO] dictation_features: process_transcript: final text='As you can see that There is a thing that I asked them something. It was listeni' (len=419, profile=notes)
+05:21:16 [INFO] VoxifyApp: _flush_live_buffer: new_text=' again, when I' (len=14)
+05:21:16 [INFO] output_handler: type_text called: text=' again, when I...' (total_len=14), interval=0.01, x=None, y=None
+05:21:16 [INFO] output_handler: Active window for typing: 'gemini_live_client.py - BreviosChip - Visual Studio Code' (hwnd=66934)
+05:21:16 [INFO] realtime_transcriber: Text delta received: ' just' (len=5)
+05:21:16 [INFO] VoxifyApp: _type_live_delta: ' just' (raw_len=5)
+05:21:16 [INFO] output_handler: type_text: successfully typed 14 chars via SendInput
+05:21:16 [INFO] VoxifyApp: _flush_live_buffer: type_text succeeded for ' again, when I'
+05:21:16 [INFO] dictation_features: process_transcript: raw_text='As you can see that There is a thing that I asked them something. It was listeni' (len=424)
+05:21:16 [INFO] dictation_features: process_transcript: after inline commands, text='As you can see that There is a thing that I asked them something. It was listeni'
+05:21:16 [INFO] dictation_features: process_transcript: final text='As you can see that There is a thing that I asked them something. It was listeni' (len=424, profile=notes)
+05:21:16 [INFO] VoxifyApp: _flush_live_buffer: new_text=' just' (len=5)
+05:21:16 [INFO] output_handler: type_text called: text=' just...' (total_len=5), interval=0.01, x=None, y=None
+05:21:16 [INFO] output_handler: Active window for typing: 'gemini_live_client.py - BreviosChip - Visual Studio Code' (hwnd=66934)
+05:21:16 [INFO] output_handler: type_text: successfully typed 5 chars via SendInput
+05:21:16 [INFO] VoxifyApp: _flush_live_buffer: type_text succeeded for ' just'
+05:21:18 [INFO] realtime_transcriber: Text delta received: ' said' (len=5)
+05:21:18 [INFO] VoxifyApp: _type_live_delta: ' said' (raw_len=5)
+05:21:18 [INFO] dictation_features: process_transcript: raw_text='As you can see that There is a thing that I asked them something. It was listeni' (len=429)
+05:21:18 [INFO] dictation_features: process_transcript: after inline commands, text='As you can see that There is a thing that I asked them something. It was listeni'
+05:21:18 [INFO] dictation_features: process_transcript: final text='As you can see that There is a thing that I asked them something. It was listeni' (len=429, profile=notes)
+05:21:18 [INFO] VoxifyApp: _flush_live_buffer: new_text=' said' (len=5)
+05:21:18 [INFO] output_handler: type_text called: text=' said...' (total_len=5), interval=0.01, x=None, y=None
+05:21:18 [INFO] output_handler: Active window for typing: 'gemini_live_client.py - BreviosChip - Visual Studio Code' (hwnd=66934)
+05:21:18 [INFO] output_handler: type_text: successfully typed 5 chars via SendInput
+05:21:18 [INFO] VoxifyApp: _flush_live_buffer: type_text succeeded for ' said'
+05:21:18 [INFO] realtime_transcriber: Text delta received: ' something' (len=10)
+05:21:18 [INFO] VoxifyApp: _type_live_delta: ' something' (raw_len=10)
+05:21:18 [INFO] dictation_features: process_transcript: raw_text='As you can see that There is a thing that I asked them something. It was listeni' (len=439)
+05:21:18 [INFO] dictation_features: process_transcript: after inline commands, text='As you can see that There is a thing that I asked them something. It was listeni'
+05:21:18 [INFO] dictation_features: process_transcript: final text='As you can see that There is a thing that I asked them something. It was listeni' (len=439, profile=notes)
+05:21:18 [INFO] VoxifyApp: _flush_live_buffer: new_text=' something' (len=10)
+05:21:18 [INFO] output_handler: type_text called: text=' something...' (total_len=10), interval=0.01, x=None, y=None
+05:21:18 [INFO] output_handler: Active window for typing: 'gemini_live_client.py - BreviosChip - Visual Studio Code' (hwnd=66934)
+05:21:18 [INFO] output_handler: type_text: successfully typed 10 chars via SendInput
+05:21:18 [INFO] VoxifyApp: _flush_live_buffer: type_text succeeded for ' something'
+05:21:19 [INFO] realtime_transcriber: Text delta received: ' weird' (len=6)
+05:21:19 [INFO] VoxifyApp: _type_live_delta: ' weird' (raw_len=6)
+05:21:19 [INFO] realtime_transcriber: Text delta received: ',' (len=1)
+05:21:19 [INFO] VoxifyApp: _type_live_delta: ',' (raw_len=1)
+05:21:19 [INFO] realtime_transcriber: Text delta received: ' it' (len=3)
+05:21:19 [INFO] VoxifyApp: _type_live_delta: ' it' (raw_len=3)
+05:21:19 [INFO] dictation_features: process_transcript: raw_text='As you can see that There is a thing that I asked them something. It was listeni' (len=449)
+05:21:19 [INFO] dictation_features: process_transcript: after inline commands, text='As you can see that There is a thing that I asked them something. It was listeni'
+05:21:19 [INFO] dictation_features: process_transcript: final text='As you can see that There is a thing that I asked them something. It was listeni' (len=449, profile=notes)
+05:21:19 [INFO] VoxifyApp: _flush_live_buffer: new_text=' weird, it' (len=10)
+05:21:19 [INFO] output_handler: type_text called: text=' weird, it...' (total_len=10), interval=0.01, x=None, y=None
+05:21:19 [INFO] output_handler: Active window for typing: 'gemini_live_client.py - BreviosChip - Visual Studio Code' (hwnd=66934)
+05:21:19 [INFO] realtime_transcriber: Text delta received: ' was' (len=4)
+05:21:19 [INFO] VoxifyApp: _type_live_delta: ' was' (raw_len=4)
+05:21:19 [INFO] output_handler: type_text: successfully typed 10 chars via SendInput
+05:21:19 [INFO] VoxifyApp: _flush_live_buffer: type_text succeeded for ' weird, it'
+05:21:19 [INFO] dictation_features: process_transcript: raw_text='As you can see that There is a thing that I asked them something. It was listeni' (len=453)
+05:21:19 [INFO] dictation_features: process_transcript: after inline commands, text='As you can see that There is a thing that I asked them something. It was listeni'
+05:21:19 [INFO] dictation_features: process_transcript: final text='As you can see that There is a thing that I asked them something. It was listeni' (len=453, profile=notes)
+05:21:19 [INFO] VoxifyApp: _flush_live_buffer: new_text=' was' (len=4)
+05:21:19 [INFO] output_handler: type_text called: text=' was...' (total_len=4), interval=0.01, x=None, y=None
+05:21:19 [INFO] output_handler: Active window for typing: 'gemini_live_client.py - BreviosChip - Visual Studio Code' (hwnd=66934)
+05:21:19 [INFO] output_handler: type_text: successfully typed 4 chars via SendInput
+05:21:19 [INFO] VoxifyApp: _flush_live_buffer: type_text succeeded for ' was'
+05:21:20 [INFO] realtime_transcriber: Text delta received: ' listening' (len=10)
+05:21:20 [INFO] realtime_transcriber: Text delta received: '.' (len=1)
+05:21:20 [INFO] VoxifyApp: _type_live_delta: ' listening' (raw_len=10)
+05:21:20 [INFO] VoxifyApp: _type_live_delta: '.' (raw_len=1)
+05:21:20 [INFO] realtime_transcriber: Text delta received: ' But' (len=4)
+05:21:20 [INFO] VoxifyApp: _type_live_delta: ' But' (raw_len=4)
+05:21:20 [INFO] dictation_features: process_transcript: raw_text='As you can see that There is a thing that I asked them something. It was listeni' (len=468)
+05:21:20 [INFO] dictation_features: process_transcript: after inline commands, text='As you can see that There is a thing that I asked them something. It was listeni'
+05:21:20 [INFO] dictation_features: process_transcript: final text='As you can see that There is a thing that I asked them something. It was listeni' (len=468, profile=notes)
+05:21:20 [INFO] VoxifyApp: _flush_live_buffer: new_text=' listening. But' (len=15)
+05:21:20 [INFO] output_handler: type_text called: text=' listening. But...' (total_len=15), interval=0.01, x=None, y=None
+05:21:20 [INFO] output_handler: Active window for typing: 'gemini_live_client.py - BreviosChip - Visual Studio Code' (hwnd=66934)
+05:21:20 [INFO] realtime_transcriber: Text delta received: ' after' (len=6)
+05:21:20 [INFO] VoxifyApp: _type_live_delta: ' after' (raw_len=6)
+05:21:20 [INFO] output_handler: type_text: successfully typed 15 chars via SendInput
+05:21:20 [INFO] VoxifyApp: _flush_live_buffer: type_text succeeded for ' listening. But'
+05:21:20 [INFO] realtime_transcriber: Text delta received: ' I' (len=2)
+05:21:20 [INFO] VoxifyApp: _type_live_delta: ' I' (raw_len=2)
+05:21:20 [INFO] dictation_features: process_transcript: raw_text='As you can see that There is a thing that I asked them something. It was listeni' (len=476)
+05:21:20 [INFO] dictation_features: process_transcript: after inline commands, text='As you can see that There is a thing that I asked them something. It was listeni'
+05:21:20 [INFO] dictation_features: process_transcript: final text='As you can see that There is a thing that I asked them something. It was listeni' (len=476, profile=notes)
+05:21:20 [INFO] VoxifyApp: _flush_live_buffer: new_text=' after I' (len=8)
+05:21:20 [INFO] output_handler: type_text called: text=' after I...' (total_len=8), interval=0.01, x=None, y=None
+05:21:20 [INFO] output_handler: Active window for typing: 'gemini_live_client.py - BreviosChip - Visual Studio Code' (hwnd=66934)
+05:21:20 [INFO] realtime_transcriber: Text delta received: ' did' (len=4)
+05:21:20 [INFO] VoxifyApp: _type_live_delta: ' did' (raw_len=4)
+05:21:20 [INFO] output_handler: type_text: successfully typed 8 chars via SendInput
+05:21:20 [INFO] VoxifyApp: _flush_live_buffer: type_text succeeded for ' after I'
+05:21:21 [INFO] dictation_features: process_transcript: raw_text='As you can see that There is a thing that I asked them something. It was listeni' (len=480)
+05:21:21 [INFO] dictation_features: process_transcript: after inline commands, text='As you can see that There is a thing that I asked them something. It was listeni'
+05:21:21 [INFO] dictation_features: process_transcript: final text='As you can see that There is a thing that I asked them something. It was listeni' (len=480, profile=notes)
+05:21:21 [INFO] VoxifyApp: _flush_live_buffer: new_text=' did' (len=4)
+05:21:21 [INFO] output_handler: type_text called: text=' did...' (total_len=4), interval=0.01, x=None, y=None
+05:21:21 [INFO] output_handler: Active window for typing: 'gemini_live_client.py - BreviosChip - Visual Studio Code' (hwnd=66934)
+05:21:21 [INFO] output_handler: type_text: successfully typed 4 chars via SendInput
+05:21:21 [INFO] VoxifyApp: _flush_live_buffer: type_text succeeded for ' did'
+05:21:21 [INFO] realtime_transcriber: Text delta received: ' stop' (len=5)
+05:21:21 [INFO] VoxifyApp: _type_live_delta: ' stop' (raw_len=5)
+05:21:21 [INFO] realtime_transcriber: Audio chunk #350: 3840 bytes
+05:21:21 [INFO] realtime_transcriber: Audio level: -65.6 dBFS  (chunk #350)
+05:21:21 [INFO] dictation_features: process_transcript: raw_text='As you can see that There is a thing that I asked them something. It was listeni' (len=485)
+05:21:21 [INFO] dictation_features: process_transcript: after inline commands, text='As you can see that There is a thing that I asked them something. It was listeni'
+05:21:21 [INFO] dictation_features: process_transcript: final text='As you can see that There is a thing that I asked them something. It was listeni' (len=485, profile=notes)
+05:21:21 [INFO] VoxifyApp: _flush_live_buffer: new_text=' stop' (len=5)
+05:21:21 [INFO] output_handler: type_text called: text=' stop...' (total_len=5), interval=0.01, x=None, y=None
+05:21:21 [INFO] output_handler: Active window for typing: 'gemini_live_client.py - BreviosChip - Visual Studio Code' (hwnd=66934)
+05:21:21 [INFO] output_handler: type_text: successfully typed 5 chars via SendInput
+05:21:21 [INFO] VoxifyApp: _flush_live_buffer: type_text succeeded for ' stop'
+05:21:23 [INFO] realtime_transcriber: Text delta received: ' saying' (len=7)
+05:21:23 [INFO] VoxifyApp: _type_live_delta: ' saying' (raw_len=7)
+05:21:23 [INFO] dictation_features: process_transcript: raw_text='As you can see that There is a thing that I asked them something. It was listeni' (len=492)
+05:21:23 [INFO] dictation_features: process_transcript: after inline commands, text='As you can see that There is a thing that I asked them something. It was listeni'
+05:21:23 [INFO] dictation_features: process_transcript: final text='As you can see that There is a thing that I asked them something. It was listeni' (len=492, profile=notes)
+05:21:23 [INFO] VoxifyApp: _flush_live_buffer: new_text=' saying' (len=7)
+05:21:23 [INFO] output_handler: type_text called: text=' saying...' (total_len=7), interval=0.01, x=None, y=None
+05:21:23 [INFO] output_handler: Active window for typing: 'gemini_live_client.py - BreviosChip - Visual Studio Code' (hwnd=66934)
+05:21:23 [INFO] output_handler: type_text: successfully typed 7 chars via SendInput
+05:21:23 [INFO] VoxifyApp: _flush_live_buffer: type_text succeeded for ' saying'
+05:21:24 [INFO] realtime_transcriber: Text delta received: ' anything' (len=9)
+05:21:24 [INFO] VoxifyApp: _type_live_delta: ' anything' (raw_len=9)
+05:21:24 [INFO] realtime_transcriber: Text delta received: '.' (len=1)
+05:21:24 [INFO] VoxifyApp: _type_live_delta: '.' (raw_len=1)
+05:21:24 [INFO] dictation_features: process_transcript: raw_text='As you can see that There is a thing that I asked them something. It was listeni' (len=502)
+05:21:24 [INFO] dictation_features: process_transcript: after inline commands, text='As you can see that There is a thing that I asked them something. It was listeni'
+05:21:24 [INFO] dictation_features: process_transcript: final text='As you can see that There is a thing that I asked them something. It was listeni' (len=502, profile=notes)
+05:21:24 [INFO] VoxifyApp: _flush_live_buffer: new_text=' anything.' (len=10)
+05:21:24 [INFO] output_handler: type_text called: text=' anything....' (total_len=10), interval=0.01, x=None, y=None
+05:21:24 [INFO] output_handler: Active window for typing: 'gemini_live_client.py - BreviosChip - Visual Studio Code' (hwnd=66934)
+05:21:24 [INFO] output_handler: type_text: successfully typed 10 chars via SendInput
+05:21:24 [INFO] VoxifyApp: _flush_live_buffer: type_text succeeded for ' anything.'
+05:21:24 [INFO] realtime_transcriber: Text delta received: ' I' (len=2)
+05:21:24 [INFO] VoxifyApp: _type_live_delta: ' I' (raw_len=2)
+05:21:25 [INFO] realtime_transcriber: Text delta received: ''m' (len=2)
+05:21:25 [INFO] VoxifyApp: _type_live_delta: ''m' (raw_len=2)
+05:21:25 [INFO] dictation_features: process_transcript: raw_text='As you can see that There is a thing that I asked them something. It was listeni' (len=506)
+05:21:25 [INFO] dictation_features: process_transcript: after inline commands, text='As you can see that There is a thing that I asked them something. It was listeni'
+05:21:25 [INFO] dictation_features: process_transcript: final text='As you can see that There is a thing that I asked them something. It was listeni' (len=506, profile=notes)
+05:21:25 [INFO] VoxifyApp: _flush_live_buffer: new_text=' I'm' (len=4)
+05:21:25 [INFO] output_handler: type_text called: text=' I'm...' (total_len=4), interval=0.01, x=None, y=None
+05:21:25 [INFO] output_handler: Active window for typing: 'gemini_live_client.py - BreviosChip - Visual Studio Code' (hwnd=66934)
+05:21:25 [INFO] output_handler: type_text: successfully typed 4 chars via SendInput
+05:21:25 [INFO] VoxifyApp: _flush_live_buffer: type_text succeeded for ' I'm'
+05:21:25 [INFO] realtime_transcriber: Text delta received: ' trying' (len=7)
+05:21:25 [INFO] VoxifyApp: _type_live_delta: ' trying' (raw_len=7)
+05:21:25 [INFO] realtime_transcriber: Text delta received: ' to' (len=3)
+05:21:25 [INFO] VoxifyApp: _type_live_delta: ' to' (raw_len=3)
+05:21:26 [INFO] dictation_features: process_transcript: raw_text='As you can see that There is a thing that I asked them something. It was listeni' (len=516)
+05:21:26 [INFO] dictation_features: process_transcript: after inline commands, text='As you can see that There is a thing that I asked them something. It was listeni'
+05:21:26 [INFO] dictation_features: process_transcript: final text='As you can see that There is a thing that I asked them something. It was listeni' (len=516, profile=notes)
+05:21:26 [INFO] VoxifyApp: _flush_live_buffer: new_text=' trying to' (len=10)
+05:21:26 [INFO] output_handler: type_text called: text=' trying to...' (total_len=10), interval=0.01, x=None, y=None
+05:21:26 [INFO] output_handler: Active window for typing: 'gemini_live_client.py - BreviosChip - Visual Studio Code' (hwnd=66934)
+05:21:26 [INFO] realtime_transcriber: Text delta received: ' speak' (len=6)
+05:21:26 [INFO] VoxifyApp: _type_live_delta: ' speak' (raw_len=6)
+05:21:26 [INFO] output_handler: type_text: successfully typed 10 chars via SendInput
+05:21:26 [INFO] VoxifyApp: _flush_live_buffer: type_text succeeded for ' trying to'
+05:21:26 [INFO] dictation_features: process_transcript: raw_text='As you can see that There is a thing that I asked them something. It was listeni' (len=522)
+05:21:26 [INFO] dictation_features: process_transcript: after inline commands, text='As you can see that There is a thing that I asked them something. It was listeni'
+05:21:26 [INFO] dictation_features: process_transcript: final text='As you can see that There is a thing that I asked them something. It was listeni' (len=522, profile=notes)
+05:21:26 [INFO] VoxifyApp: _flush_live_buffer: new_text=' speak' (len=6)
+05:21:26 [INFO] output_handler: type_text called: text=' speak...' (total_len=6), interval=0.01, x=None, y=None
+05:21:26 [INFO] output_handler: Active window for typing: 'gemini_live_client.py - BreviosChip - Visual Studio Code' (hwnd=66934)
+05:21:26 [INFO] output_handler: type_text: successfully typed 6 chars via SendInput
+05:21:26 [INFO] VoxifyApp: _flush_live_buffer: type_text succeeded for ' speak'
+05:21:26 [INFO] realtime_transcriber: Text delta received: ' again' (len=6)
+05:21:26 [INFO] VoxifyApp: _type_live_delta: ' again' (raw_len=6)
+05:21:26 [INFO] realtime_transcriber: Text delta received: ',' (len=1)
+05:21:26 [INFO] VoxifyApp: _type_live_delta: ',' (raw_len=1)
+05:21:26 [INFO] realtime_transcriber: Text delta received: ' but' (len=4)
+05:21:26 [INFO] VoxifyApp: _type_live_delta: ' but' (raw_len=4)
+05:21:26 [INFO] dictation_features: process_transcript: raw_text='As you can see that There is a thing that I asked them something. It was listeni' (len=533)
+05:21:26 [INFO] dictation_features: process_transcript: after inline commands, text='As you can see that There is a thing that I asked them something. It was listeni'
+05:21:26 [INFO] dictation_features: process_transcript: final text='As you can see that There is a thing that I asked them something. It was listeni' (len=533, profile=notes)
+05:21:26 [INFO] VoxifyApp: _flush_live_buffer: new_text=' again, but' (len=11)
+05:21:26 [INFO] output_handler: type_text called: text=' again, but...' (total_len=11), interval=0.01, x=None, y=None
+05:21:26 [INFO] output_handler: Active window for typing: 'gemini_live_client.py - BreviosChip - Visual Studio Code' (hwnd=66934)
+05:21:26 [INFO] realtime_transcriber: Text delta received: ' there' (len=6)
+05:21:26 [INFO] VoxifyApp: _type_live_delta: ' there' (raw_len=6)
+05:21:26 [INFO] output_handler: type_text: successfully typed 11 chars via SendInput
+05:21:26 [INFO] VoxifyApp: _flush_live_buffer: type_text succeeded for ' again, but'
+05:21:26 [INFO] realtime_transcriber: Text delta received: ' was' (len=4)
+05:21:26 [INFO] VoxifyApp: _type_live_delta: ' was' (raw_len=4)
+05:21:27 [INFO] dictation_features: process_transcript: raw_text='As you can see that There is a thing that I asked them something. It was listeni' (len=543)
+05:21:27 [INFO] dictation_features: process_transcript: after inline commands, text='As you can see that There is a thing that I asked them something. It was listeni'
+05:21:27 [INFO] dictation_features: process_transcript: final text='As you can see that There is a thing that I asked them something. It was listeni' (len=543, profile=notes)
+05:21:27 [INFO] VoxifyApp: _flush_live_buffer: new_text=' there was' (len=10)
+05:21:27 [INFO] output_handler: type_text called: text=' there was...' (total_len=10), interval=0.01, x=None, y=None
+05:21:27 [INFO] output_handler: Active window for typing: 'gemini_live_client.py - BreviosChip - Visual Studio Code' (hwnd=66934)
+05:21:27 [INFO] realtime_transcriber: Text delta received: ' no' (len=3)
+05:21:27 [INFO] VoxifyApp: _type_live_delta: ' no' (raw_len=3)
+05:21:27 [INFO] output_handler: type_text: successfully typed 10 chars via SendInput
+05:21:27 [INFO] VoxifyApp: _flush_live_buffer: type_text succeeded for ' there was'
+05:21:27 [INFO] realtime_transcriber: Audio chunk #400: 3840 bytes
+05:21:27 [INFO] realtime_transcriber: Audio level: -34.6 dBFS  (chunk #400)
+05:21:27 [INFO] dictation_features: process_transcript: raw_text='As you can see that There is a thing that I asked them something. It was listeni' (len=546)
+05:21:27 [INFO] dictation_features: process_transcript: after inline commands, text='As you can see that There is a thing that I asked them something. It was listeni'
+05:21:27 [INFO] dictation_features: process_transcript: final text='As you can see that There is a thing that I asked them something. It was listeni' (len=546, profile=notes)
+05:21:27 [INFO] VoxifyApp: _flush_live_buffer: new_text=' no' (len=3)
+05:21:27 [INFO] output_handler: type_text called: text=' no...' (total_len=3), interval=0.01, x=None, y=None
+05:21:27 [INFO] output_handler: Active window for typing: 'gemini_live_client.py - BreviosChip - Visual Studio Code' (hwnd=66934)
+05:21:27 [INFO] output_handler: type_text: successfully typed 3 chars via SendInput
+05:21:27 [INFO] VoxifyApp: _flush_live_buffer: type_text succeeded for ' no'
+05:21:27 [INFO] realtime_transcriber: Text delta received: ' reply' (len=6)
+05:21:27 [INFO] VoxifyApp: _type_live_delta: ' reply' (raw_len=6)
+05:21:27 [INFO] dictation_features: process_transcript: raw_text='As you can see that There is a thing that I asked them something. It was listeni' (len=552)
+05:21:27 [INFO] dictation_features: process_transcript: after inline commands, text='As you can see that There is a thing that I asked them something. It was listeni'
+05:21:27 [INFO] dictation_features: process_transcript: final text='As you can see that There is a thing that I asked them something. It was listeni' (len=552, profile=notes)
+05:21:27 [INFO] VoxifyApp: _flush_live_buffer: new_text=' reply' (len=6)
+05:21:27 [INFO] output_handler: type_text called: text=' reply...' (total_len=6), interval=0.01, x=None, y=None
+05:21:27 [INFO] output_handler: Active window for typing: 'gemini_live_client.py - BreviosChip - Visual Studio Code' (hwnd=66934)
+05:21:27 [INFO] output_handler: type_text: successfully typed 6 chars via SendInput
+05:21:27 [INFO] VoxifyApp: _flush_live_buffer: type_text succeeded for ' reply'
+05:21:27 [INFO] realtime_transcriber: Text delta received: ' from' (len=5)
+05:21:27 [INFO] VoxifyApp: _type_live_delta: ' from' (raw_len=5)
+05:21:27 [INFO] realtime_transcriber: Text delta received: ' it' (len=3)
+05:21:27 [INFO] VoxifyApp: _type_live_delta: ' it' (raw_len=3)
+05:21:28 [INFO] realtime_transcriber: Text delta received: '.' (len=1)
+05:21:28 [INFO] VoxifyApp: _type_live_delta: '.' (raw_len=1)
+05:21:28 [INFO] dictation_features: process_transcript: raw_text='As you can see that There is a thing that I asked them something. It was listeni' (len=561)
+05:21:28 [INFO] dictation_features: process_transcript: after inline commands, text='As you can see that There is a thing that I asked them something. It was listeni'
+05:21:28 [INFO] dictation_features: process_transcript: final text='As you can see that There is a thing that I asked them something. It was listeni' (len=561, profile=notes)
+05:21:28 [INFO] VoxifyApp: _flush_live_buffer: new_text=' from it.' (len=9)
+05:21:28 [INFO] output_handler: type_text called: text=' from it....' (total_len=9), interval=0.01, x=None, y=None
+05:21:28 [INFO] output_handler: Active window for typing: 'gemini_live_client.py - BreviosChip - Visual Studio Code' (hwnd=66934)
+05:21:28 [INFO] output_handler: type_text: successfully typed 9 chars via SendInput
+05:21:28 [INFO] VoxifyApp: _flush_live_buffer: type_text succeeded for ' from it.'
+05:21:28 [INFO] realtime_transcriber: Text delta received: ' It' (len=3)
+05:21:28 [INFO] VoxifyApp: _type_live_delta: ' It' (raw_len=3)
+05:21:28 [INFO] realtime_transcriber: Text delta received: ' is' (len=3)
+05:21:28 [INFO] VoxifyApp: _type_live_delta: ' is' (raw_len=3)
+05:21:28 [INFO] dictation_features: process_transcript: raw_text='As you can see that There is a thing that I asked them something. It was listeni' (len=567)
+05:21:28 [INFO] dictation_features: process_transcript: after inline commands, text='As you can see that There is a thing that I asked them something. It was listeni'
+05:21:28 [INFO] dictation_features: process_transcript: final text='As you can see that There is a thing that I asked them something. It was listeni' (len=567, profile=notes)
+05:21:28 [INFO] VoxifyApp: _flush_live_buffer: new_text=' It is' (len=6)
+05:21:28 [INFO] output_handler: type_text called: text=' It is...' (total_len=6), interval=0.01, x=None, y=None
+05:21:28 [INFO] output_handler: Active window for typing: 'gemini_live_client.py - BreviosChip - Visual Studio Code' (hwnd=66934)
+05:21:28 [INFO] output_handler: type_text: successfully typed 6 chars via SendInput
+05:21:28 [INFO] VoxifyApp: _flush_live_buffer: type_text succeeded for ' It is'
+05:21:28 [INFO] realtime_transcriber: Text delta received: ' just' (len=5)
+05:21:28 [INFO] VoxifyApp: _type_live_delta: ' just' (raw_len=5)
+05:21:29 [INFO] dictation_features: process_transcript: raw_text='As you can see that There is a thing that I asked them something. It was listeni' (len=572)
+05:21:29 [INFO] dictation_features: process_transcript: after inline commands, text='As you can see that There is a thing that I asked them something. It was listeni'
+05:21:29 [INFO] dictation_features: process_transcript: final text='As you can see that There is a thing that I asked them something. It was listeni' (len=572, profile=notes)
+05:21:29 [INFO] VoxifyApp: _flush_live_buffer: new_text=' just' (len=5)
+05:21:29 [INFO] output_handler: type_text called: text=' just...' (total_len=5), interval=0.01, x=None, y=None
+05:21:29 [INFO] output_handler: Active window for typing: 'gemini_live_client.py - BreviosChip - Visual Studio Code' (hwnd=66934)
+05:21:29 [INFO] output_handler: type_text: successfully typed 5 chars via SendInput
+05:21:29 [INFO] VoxifyApp: _flush_live_buffer: type_text succeeded for ' just'
+05:21:29 [INFO] realtime_transcriber: Text delta received: ' listening' (len=10)
+05:21:29 [INFO] VoxifyApp: _type_live_delta: ' listening' (raw_len=10)
+05:21:29 [INFO] realtime_transcriber: Text delta received: ' and' (len=4)
+05:21:29 [INFO] VoxifyApp: _type_live_delta: ' and' (raw_len=4)
+05:21:29 [INFO] dictation_features: process_transcript: raw_text='As you can see that There is a thing that I asked them something. It was listeni' (len=586)
+05:21:29 [INFO] dictation_features: process_transcript: after inline commands, text='As you can see that There is a thing that I asked them something. It was listeni'
+05:21:29 [INFO] dictation_features: process_transcript: final text='As you can see that There is a thing that I asked them something. It was listeni' (len=586, profile=notes)
+05:21:29 [INFO] VoxifyApp: _flush_live_buffer: new_text=' listening and' (len=14)
+05:21:29 [INFO] output_handler: type_text called: text=' listening and...' (total_len=14), interval=0.01, x=None, y=None
+05:21:29 [INFO] output_handler: Active window for typing: 'gemini_live_client.py - BreviosChip - Visual Studio Code' (hwnd=66934)
+05:21:29 [INFO] output_handler: type_text: successfully typed 14 chars via SendInput
+05:21:29 [INFO] VoxifyApp: _flush_live_buffer: type_text succeeded for ' listening and'
+05:21:29 [INFO] realtime_transcriber: Text delta received: ' maybe' (len=6)
+05:21:29 [INFO] VoxifyApp: _type_live_delta: ' maybe' (raw_len=6)
+05:21:29 [INFO] realtime_transcriber: Text delta received: ' I' (len=2)
+05:21:29 [INFO] VoxifyApp: _type_live_delta: ' I' (raw_len=2)
+05:21:29 [INFO] realtime_transcriber: Text delta received: ' don' (len=4)
+05:21:29 [INFO] VoxifyApp: _type_live_delta: ' don' (raw_len=4)
+05:21:29 [INFO] realtime_transcriber: Text delta received: ''t' (len=2)
+05:21:29 [INFO] VoxifyApp: _type_live_delta: ''t' (raw_len=2)
+05:21:29 [INFO] realtime_transcriber: Text delta received: ' know' (len=5)
+05:21:29 [INFO] VoxifyApp: _type_live_delta: ' know' (raw_len=5)
+05:21:30 [INFO] realtime_transcriber: Text delta received: '.' (len=1)
+05:21:30 [INFO] VoxifyApp: _type_live_delta: '.' (raw_len=1)
+05:21:30 [INFO] dictation_features: process_transcript: raw_text='As you can see that There is a thing that I asked them something. It was listeni' (len=606)
+05:21:30 [INFO] dictation_features: process_transcript: after inline commands, text='As you can see that There is a thing that I asked them something. It was listeni'
+05:21:30 [INFO] dictation_features: process_transcript: final text='As you can see that There is a thing that I asked them something. It was listeni' (len=606, profile=notes)
+05:21:30 [INFO] VoxifyApp: _flush_live_buffer: new_text=' maybe I don't know.' (len=20)
+05:21:30 [INFO] output_handler: type_text called: text=' maybe I don't know....' (total_len=20), interval=0.01, x=None, y=None
+05:21:30 [INFO] output_handler: Active window for typing: 'gemini_live_client.py - BreviosChip - Visual Studio Code' (hwnd=66934)
+05:21:30 [INFO] output_handler: type_text: successfully typed 20 chars via SendInput
+05:21:30 [INFO] VoxifyApp: _flush_live_buffer: type_text succeeded for ' maybe I don't know.'
+05:21:31 [INFO] realtime_transcriber: Text delta received: ' So' (len=3)
+05:21:31 [INFO] VoxifyApp: _type_live_delta: ' So' (raw_len=3)
+05:21:32 [INFO] dictation_features: process_transcript: raw_text='As you can see that There is a thing that I asked them something. It was listeni' (len=609)
+05:21:32 [INFO] dictation_features: process_transcript: after inline commands, text='As you can see that There is a thing that I asked them something. It was listeni'
+05:21:32 [INFO] dictation_features: process_transcript: final text='As you can see that There is a thing that I asked them something. It was listeni' (len=609, profile=notes)
+05:21:32 [INFO] VoxifyApp: _flush_live_buffer: new_text=' So' (len=3)
+05:21:32 [INFO] output_handler: type_text called: text=' So...' (total_len=3), interval=0.01, x=None, y=None
+05:21:32 [INFO] output_handler: Active window for typing: 'gemini_live_client.py - BreviosChip - Visual Studio Code' (hwnd=66934)
+05:21:32 [INFO] output_handler: type_text: successfully typed 3 chars via SendInput
+05:21:32 [INFO] VoxifyApp: _flush_live_buffer: type_text succeeded for ' So'
+05:21:32 [INFO] realtime_transcriber: Text delta received: ' check' (len=6)
+05:21:32 [INFO] VoxifyApp: _type_live_delta: ' check' (raw_len=6)
+05:21:32 [INFO] dictation_features: process_transcript: raw_text='As you can see that There is a thing that I asked them something. It was listeni' (len=615)
+05:21:32 [INFO] dictation_features: process_transcript: after inline commands, text='As you can see that There is a thing that I asked them something. It was listeni'
+05:21:32 [INFO] dictation_features: process_transcript: final text='As you can see that There is a thing that I asked them something. It was listeni' (len=615, profile=notes)
+05:21:32 [INFO] VoxifyApp: _flush_live_buffer: new_text=' check' (len=6)
+05:21:32 [INFO] output_handler: type_text called: text=' check...' (total_len=6), interval=0.01, x=None, y=None
+05:21:32 [INFO] output_handler: Active window for typing: 'gemini_live_client.py - BreviosChip - Visual Studio Code' (hwnd=66934)
+05:21:32 [INFO] output_handler: type_text: successfully typed 6 chars via SendInput
+05:21:32 [INFO] VoxifyApp: _flush_live_buffer: type_text succeeded for ' check'
+05:21:32 [INFO] realtime_transcriber: Text delta received: ' this' (len=5)
+05:21:32 [INFO] VoxifyApp: _type_live_delta: ' this' (raw_len=5)
+05:21:32 [INFO] dictation_features: process_transcript: raw_text='As you can see that There is a thing that I asked them something. It was listeni' (len=620)
+05:21:32 [INFO] dictation_features: process_transcript: after inline commands, text='As you can see that There is a thing that I asked them something. It was listeni'
+05:21:32 [INFO] dictation_features: process_transcript: final text='As you can see that There is a thing that I asked them something. It was listeni' (len=620, profile=notes)
+05:21:32 [INFO] VoxifyApp: _flush_live_buffer: new_text=' this' (len=5)
+05:21:32 [INFO] output_handler: type_text called: text=' this...' (total_len=5), interval=0.01, x=None, y=None
+05:21:32 [INFO] output_handler: Active window for typing: 'gemini_live_client.py - BreviosChip - Visual Studio Code' (hwnd=66934)
+05:21:32 [INFO] output_handler: type_text: successfully typed 5 chars via SendInput
+05:21:32 [INFO] VoxifyApp: _flush_live_buffer: type_text succeeded for ' this'
+05:21:33 [INFO] realtime_transcriber: Text delta received: ' out' (len=4)
+05:21:33 [INFO] VoxifyApp: _type_live_delta: ' out' (raw_len=4)
+05:21:33 [INFO] realtime_transcriber: Audio chunk #450: 3840 bytes
+05:21:33 [INFO] realtime_transcriber: Audio level: -64.6 dBFS  (chunk #450)
+05:21:33 [INFO] dictation_features: process_transcript: raw_text='As you can see that There is a thing that I asked them something. It was listeni' (len=624)
+05:21:33 [INFO] dictation_features: process_transcript: after inline commands, text='As you can see that There is a thing that I asked them something. It was listeni'
+05:21:33 [INFO] dictation_features: process_transcript: final text='As you can see that There is a thing that I asked them something. It was listeni' (len=624, profile=notes)
+05:21:33 [INFO] VoxifyApp: _flush_live_buffer: new_text=' out' (len=4)
+05:21:33 [INFO] output_handler: type_text called: text=' out...' (total_len=4), interval=0.01, x=None, y=None
+05:21:33 [INFO] output_handler: Active window for typing: 'gemini_live_client.py - BreviosChip - Visual Studio Code' (hwnd=66934)
+05:21:33 [INFO] output_handler: type_text: successfully typed 4 chars via SendInput
+05:21:33 [INFO] VoxifyApp: _flush_live_buffer: type_text succeeded for ' out'
+05:21:33 [INFO] realtime_transcriber: Text delta received: ' and' (len=4)
+05:21:33 [INFO] VoxifyApp: _type_live_delta: ' and' (raw_len=4)
+05:21:34 [INFO] dictation_features: process_transcript: raw_text='As you can see that There is a thing that I asked them something. It was listeni' (len=628)
+05:21:34 [INFO] dictation_features: process_transcript: after inline commands, text='As you can see that There is a thing that I asked them something. It was listeni'
+05:21:34 [INFO] dictation_features: process_transcript: final text='As you can see that There is a thing that I asked them something. It was listeni' (len=628, profile=notes)
+05:21:34 [INFO] VoxifyApp: _flush_live_buffer: new_text=' and' (len=4)
+05:21:34 [INFO] output_handler: type_text called: text=' and...' (total_len=4), interval=0.01, x=None, y=None
+05:21:34 [INFO] output_handler: Active window for typing: 'gemini_live_client.py - BreviosChip - Visual Studio Code' (hwnd=66934)
+05:21:34 [INFO] output_handler: type_text: successfully typed 4 chars via SendInput
+05:21:34 [INFO] VoxifyApp: _flush_live_buffer: type_text succeeded for ' and'
+05:21:36 [INFO] realtime_transcriber: Text delta received: ' Yes' (len=4)
+05:21:36 [INFO] VoxifyApp: _type_live_delta: ' Yes' (raw_len=4)
+05:21:36 [INFO] realtime_transcriber: Text delta received: '.' (len=1)
+05:21:36 [INFO] VoxifyApp: _type_live_delta: '.' (raw_len=1)
+05:21:36 [INFO] dictation_features: process_transcript: raw_text='As you can see that There is a thing that I asked them something. It was listeni' (len=633)
+05:21:36 [INFO] dictation_features: process_transcript: after inline commands, text='As you can see that There is a thing that I asked them something. It was listeni'
+05:21:36 [INFO] dictation_features: process_transcript: final text='As you can see that There is a thing that I asked them something. It was listeni' (len=633, profile=notes)
+05:21:36 [INFO] VoxifyApp: _flush_live_buffer: new_text=' Yes.' (len=5)
+05:21:36 [INFO] output_handler: type_text called: text=' Yes....' (total_len=5), interval=0.01, x=None, y=None
+05:21:36 [INFO] output_handler: Active window for typing: 'gemini_live_client.py - BreviosChip - Visual Studio Code' (hwnd=66934)
+05:21:36 [INFO] output_handler: type_text: successfully typed 5 chars via SendInput
+05:21:36 [INFO] VoxifyApp: _flush_live_buffer: type_text succeeded for ' Yes.'
+05:21:39 [INFO] realtime_transcriber: Audio chunk #500: 3840 bytes
+05:21:39 [INFO] realtime_transcriber: Audio level: -30.3 dBFS  (chunk #500)
+05:21:39 [INFO] realtime_transcriber: Text delta received: ' This' (len=5)
+05:21:39 [INFO] realtime_transcriber: Text delta received: ' is' (len=3)
+05:21:39 [INFO] VoxifyApp: _type_live_delta: ' is' (raw_len=3)
+05:21:39 [INFO] VoxifyApp: _type_live_delta: ' This' (raw_len=5)
+05:21:39 [INFO] dictation_features: process_transcript: raw_text='As you can see that There is a thing that I asked them something. It was listeni' (len=641)
+05:21:39 [INFO] dictation_features: process_transcript: after inline commands, text='As you can see that There is a thing that I asked them something. It was listeni'
+05:21:39 [INFO] dictation_features: process_transcript: final text='As you can see that There is a thing that I asked them something. It was listeni' (len=641, profile=notes)
+05:21:39 [INFO] VoxifyApp: _flush_live_buffer: new_text=' is This' (len=8)
+05:21:39 [INFO] output_handler: type_text called: text=' is This...' (total_len=8), interval=0.01, x=None, y=None
+05:21:39 [INFO] output_handler: Active window for typing: 'gemini_live_client.py - BreviosChip - Visual Studio Code' (hwnd=66934)
+05:21:40 [INFO] output_handler: type_text: successfully typed 8 chars via SendInput
+05:21:40 [INFO] VoxifyApp: _flush_live_buffer: type_text succeeded for ' is This'
+05:21:40 [INFO] realtime_transcriber: Text delta received: ' below' (len=6)
+05:21:40 [INFO] VoxifyApp: _type_live_delta: ' below' (raw_len=6)
+05:21:40 [INFO] dictation_features: process_transcript: raw_text='As you can see that There is a thing that I asked them something. It was listeni' (len=647)
+05:21:40 [INFO] dictation_features: process_transcript: after inline commands, text='As you can see that There is a thing that I asked them something. It was listeni'
+05:21:40 [INFO] dictation_features: process_transcript: final text='As you can see that There is a thing that I asked them something. It was listeni' (len=647, profile=notes)
+05:21:40 [INFO] VoxifyApp: _flush_live_buffer: new_text=' below' (len=6)
+05:21:40 [INFO] output_handler: type_text called: text=' below...' (total_len=6), interval=0.01, x=None, y=None
+05:21:40 [INFO] output_handler: Active window for typing: 'gemini_live_client.py - BreviosChip - Visual Studio Code' (hwnd=66934)
+05:21:40 [INFO] realtime_transcriber: Text delta received: ' is' (len=3)
+05:21:40 [INFO] VoxifyApp: _type_live_delta: ' is' (raw_len=3)
+05:21:40 [INFO] output_handler: type_text: successfully typed 6 chars via SendInput
+05:21:40 [INFO] VoxifyApp: _flush_live_buffer: type_text succeeded for ' below'
+05:21:40 [INFO] dictation_features: process_transcript: raw_text='As you can see that There is a thing that I asked them something. It was listeni' (len=650)
+05:21:40 [INFO] dictation_features: process_transcript: after inline commands, text='As you can see that There is a thing that I asked them something. It was listeni'
+05:21:40 [INFO] dictation_features: process_transcript: final text='As you can see that There is a thing that I asked them something. It was listeni' (len=650, profile=notes)
+05:21:40 [INFO] VoxifyApp: _flush_live_buffer: new_text=' is' (len=3)
+05:21:40 [INFO] output_handler: type_text called: text=' is...' (total_len=3), interval=0.01, x=None, y=None
+05:21:40 [INFO] output_handler: Active window for typing: 'gemini_live_client.py - BreviosChip - Visual Studio Code' (hwnd=66934)
+05:21:40 [INFO] output_handler: type_text: successfully typed 3 chars via SendInput
+05:21:40 [INFO] VoxifyApp: _flush_live_buffer: type_text succeeded for ' is'
+05:21:40 [INFO] realtime_transcriber: Text delta received: ' the' (len=4)
+05:21:40 [INFO] VoxifyApp: _type_live_delta: ' the' (raw_len=4)
+05:21:40 [INFO] dictation_features: process_transcript: raw_text='As you can see that There is a thing that I asked them something. It was listeni' (len=654)
+05:21:40 [INFO] dictation_features: process_transcript: after inline commands, text='As you can see that There is a thing that I asked them something. It was listeni'
+05:21:40 [INFO] dictation_features: process_transcript: final text='As you can see that There is a thing that I asked them something. It was listeni' (len=654, profile=notes)
+05:21:40 [INFO] VoxifyApp: _flush_live_buffer: new_text=' the' (len=4)
+05:21:40 [INFO] output_handler: type_text called: text=' the...' (total_len=4), interval=0.01, x=None, y=None
+05:21:40 [INFO] output_handler: Active window for typing: 'gemini_live_client.py - BreviosChip - Visual Studio Code' (hwnd=66934)
+05:21:40 [INFO] output_handler: type_text: successfully typed 4 chars via SendInput
+05:21:40 [INFO] VoxifyApp: _flush_live_buffer: type_text succeeded for ' the'
+05:21:42 [INFO] realtime_transcriber: Text delta received: ' rose' (len=5)
+05:21:42 [INFO] VoxifyApp: _type_live_delta: ' rose' (raw_len=5)
+05:21:42 [INFO] dictation_features: process_transcript: raw_text='As you can see that There is a thing that I asked them something. It was listeni' (len=659)
+05:21:42 [INFO] dictation_features: process_transcript: after inline commands, text='As you can see that There is a thing that I asked them something. It was listeni'
+05:21:42 [INFO] dictation_features: process_transcript: final text='As you can see that There is a thing that I asked them something. It was listeni' (len=659, profile=notes)
+05:21:42 [INFO] VoxifyApp: _flush_live_buffer: new_text=' rose' (len=5)
+05:21:42 [INFO] output_handler: type_text called: text=' rose...' (total_len=5), interval=0.01, x=None, y=None
+05:21:42 [INFO] output_handler: Active window for typing: 'gemini_live_client.py - BreviosChip - Visual Studio Code' (hwnd=66934)
+05:21:42 [INFO] output_handler: type_text: successfully typed 5 chars via SendInput
+05:21:42 [INFO] VoxifyApp: _flush_live_buffer: type_text succeeded for ' rose'
+05:21:42 [INFO] realtime_transcriber: Text delta received: ' that' (len=5)
+05:21:42 [INFO] VoxifyApp: _type_live_delta: ' that' (raw_len=5)
+05:21:42 [INFO] realtime_transcriber: Text delta received: ' I' (len=2)
+05:21:42 [INFO] VoxifyApp: _type_live_delta: ' I' (raw_len=2)
+05:21:42 [INFO] dictation_features: process_transcript: raw_text='As you can see that There is a thing that I asked them something. It was listeni' (len=666)
+05:21:42 [INFO] dictation_features: process_transcript: after inline commands, text='As you can see that There is a thing that I asked them something. It was listeni'
+05:21:42 [INFO] dictation_features: process_transcript: final text='As you can see that There is a thing that I asked them something. It was listeni' (len=666, profile=notes)
+05:21:42 [INFO] VoxifyApp: _flush_live_buffer: new_text=' that I' (len=7)
+05:21:42 [INFO] output_handler: type_text called: text=' that I...' (total_len=7), interval=0.01, x=None, y=None
+05:21:42 [INFO] output_handler: Active window for typing: 'gemini_live_client.py - BreviosChip - Visual Studio Code' (hwnd=66934)
+05:21:42 [INFO] output_handler: type_text: successfully typed 7 chars via SendInput
+05:21:42 [INFO] VoxifyApp: _flush_live_buffer: type_text succeeded for ' that I'
+05:21:42 [INFO] realtime_transcriber: Text delta received: ' just' (len=5)
+05:21:42 [INFO] VoxifyApp: _type_live_delta: ' just' (raw_len=5)
+05:21:42 [INFO] dictation_features: process_transcript: raw_text='As you can see that There is a thing that I asked them something. It was listeni' (len=671)
+05:21:42 [INFO] dictation_features: process_transcript: after inline commands, text='As you can see that There is a thing that I asked them something. It was listeni'
+05:21:42 [INFO] dictation_features: process_transcript: final text='As you can see that There is a thing that I asked them something. It was listeni' (len=671, profile=notes)
+05:21:42 [INFO] VoxifyApp: _flush_live_buffer: new_text=' just' (len=5)
+05:21:42 [INFO] output_handler: type_text called: text=' just...' (total_len=5), interval=0.01, x=None, y=None
+05:21:42 [INFO] output_handler: Active window for typing: 'gemini_live_client.py - BreviosChip - Visual Studio Code' (hwnd=66934)
+05:21:43 [INFO] output_handler: type_text: successfully typed 5 chars via SendInput
+05:21:43 [INFO] VoxifyApp: _flush_live_buffer: type_text succeeded for ' just'
+05:21:43 [INFO] realtime_transcriber: Text delta received: ' again' (len=6)
+05:21:43 [INFO] VoxifyApp: _type_live_delta: ' again' (raw_len=6)
+05:21:43 [INFO] realtime_transcriber: Text delta received: ' I' (len=2)
+05:21:43 [INFO] VoxifyApp: _type_live_delta: ' I' (raw_len=2)
+05:21:43 [INFO] realtime_transcriber: Text delta received: ''m' (len=2)
+05:21:43 [INFO] VoxifyApp: _type_live_delta: ''m' (raw_len=2)
+05:21:43 [INFO] dictation_features: process_transcript: raw_text='As you can see that There is a thing that I asked them something. It was listeni' (len=681)
+05:21:43 [INFO] dictation_features: process_transcript: after inline commands, text='As you can see that There is a thing that I asked them something. It was listeni'
+05:21:43 [INFO] dictation_features: process_transcript: final text='As you can see that There is a thing that I asked them something. It was listeni' (len=681, profile=notes)
+05:21:43 [INFO] VoxifyApp: _flush_live_buffer: new_text=' again I'm' (len=10)
+05:21:43 [INFO] output_handler: type_text called: text=' again I'm...' (total_len=10), interval=0.01, x=None, y=None
+05:21:43 [INFO] output_handler: Active window for typing: 'gemini_live_client.py - BreviosChip - Visual Studio Code' (hwnd=66934)
+05:21:44 [INFO] output_handler: type_text: successfully typed 10 chars via SendInput
+05:21:44 [INFO] VoxifyApp: _flush_live_buffer: type_text succeeded for ' again I'm'
+05:21:44 [INFO] realtime_transcriber: Text delta received: ' sharing' (len=8)
+05:21:44 [INFO] VoxifyApp: _type_live_delta: ' sharing' (raw_len=8)
+05:21:44 [INFO] realtime_transcriber: Text delta received: ' to' (len=3)
+05:21:44 [INFO] VoxifyApp: _type_live_delta: ' to' (raw_len=3)
+05:21:44 [INFO] dictation_features: process_transcript: raw_text='As you can see that There is a thing that I asked them something. It was listeni' (len=692)
+05:21:44 [INFO] dictation_features: process_transcript: after inline commands, text='As you can see that There is a thing that I asked them something. It was listeni'
+05:21:44 [INFO] dictation_features: process_transcript: final text='As you can see that There is a thing that I asked them something. It was listeni' (len=692, profile=notes)
+05:21:44 [INFO] VoxifyApp: _flush_live_buffer: new_text=' sharing to' (len=11)
+05:21:44 [INFO] output_handler: type_text called: text=' sharing to...' (total_len=11), interval=0.01, x=None, y=None
+05:21:44 [INFO] output_handler: Active window for typing: 'gemini_live_client.py - BreviosChip - Visual Studio Code' (hwnd=66934)
+05:21:44 [INFO] realtime_transcriber: Text delta received: ' you' (len=4)
+05:21:44 [INFO] VoxifyApp: _type_live_delta: ' you' (raw_len=4)
+05:21:44 [INFO] output_handler: type_text: successfully typed 11 chars via SendInput
+05:21:44 [INFO] VoxifyApp: _flush_live_buffer: type_text succeeded for ' sharing to'
+05:21:44 [INFO] realtime_transcriber: Text delta received: '.' (len=1)
+05:21:44 [INFO] VoxifyApp: _type_live_delta: '.' (raw_len=1)
+05:21:44 [INFO] dictation_features: process_transcript: raw_text='As you can see that There is a thing that I asked them something. It was listeni' (len=697)
+05:21:44 [INFO] dictation_features: process_transcript: after inline commands, text='As you can see that There is a thing that I asked them something. It was listeni'
+05:21:44 [INFO] dictation_features: process_transcript: final text='As you can see that There is a thing that I asked them something. It was listeni' (len=697, profile=notes)
+05:21:44 [INFO] VoxifyApp: _flush_live_buffer: new_text=' you.' (len=5)
+05:21:44 [INFO] output_handler: type_text called: text=' you....' (total_len=5), interval=0.01, x=None, y=None
+05:21:44 [INFO] output_handler: Active window for typing: 'gemini_live_client.py - BreviosChip - Visual Studio Code' (hwnd=66934)
+05:21:44 [INFO] output_handler: type_text: successfully typed 5 chars via SendInput
+05:21:44 [INFO] VoxifyApp: _flush_live_buffer: type_text succeeded for ' you.'
+05:21:45 [INFO] realtime_transcriber: Audio chunk #550: 3840 bytes
+05:21:45 [INFO] realtime_transcriber: Audio level: -64.7 dBFS  (chunk #550)
+05:21:51 [INFO] realtime_transcriber: Audio chunk #600: 3840 bytes
+05:21:51 [INFO] realtime_transcriber: Audio level: -33.7 dBFS  (chunk #600)
+05:21:57 [INFO] realtime_transcriber: Audio chunk #650: 3840 bytes
+05:21:57 [INFO] realtime_transcriber: Audio level: -63.9 dBFS  (chunk #650)

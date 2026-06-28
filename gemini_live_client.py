@@ -1,11 +1,26 @@
 """
 Gemini Live API client for real-time voice conversations.
-Supports ephemeral tokens, session resumption, context window compression,
-automatic reconnection, and idle timeout.
+
+Architecture:
+  ChatState enum drives all lifecycle transitions.  A threading.Lock protects
+  state changes so every callback receives a consistent view.  Resource cleanup
+  is handled in _cleanup() which is called from a finally block, guaranteeing
+  that streams and threads are released even on unhandled exceptions.
+
+Degradation modes:
+  - mic_failure:     audio input stops but text + tool calls keep working.
+  - playback_failure: AI audio is muted but the session stays alive.
+
+Health monitoring:
+  A background coroutine pings the WebSocket periodically.  If no pong arrives
+  within the timeout the client proactively reconnects.
 """
+
+from __future__ import annotations
 
 import asyncio
 import base64
+import enum
 import json
 import logging
 import queue
@@ -24,6 +39,8 @@ if not logger.handlers:
     handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
     logger.addHandler(handler)
 
+# ── Constants ───────────────────────────────────────────────────────────────
+
 GEMINI_LIVE_WS_URL = (
     "wss://generativelanguage.googleapis.com/ws/"
     "google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent"
@@ -37,11 +54,58 @@ PLAYBACK_FRAMES = 1024
 IDLE_CHECK_INTERVAL = 5.0
 MAX_RECONNECT_RETRIES = 3
 RECONNECT_BASE_DELAY = 1.0
-# Hard limit: stop waiting for WS ops after this
 STOP_TIMEOUT = 3.0
+HEALTH_CHECK_INTERVAL = 20.0
+HEALTH_CHECK_TIMEOUT = 10.0
 
+
+# ── State Machine ───────────────────────────────────────────────────────────
+
+class ChatState(enum.Enum):
+    """Lifecycle states for the Gemini Live session."""
+    DISCONNECTED = "disconnected"
+    CONNECTING   = "connecting"
+    CONNECTED    = "connected"
+    LISTENING    = "listening"
+    AI_SPEAKING  = "ai_speaking"
+    TOOL_CALL    = "tool_call"
+    RECONNECTING = "reconnecting"
+    IDLE_TIMEOUT = "idle_timeout"
+    ERROR        = "error"
+
+    @property
+    def display(self) -> str:
+        return {
+            ChatState.DISCONNECTED: "Disconnected",
+            ChatState.CONNECTING:   "Connecting\u2026",
+            ChatState.CONNECTED:    "Connected",
+            ChatState.LISTENING:    "Listening\u2026",
+            ChatState.AI_SPEAKING:  "Speaking\u2026",
+            ChatState.TOOL_CALL:    "Tool executing\u2026",
+            ChatState.RECONNECTING: "Reconnecting\u2026",
+            ChatState.IDLE_TIMEOUT: "Idle timeout",
+            ChatState.ERROR:        "Error",
+        }[self]
+
+    @property
+    def is_active(self) -> bool:
+        return self in (ChatState.CONNECTED, ChatState.LISTENING,
+                        ChatState.AI_SPEAKING, ChatState.TOOL_CALL)
+
+
+class _Degradation(enum.Flag):
+    """Track which subsystems are degraded."""
+    NONE             = 0
+    MIC_FAILURE      = enum.auto()
+    PLAYBACK_FAILURE = enum.auto()
+
+
+# ── Main Client ─────────────────────────────────────────────────────────────
 
 class GeminiLiveClient:
+    """Modern Gemini Live API client with state machine, health monitoring,
+    graceful degradation, and deterministic resource cleanup."""
+
     def __init__(
         self,
         api_key: Optional[str] = None,
@@ -64,6 +128,7 @@ class GeminiLiveClient:
         if not ephemeral_token and not api_key:
             raise ValueError("Either ephemeral_token or api_key must be provided")
 
+        # Immutable config
         self.ephemeral_token = ephemeral_token
         self.api_key = api_key
         self.model = model
@@ -81,20 +146,31 @@ class GeminiLiveClient:
         self.thinking_level = thinking_level
         self.thinking_budget = thinking_budget
 
+        # Mutable state (protected by _state_lock)
+        self._state_lock = threading.Lock()
+        self._state: ChatState = ChatState.DISCONNECTED
         self._running = False
+        self._degradation = _Degradation.NONE
+
+        # WebSocket / event loop
         self._ws: Optional[websockets.WebSocketClientProtocol] = None
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._main_thread: Optional[threading.Thread] = None
-        # Event to signal the event loop to stop immediately
         self._stop_ev: Optional[asyncio.Event] = None
+
+        # Queues and events
+        # Mute control
+        self._input_muted = False
 
         self._input_queue: queue.Queue = queue.Queue()
         self._output_queue: queue.Queue = queue.Queue()
         self._interrupted = threading.Event()
         self._ai_speaking = threading.Event()
 
+        # Audio streams
         self._playback_stream: Optional[sd.RawOutputStream] = None
 
+        # Session / reconnect bookkeeping
         self._session_handle: Optional[str] = None
         self._message_index: int = 0
         self._last_activity_time: float = time.time()
@@ -102,12 +178,59 @@ class GeminiLiveClient:
         self._reconnect_pending = False
         self._goaway_received = False
 
+        # Tool call gating
         self._gating_audio = threading.Event()
         self._tool_call_in_progress = threading.Event()
 
-        # Thread references for clean reconnection
+        # Thread references
         self._mic_thread: Optional[threading.Thread] = None
         self._playback_thread: Optional[threading.Thread] = None
+
+    def set_mute_input(self, muted: bool) -> None:
+        """Mute or unmute the microphone input."""
+        self._input_muted = muted
+        logger.info(f"Input mute {'ON' if muted else 'OFF'}")
+
+    # ── Context manager ──────────────────────────────────────────────────────
+
+    def __enter__(self):
+        self.start()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.stop()
+        return False
+
+    # ── State accessors (thread-safe) ────────────────────────────────────────
+
+    @property
+    def state(self) -> ChatState:
+        with self._state_lock:
+            return self._state
+
+    def _set_state(self, new: ChatState) -> None:
+        with self._state_lock:
+            old = self._state
+            self._state = new
+        if old != new:
+            logger.info(f"State: {old.value} -> {new.value}")
+            self._safe_status(new.display)
+
+    @property
+    def is_connected(self) -> bool:
+        return self.state.is_active
+
+    @property
+    def is_listening(self) -> bool:
+        return self.state == ChatState.LISTENING
+
+    @property
+    def is_speaking(self) -> bool:
+        return self.state == ChatState.AI_SPEAKING
+
+    @property
+    def is_degraded(self) -> bool:
+        return self._degradation != _Degradation.NONE
 
     # ── Public API ───────────────────────────────────────────────────────────
 
@@ -115,12 +238,14 @@ class GeminiLiveClient:
         if self._running:
             return
         self._running = True
+        self._degradation = _Degradation.NONE
         self._interrupted.clear()
         self._ai_speaking.clear()
         self._reconnect_pending = False
         self._goaway_received = False
         self._retry_count = 0
         self._message_index = 0
+        self._set_state(ChatState.CONNECTING)
         logger.info(f"Starting Gemini Live Chat (Model: {self.model}, Voice: {self.voice_name})")
         self._main_thread = threading.Thread(target=self._run_async, daemon=True)
         self._main_thread.start()
@@ -129,18 +254,20 @@ class GeminiLiveClient:
         logger.info("Stopping Gemini Live Chat session...")
         self._running = False
         self._reconnect_pending = False
-        # Signal the asyncio event loop to wake up immediately
         if self._stop_ev and self._loop and not self._loop.is_closed():
             try:
                 asyncio.run_coroutine_threadsafe(self._stop_ev.set(), self._loop)
             except RuntimeError:
                 pass
-        # Close WS forcefully
         if self._ws and self._loop and not self._loop.is_closed():
             try:
                 asyncio.run_coroutine_threadsafe(self._close_ws(), self._loop)
             except RuntimeError:
                 pass
+        for t in (self._mic_thread, self._playback_thread):
+            if t and t.is_alive():
+                t.join(timeout=2.0)
+        self._set_state(ChatState.DISCONNECTED)
 
     def send_video_frame(self, image_bytes: bytes) -> None:
         if not self._running or not self._ws:
@@ -173,7 +300,7 @@ class GeminiLiveClient:
         if ws:
             try:
                 await asyncio.wait_for(ws.close(), timeout=STOP_TIMEOUT)
-                logger.info("WebSocket connection closed gracefully.")
+                logger.info("WebSocket closed gracefully.")
             except Exception as exc:
                 logger.debug(f"WebSocket closure: {exc}")
 
@@ -189,6 +316,7 @@ class GeminiLiveClient:
             self._safe_error(f"Gemini Live error: {exc}")
         finally:
             logger.info("Gemini Live async loop terminated.")
+            self._cleanup()
             try:
                 self._loop.run_until_complete(self._loop.shutdown_asyncgens())
             except Exception:
@@ -197,27 +325,49 @@ class GeminiLiveClient:
             self._loop = None
             self._stop_ev = None
 
+    def _cleanup(self) -> None:
+        """Deterministic resource cleanup - called from finally block."""
+        logger.info("Cleaning up resources...")
+        for q in (self._input_queue, self._output_queue):
+            while not q.empty():
+                try:
+                    q.get_nowait()
+                except queue.Empty:
+                    break
+        if self._playback_stream:
+            try:
+                self._playback_stream.stop()
+                self._playback_stream.close()
+            except Exception:
+                pass
+            self._playback_stream = None
+        self._ai_speaking.clear()
+        self._gating_audio.clear()
+        self._tool_call_in_progress.clear()
+        self._interrupted.clear()
+        logger.info("Resource cleanup complete.")
+
     async def _async_main(self) -> None:
         while self._running:
             try:
                 await self._connect_and_run()
                 if self._reconnect_pending:
                     self._reconnect_pending = False
-                    continue  # reconnect
-                break  # clean exit
-            except (websockets.WebSocketException, asyncio.TimeoutError, ConnectionError, OSError) as exc:
+                    continue
+                break
+            except (websockets.WebSocketException, asyncio.TimeoutError,
+                    ConnectionError, OSError) as exc:
                 if not self._running:
                     break
                 logger.error(f"Connection dropped: {exc}")
                 self._retry_count += 1
                 if self._retry_count > MAX_RECONNECT_RETRIES:
-                    logger.error(f"Max reconnection retries ({MAX_RECONNECT_RETRIES}) exceeded.")
+                    logger.error(f"Max retries ({MAX_RECONNECT_RETRIES}) exceeded.")
                     self._safe_error("Connection lost after maximum retries.")
                     break
                 wait = RECONNECT_BASE_DELAY * (2 ** (self._retry_count - 1))
                 logger.info(f"Reconnecting in {wait:.1f}s (attempt {self._retry_count}/{MAX_RECONNECT_RETRIES})...")
-                self._safe_status(f"Reconnecting ({self._retry_count}/{MAX_RECONNECT_RETRIES})...")
-                # Wait with stop awareness
+                self._set_state(ChatState.RECONNECTING)
                 try:
                     await asyncio.wait_for(
                         self._sleep_check_stop(wait),
@@ -231,7 +381,6 @@ class GeminiLiveClient:
                 break
 
     async def _sleep_check_stop(self, duration: float) -> None:
-        """Sleep while checking stop event."""
         interval = 0.2
         elapsed = 0.0
         while elapsed < duration and self._running:
@@ -280,13 +429,12 @@ class GeminiLiveClient:
 
     async def _connect_and_run(self) -> None:
         url = self._build_ws_url()
-        logger.info(f"Connecting to Gemini Live WebSocket...")
+        logger.info("Connecting to Gemini Live WebSocket...")
 
         async with websockets.connect(url, ping_interval=30, ping_timeout=10) as ws:
             self._ws = ws
             self._goaway_received = False
             logger.info("WebSocket connected. Sending setup message.")
-
             await ws.send(json.dumps(self._build_setup_message()))
 
             raw = await ws.recv()
@@ -297,9 +445,9 @@ class GeminiLiveClient:
                 raise ConnectionError(f"Gemini setup error: {err_msg}")
 
             logger.info("Gemini setup acknowledged. Session ready.")
-            self._safe_status("Connected")
+            self._set_state(ChatState.CONNECTED)
             self._reset_idle_timer()
-            self._retry_count = 0  # reset retries on successful connect
+            self._retry_count = 0
 
             self._mic_thread = threading.Thread(target=self._run_mic, daemon=True)
             self._mic_thread.start()
@@ -307,11 +455,12 @@ class GeminiLiveClient:
             self._playback_thread.start()
 
             idle_task = asyncio.create_task(self._idle_monitor())
+            health_task = asyncio.create_task(self._health_monitor(ws))
             send_task = asyncio.create_task(self._send_audio(ws))
             receive_task = asyncio.create_task(self._receive_audio(ws))
 
             done, pending = await asyncio.wait(
-                [send_task, receive_task, idle_task],
+                [send_task, receive_task, idle_task, health_task],
                 return_when=asyncio.FIRST_EXCEPTION,
             )
 
@@ -322,7 +471,6 @@ class GeminiLiveClient:
                 except (asyncio.CancelledError, Exception):
                     pass
 
-            # Check if an exception caused the exit
             for task in done:
                 exc = task.exception()
                 if exc and not isinstance(exc, asyncio.CancelledError):
@@ -343,16 +491,34 @@ class GeminiLiveClient:
             elapsed = time.time() - self._last_activity_time
             if elapsed >= self.idle_timeout:
                 logger.info(f"Idle timeout reached ({self.idle_timeout}s). Disconnecting.")
-                self._safe_status("Idle timeout — tap to reconnect")
+                self._set_state(ChatState.IDLE_TIMEOUT)
                 self._running = False
                 break
 
-    # ── Mic capture ─────────────────────────────────────────────────────────
+    # ── Health monitor ───────────────────────────────────────────────────────
+
+    async def _health_monitor(self, ws: websockets.WebSocketClientProtocol) -> None:
+        """Periodically ping the WS to detect zombie connections."""
+        while self._running:
+            await asyncio.sleep(HEALTH_CHECK_INTERVAL)
+            if not self._running or ws.state is not websockets.State.OPEN:
+                break
+            try:
+                pong = await asyncio.wait_for(ws.ping(), timeout=HEALTH_CHECK_TIMEOUT)
+                await asyncio.wait_for(pong, timeout=HEALTH_CHECK_TIMEOUT)
+                logger.debug("Health check OK")
+            except (asyncio.TimeoutError, Exception) as exc:
+                logger.warning(f"Health check failed: {exc}")
+                if self._running:
+                    self._reconnect_pending = True
+                    break
+
+    # ── Mic capture (with graceful degradation) ─────────────────────────────
 
     def _mic_callback(self, indata: np.ndarray, frames: int, time_info, status) -> None:
         if status:
             logger.warning(f"Mic status: {status}")
-        if self._running and not self._ai_speaking.is_set():
+        if self._running and not self._ai_speaking.is_set() and not self._input_muted:
             self._input_queue.put(indata.copy())
 
     def _run_mic(self) -> None:
@@ -370,10 +536,11 @@ class GeminiLiveClient:
         except Exception as exc:
             if self._running:
                 logger.error(f"Mic thread error: {exc}")
-                self._safe_error(f"Mic error: {exc}")
+                self._degradation |= _Degradation.MIC_FAILURE
+                self._safe_status("Mic unavailable - listen-only mode")
         logger.info("Mic capture thread terminated.")
 
-    # ── Audio playback ──────────────────────────────────────────────────────
+    # ── Audio playback (with graceful degradation) ───────────────────────────
 
     def _run_playback(self) -> None:
         logger.info("Starting playback thread.")
@@ -397,6 +564,7 @@ class GeminiLiveClient:
                     if not self._running:
                         break
                     self._ai_speaking.set()
+                    self._set_state(ChatState.AI_SPEAKING)
                     self._reset_idle_timer()
 
                     if self._interrupted.is_set():
@@ -411,23 +579,28 @@ class GeminiLiveClient:
 
                     if self._output_queue.empty():
                         self._ai_speaking.clear()
+                        self._set_state(ChatState.LISTENING)
 
                 except queue.Empty:
-                    self._ai_speaking.clear()
+                    if self._ai_speaking.is_set():
+                        self._ai_speaking.clear()
+                        self._set_state(ChatState.LISTENING)
                     continue
 
+        except Exception as exc:
+            if self._running:
+                logger.error(f"Playback thread error: {exc}")
+                self._degradation |= _Degradation.PLAYBACK_FAILURE
+                self._safe_status("Audio muted - session active")
+        finally:
+            self._ai_speaking.clear()
             if self._playback_stream:
                 try:
                     self._playback_stream.stop()
                     self._playback_stream.close()
                 except Exception:
                     pass
-        except Exception as exc:
-            if self._running:
-                logger.error(f"Playback thread error: {exc}")
-                self._safe_error(f"Playback error: {exc}")
-        finally:
-            self._ai_speaking.clear()
+                self._playback_stream = None
         logger.info("Playback thread terminated.")
 
     @staticmethod
@@ -438,7 +611,7 @@ class GeminiLiveClient:
             except queue.Empty:
                 break
 
-    # ── WebSocket send / receive ────────────────────────────────────────────
+    # ── WebSocket send / receive ─────────────────────────────────────────────
 
     async def _send_audio(self, ws: websockets.WebSocketClientProtocol) -> None:
         loop = asyncio.get_running_loop()
@@ -448,7 +621,7 @@ class GeminiLiveClient:
                 data = await loop.run_in_executor(
                     None, lambda: self._input_queue.get(timeout=0.2)
                 )
-            except:
+            except queue.Empty:
                 continue
             if not self._running:
                 break
@@ -496,23 +669,20 @@ class GeminiLiveClient:
                 self._safe_error(err)
                 break
 
-            # goAway
             if "goAway" in msg:
                 reason = msg["goAway"].get("reason", "unknown")
                 logger.info(f"goAway (reason: {reason}). Scheduling reconnection.")
                 self._goaway_received = True
                 self._reconnect_pending = True
-                self._safe_status("Reconnecting...")
+                self._set_state(ChatState.RECONNECTING)
                 break
 
-            # Session resumption update
             if "session_resumption_update" in msg:
                 sru = msg["session_resumption_update"]
                 if sru.get("resumable") and sru.get("new_handle"):
                     self._session_handle = sru["new_handle"]
-                    logger.info(f"Session resumption handle updated.")
+                    logger.info("Session resumption handle updated.")
 
-            # Interrupted
             if "interrupted" in msg:
                 logger.info("User interruption detected.")
                 self._interrupted.set()
@@ -520,24 +690,21 @@ class GeminiLiveClient:
                 self._safe_status("Interrupted")
                 continue
 
-            # Tool Call
             if "toolCall" in msg:
                 await self._handle_tool_call(ws, msg["toolCall"])
                 continue
 
-            # Setup Complete
             if "setupComplete" in msg:
                 logger.info("Setup complete.")
-                self._safe_status("Listening")
+                self._set_state(ChatState.LISTENING)
                 continue
 
-            # Server Content
             if "serverContent" in msg:
                 sc = msg["serverContent"]
                 self._reset_idle_timer()
 
                 if sc.get("turnComplete"):
-                    self._safe_status("Listening")
+                    self._set_state(ChatState.LISTENING)
 
                 if "input_transcription" in sc:
                     input_text = sc["input_transcription"].get("text", "")
@@ -573,21 +740,28 @@ class GeminiLiveClient:
 
         logger.info("Receive audio loop terminated.")
 
+    # ── Tool call handling ───────────────────────────────────────────────────
+
     async def _handle_tool_call(self, ws: websockets.WebSocketClientProtocol, tool_call: dict) -> None:
         function_calls = tool_call.get("functionCalls", [])
         self._tool_call_in_progress.set()
+        self._set_state(ChatState.TOOL_CALL)
         function_responses = []
         for fc in function_calls:
             name = fc.get("name")
             args = fc.get("args", {})
             call_id = fc.get("id")
-            result = {"success": False, "error": "No handler configured"}
+            result: dict = {"success": False, "error": "No handler configured"}
             if self.on_tool_call:
                 try:
                     result = self.on_tool_call(name, args)
                 except Exception as exc:
                     result = {"success": False, "error": str(exc)}
-            function_responses.append({"id": call_id, "name": name, "response": {"output": result}, "scheduling": "SILENT"})
+            function_responses.append({
+                "id": call_id, "name": name,
+                "response": {"output": result},
+                "scheduling": "SILENT",
+            })
 
         if function_responses:
             try:
@@ -596,12 +770,15 @@ class GeminiLiveClient:
                 logger.error(f"Error sending tool responses: {exc}")
 
         self._tool_call_in_progress.clear()
-        # Gate audio briefly after tool call to prevent mixing
+        self._set_state(ChatState.LISTENING)
         self._gating_audio.set()
         self._clear_queue(self._output_queue)
-        threading.Thread(target=lambda: (time.sleep(0.6), self._gating_audio.clear()), daemon=True).start()
+        threading.Thread(
+            target=lambda: (time.sleep(0.6), self._gating_audio.clear()),
+            daemon=True,
+        ).start()
 
-    # ── Safe callbacks ──────────────────────────────────────────────────────
+    # ── Safe callbacks ───────────────────────────────────────────────────────
 
     def _safe_status(self, status: str) -> None:
         if self.on_status:
@@ -612,6 +789,7 @@ class GeminiLiveClient:
 
     def _safe_error(self, error: str) -> None:
         logger.error(f"Error callback: {error}")
+        self._set_state(ChatState.ERROR)
         if self.on_error:
             try:
                 self.on_error(error)

@@ -88,6 +88,33 @@ def _import_gemini_live():
     import gemini_live_client
     return gemini_live_client
 
+
+# ── Gemini Chat: Security Constants ─────────────────────────────────────────
+
+# Tools that ALWAYS require user confirmation before execution
+CONFIRMATION_REQUIRED_TOOLS: set[str] = {
+    "run_shell_command", "kill_process", "write_file_content",
+    "file_operation", "system_action", "open_app",
+    "press_key_combination", "create_folder",
+}
+
+# Shell command patterns that are ALWAYS blocked (even with confirmation)
+BLOCKED_SHELL_PATTERNS: list[str] = [
+    "Remove-Item", "del ", "format ", "shutdown",
+    "bcdedit", "reg delete", "reg add",
+    "rd /s", "rmdir /s", "icacls",
+    "net user", "net localgroup",
+    "Set-MpPreference", "Stop-Service",
+    "Disable-ComputerRestore", "taskkill /f",
+]
+
+# File paths that are NEVER writable by the AI
+PROTECTED_PATHS: list[str] = [
+    "C:\\Windows", "C:\\Program Files", "C:\\Program Files (x86)",
+    "C:\\System32", "C:\\SysWOW64",
+    "/etc", "/usr", "/bin", "/sbin", "/lib", "/boot",
+]
+
 APP_TITLE = "Voxify"
 ACCENT = "#2563EB"
 ACCENT_GLOW = "#22D3EE"
@@ -201,7 +228,8 @@ class VoxifyApp:
         self._last_frame_pixels: Optional["np.ndarray"] = None
         self._stopping = False
         self._gemini_live_client = None
-        self._live_raw_text: str = ""           # full raw text (spaces inserted between deltas)
+        self._live_raw_text: str = ""           # accumulated text from deltas (corrected by segments)
+        self._live_segments: list[str] = []     # authoritative segment texts
         self._live_processed_marker: int = 0    # how many chars of processed text already typed
         self._live_paste_job = None
         self._runtime_api_key = ""
@@ -229,6 +257,13 @@ class VoxifyApp:
         self._last_live_typed_char = ""
         self._is_minimized = False
         self._auto_minimize_timer: Optional[threading.Timer] = None
+        # ── Gemini Chat: Modernization state ─────────────────────────────────
+        self._transcript_history: list[dict] = []   # [{"role": "user"|"ai", "text": str, "ts": float}]
+        self._transcript_panel_visible = False
+        self._listen_only_mode = False
+        self._tool_call_timestamps: list[float] = []  # for rate limiting
+        self._pending_tool_confirmations: dict = {}   # call_id -> threading.Event
+        self._chat_elapsed_start: float = 0.0
 
         self._wave_anim_running = False
         self._wave_anim_thread: Optional[threading.Thread] = None
@@ -331,6 +366,10 @@ class VoxifyApp:
             
             self.action_button.visible = False
             self.video_btn.visible = True
+            # Show quick actions and transcript panel in chat mode
+            self._quick_actions_row.visible = True
+            self.mute_btn.visible = True
+            self.history_btn.visible = True
             
             self.minimized_action_button.opacity = 0.4
             self.minimized_action_button.disabled = True
@@ -346,6 +385,10 @@ class VoxifyApp:
             
             self.action_button.visible = True
             self.video_btn.visible = False
+            # Hide quick actions and transcript panel when not in chat mode
+            self._quick_actions_row.visible = False
+            self._transcript_panel_container.visible = False
+            self._transcript_panel_visible = False
             
             self.action_button.opacity = 1.0
             self.action_button.disabled = False
@@ -524,6 +567,40 @@ class VoxifyApp:
         self.video_icon = ft.Icon(ft.Icons.VIDEOCAM_OUTLINED, size=14, color=ACCENT)
         self.video_btn = ft.Container(width=36, height=36, border_radius=18, alignment=ft.Alignment(0, 0), bgcolor=ft.Colors.with_opacity(0.2, CARD_ACTIVE), border=ft.Border.all(1, ft.Colors.with_opacity(0.2, BORDER)), content=self.video_icon, on_click=self._on_video_click, visible=False, ink=True)
 
+        # ── Quick action buttons (visible only in chat mode) ──────────────
+        self.mute_icon = ft.Icon(ft.Icons.MIC_ROUNDED, size=12, color=ACCENT)
+        self.mute_btn = ft.Container(width=24, height=24, border_radius=12, alignment=ft.Alignment(0, 0), bgcolor=ft.Colors.with_opacity(0.2, CARD_ACTIVE), border=ft.Border.all(1, ft.Colors.with_opacity(0.2, BORDER)), content=self.mute_icon, on_click=lambda _: self._toggle_listen_only(), visible=False, ink=True)
+        self.history_icon = ft.Icon(ft.Icons.CHAT_BUBBLE_OUTLINE_ROUNDED, size=12, color=ACCENT)
+        self.history_btn = ft.Container(width=24, height=24, border_radius=12, alignment=ft.Alignment(0, 0), bgcolor=ft.Colors.with_opacity(0.2, CARD_ACTIVE), border=ft.Border.all(1, ft.Colors.with_opacity(0.2, BORDER)), content=self.history_icon, on_click=lambda _: self._toggle_transcript_panel(), visible=False, ink=True)
+
+        # ── Transcript history panel ─────────────────────────────────────
+        self._transcript_list = ft.Column(spacing=4, controls=[])
+        self._transcript_chevron = ft.Icon(ft.Icons.KEYBOARD_ARROW_UP_ROUNDED, size=12, color=MUTED)
+        transcript_header = ft.Container(
+            padding=ft.Padding.symmetric(horizontal=8, vertical=2),
+            on_click=lambda _: self._toggle_transcript_panel(),
+            content=ft.Row(
+                spacing=4,
+                alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                controls=[
+                    ft.Text("Transcript", size=7, weight=ft.FontWeight.W_700, color=MUTED),
+                    self._transcript_chevron,
+                ]
+            )
+        )
+        self._transcript_panel_container = ft.Container(
+            visible=False,
+            height=120,
+            padding=ft.Padding.symmetric(horizontal=4),
+            content=ft.Column(
+                spacing=4,
+                expand=True,
+                scroll=ft.ScrollMode.AUTO,
+                controls=[transcript_header, self._transcript_list]
+            )
+        )
+
         brand_block = ft.Column(
             spacing=0, 
             tight=True, 
@@ -536,7 +613,16 @@ class VoxifyApp:
         )
         self.controls_group = ft.Container(padding=ft.Padding.symmetric(vertical=4), content=ft.Row(spacing=6, alignment=ft.MainAxisAlignment.CENTER, vertical_alignment=ft.CrossAxisAlignment.CENTER, controls=[self.action_button, self.video_btn, self.chat_btn, self.settings_btn, self.minimize_btn]))
 
-        self.full_mode_container = ft.Container(visible=True, content=ft.Column(alignment=ft.MainAxisAlignment.SPACE_BETWEEN, horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=12, controls=[ft.Row(alignment=ft.MainAxisAlignment.CENTER, vertical_alignment=ft.CrossAxisAlignment.CENTER, spacing=8, controls=[indicator, brand_block]), ft.Column(horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=4, controls=[waveform, self.aux_chip]), self.controls_group]))
+        # Quick actions row (visible only during chat mode)
+        self._quick_actions_row = ft.Row(
+            spacing=4,
+            alignment=ft.MainAxisAlignment.CENTER,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            controls=[self.mute_btn, self.history_btn],
+            visible=False,
+        )
+
+        self.full_mode_container = ft.Container(visible=True, content=ft.Column(alignment=ft.MainAxisAlignment.SPACE_BETWEEN, horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=8, controls=[ft.Row(alignment=ft.MainAxisAlignment.CENTER, vertical_alignment=ft.CrossAxisAlignment.CENTER, spacing=8, controls=[indicator, brand_block]), ft.Column(horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=4, controls=[waveform, self.aux_chip]), self._quick_actions_row, self._transcript_panel_container, self.controls_group]))
         self.minimized_mode_container = ft.Container(visible=False, alignment=ft.Alignment(0, 0), content=self.minimized_action_button)
 
         self.widget_shell = ft.Container(expand=True, margin=ft.Margin.all(0), padding=ft.Padding.symmetric(horizontal=12, vertical=12), border_radius=20, gradient=ft.LinearGradient(begin=ft.Alignment(-1, -1), end=ft.Alignment(1, 1), colors=[CARD, WIDGET_GRADIENT_END]), on_hover=self._on_widget_hover, content=ft.Stack(expand=True, controls=[self.full_mode_container, self.minimized_mode_container]))
@@ -851,21 +937,181 @@ class VoxifyApp:
             return
         self.page.update()
 
+        # Apply gemini_show_transcript_panel config at start
+        if config.load().get("gemini_show_transcript_panel", False):
+            self._transcript_panel_visible = True
+            if hasattr(self, '_transcript_panel_container'):
+                self._transcript_panel_container.visible = True
+                if hasattr(self, '_transcript_chevron'):
+                    self._transcript_chevron.name = ft.Icons.KEYBOARD_ARROW_DOWN_ROUNDED
+            self.page.update()
+
+    # ── Gemini Chat: Security & Safety ───────────────────────────────────────
+
+    def _is_tool_confirmation_required(self, name: str) -> bool:
+        """Check if a tool requires user confirmation before execution."""
+        cfg = config.load()
+        if not cfg.get("gemini_tool_confirmation_enabled", True):
+            return False
+        return name in CONFIRMATION_REQUIRED_TOOLS
+
+    def _is_shell_command_blocked(self, command: str) -> bool:
+        """Check if a shell command matches any blocked pattern."""
+        cfg = config.load()
+        if not cfg.get("gemini_shell_command_blocked", True):
+            return False
+        cmd_lower = command.lower()
+        for pattern in BLOCKED_SHELL_PATTERNS:
+            if pattern.lower() in cmd_lower:
+                logger.warning(f"Blocked shell command pattern: {pattern} in '{command}'")
+                return True
+        return False
+
+    def _is_path_protected(self, path: str) -> bool:
+        """Check if a file path points to a protected system directory."""
+        path_lower = path.lower().replace("/", "\\").strip()
+        for protected in PROTECTED_PATHS:
+            if path_lower.startswith(protected.lower().replace("/", "\\")):
+                logger.warning(f"Protected path access denied: {path}")
+                return True
+        return False
+
+    def _check_tool_rate_limit(self) -> bool:
+        """Return True if the tool call is within rate limits."""
+        cfg = config.load()
+        limit = cfg.get("gemini_tool_rate_limit", 10)
+        window = cfg.get("gemini_tool_rate_window", 60)
+        now = time.time()
+        # Prune old timestamps outside the window
+        self._tool_call_timestamps = [
+            ts for ts in self._tool_call_timestamps if (now - ts) < window
+        ]
+        if len(self._tool_call_timestamps) >= limit:
+            logger.warning(f"Tool rate limit exceeded: {len(self._tool_call_timestamps)}/{limit} in {window}s")
+            return False
+        self._tool_call_timestamps.append(now)
+        return True
+
+    def _validate_tool_args(self, name: str, args: dict) -> dict | None:
+        """Validate tool arguments for security. Returns error dict if blocked, None if OK."""
+        # Rate limiting
+        if not self._check_tool_rate_limit():
+            return {"success": False, "error": "Rate limit exceeded. Please slow down."}
+
+        # Shell command blocklist
+        if name == "run_shell_command":
+            cmd = args.get("command", "")
+            if self._is_shell_command_blocked(cmd):
+                return {"success": False, "error": "This command is blocked for safety."}
+
+        # File path protection
+        if name in ("write_file_content", "file_operation", "create_folder"):
+            path = args.get("path", "") or args.get("source", "")
+            if self._is_path_protected(path):
+                return {"success": False, "error": "Writing to this path is not allowed."}
+
+        if name == "read_file":
+            path = args.get("path", "")
+            if self._is_path_protected(path):
+                return {"success": False, "error": "Reading from this path is not allowed."}
+
+        return None
+
+    def _request_tool_confirmation(self, name: str, args: dict) -> bool:
+        """Show a confirmation dialog for dangerous tools. Returns True if approved."""
+        cfg = config.load()
+        timeout = cfg.get("gemini_tool_confirmation_timeout", 10)
+
+        # Build a human-readable description of what the tool will do
+        desc = name.replace("_", " ").title()
+        if name == "run_shell_command":
+            desc = f"Run shell: {args.get('command', '?')[:80]}"
+        elif name == "kill_process":
+            desc = f"Kill process: {args.get('pid_or_name', '?')}"
+        elif name == "write_file_content":
+            desc = f"Write file: {args.get('path', '?')}"
+        elif name == "file_operation":
+            desc = f"{args.get('action', '?')} file: {args.get('source', '?')}"
+        elif name == "system_action":
+            desc = f"System action: {args.get('action', '?')}"
+        elif name == "open_app":
+            desc = f"Open app: {args.get('query', '?')}"
+
+        approval_event = threading.Event()
+        result = {"approved": False}
+
+        def _show_toast():
+            def _on_approve(e):
+                result["approved"] = True
+                approval_event.set()
+                toast.open = False
+                self.page.update()
+
+            def _on_deny(e):
+                result["approved"] = False
+                approval_event.set()
+                toast.open = False
+                self.page.update()
+
+            toast = ft.SnackBar(
+                content=ft.Column(
+                    spacing=4,
+                    controls=[
+                        ft.Text(f"AI wants to: {desc}", size=10, color=TEXT, weight=ft.FontWeight.W_600),
+                        ft.Row(
+                            spacing=8,
+                            controls=[
+                                ft.ElevatedButton("Approve", on_click=_on_approve, bgcolor=SUCCESS, color=BG,
+                                                   style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(8))),
+                                ft.ElevatedButton("Deny", on_click=_on_deny, bgcolor=DANGER, color=TEXT,
+                                                   style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(8))),
+                            ]
+                        ),
+                    ]
+                ),
+                bgcolor=CARD_SOFT,
+                duration=timeout * 1000,
+                open=True,
+            )
+            self.page.snack_bar = toast
+            self.page.update()
+
+        try:
+            self.page.run_thread(_show_toast)
+        except Exception:
+            pass
+
+        approved = approval_event.wait(timeout=timeout)
+        if not approved:
+            logger.info(f"Tool confirmation timed out for {name}")
+            return False
+        return result.get("approved", False)
+
     def _handle_ai_tool_call(self, name: str, args: dict) -> dict:
         self.page.run_thread(self._set_status, f"AI {name}...", SUCCESS)
-        
-        # Security/Privacy Check: Read fresh configuration from disk to ensure real-time settings compliance
+
+        # Security/Privacy Check: Read fresh configuration from disk
         pc_control_enabled = bool(config.load().get("pc_control_enabled", True))
-        
-        # Tools that are allowed even if PC Control is OFF (Strictly passive, read-only context or background search)
+
+        # Tools allowed even if PC Control is OFF (strictly passive/read-only)
         allowed_tools = [
-            "web_search", "get_local_time", "get_system_status", "read_clipboard", 
-            "get_active_window_info", "list_windows", "list_files", "parse_screen_text", 
+            "web_search", "get_local_time", "get_system_status", "read_clipboard",
+            "get_active_window_info", "list_windows", "list_files", "parse_screen_text",
             "list_running_processes"
         ]
-        
+
         if not pc_control_enabled and name not in allowed_tools:
             return {"success": False, "error": "PC Control is currently disabled by the user in Settings. You can only chat and search the web."}
+
+        # Security validation (rate limit, blocked commands, protected paths)
+        validation_error = self._validate_tool_args(name, args)
+        if validation_error is not None:
+            return validation_error
+
+        # Confirmation prompt for dangerous tools
+        if self._is_tool_confirmation_required(name):
+            if not self._request_tool_confirmation(name, args):
+                return {"success": False, "error": "User denied this action."}
 
         try:
             if name == "open_app": return {"success": output_handler.open_application(args.get("query", ""))}
@@ -893,7 +1139,7 @@ class VoxifyApp:
             elif name == "get_active_window_info": return {"success": True, "info": output_handler.get_active_window_info()}
             elif name == "system_action": return {"success": output_handler.system_action(action=args.get("action", ""))}
             elif name == "list_files": return {"success": True, "files": output_handler.list_files(directory=args.get("directory", "downloads"))}
-            elif name == "read_file": return {"success": True, "content": output_handler.read_file_content(path=args.get("path", ""))}
+            elif name == "read_file": return {"success": True, "content": output_handler.read_file_content(file_path=args.get("path", ""))}
             elif name == "write_file_content": return {"success": output_handler.write_file_content(path=args.get("path", ""), content=args.get("content", ""))}
             elif name == "file_operation": return {"success": output_handler.file_operation(source=args.get("source", ""), target=args.get("target", ""), action=args.get("action", "copy"))}
             elif name == "create_folder": return {"success": output_handler.create_folder(path=args.get("path", ""))}
@@ -910,11 +1156,177 @@ class VoxifyApp:
         except Exception as exc: return {"success": False, "error": str(exc)}
         return {"success": False, "error": "Unknown tool"}
 
+    # ── Gemini Chat: Transcript History ──────────────────────────────────────
+
+    def _add_transcript_message(self, role: str, text: str) -> None:
+        """Append a message to the transcript history and update the panel."""
+        if not text or not text.strip():
+            return
+        cfg = config.load()
+        max_msgs = cfg.get("gemini_transcript_max_messages", 20)
+        self._transcript_history.append({
+            "role": role,
+            "text": text.strip(),
+            "ts": time.time(),
+        })
+        # Trim to max size
+        if len(self._transcript_history) > max_msgs:
+            self._transcript_history = self._transcript_history[-max_msgs:]
+        # Update the panel if visible
+        self._refresh_transcript_panel()
+
+    def _refresh_transcript_panel(self) -> None:
+        """Rebuild the transcript panel controls from the history."""
+        if not hasattr(self, '_transcript_list') or self._transcript_list is None:
+            return
+        controls = []
+        for msg in self._transcript_history[-20:]:
+            is_user = msg["role"] == "user"
+            role_color = ACCENT if is_user else ACCENT_GLOW
+            role_label = "You" if is_user else "Voxify"
+            controls.append(
+                ft.Container(
+                    padding=ft.Padding.symmetric(horizontal=8, vertical=4),
+                    border_radius=8,
+                    bgcolor=ft.Colors.with_opacity(0.08, ACCENT if is_user else MUTED),
+                    content=ft.Column(
+                        spacing=1,
+                        controls=[
+                            ft.Text(role_label, size=7, weight=ft.FontWeight.W_800, color=role_color),
+                            ft.Text(msg["text"], size=8, color=TEXT, selectable=True, max_lines=4, overflow=ft.TextOverflow.ELLIPSIS),
+                        ]
+                    )
+                )
+            )
+        self._transcript_list.controls = controls
+        # Auto-scroll to bottom
+        try:
+            self._transcript_list.scroll_to(offset=-1)
+        except Exception:
+            pass
+        try:
+            self.page.update()
+        except Exception:
+            pass
+
+    def _toggle_transcript_panel(self) -> None:
+        """Toggle the transcript history panel visibility."""
+        self._transcript_panel_visible = not self._transcript_panel_visible
+        if hasattr(self, '_transcript_panel_container'):
+            self._transcript_panel_container.visible = self._transcript_panel_visible
+            if hasattr(self, '_transcript_chevron'):
+                self._transcript_chevron.name = (
+                    ft.Icons.KEYBOARD_ARROW_DOWN_ROUNDED if self._transcript_panel_visible
+                    else ft.Icons.KEYBOARD_ARROW_UP_ROUNDED
+                )
+            self.page.update()
+
+    # ── Gemini Chat: Rich Status ─────────────────────────────────────────────
+
+    def _set_gemini_status(self, status: str) -> None:
+        """Map Gemini states to rich UI indicators."""
+        STATE_COLORS = {
+            "Connected": SUCCESS,
+            "Listening\u2026": ACCENT_GLOW,
+            "Listening...": ACCENT_GLOW,
+            "Speaking\u2026": ACCENT,
+            "Speaking...": ACCENT,
+            "Interrupted": MUTED,
+            "Tool executing\u2026": AUX_BG,
+            "Tool executing...": AUX_BG,
+            "Reconnecting\u2026": "#F59E0B",
+            "Reconnecting...": "#F59E0B",
+            "Idle timeout": "#EAB308",
+            "Error": DANGER,
+            "Mic unavailable - listen-only mode": MUTED,
+            "Audio muted - session active": MUTED,
+        }
+        color = STATE_COLORS.get(status, TEXT)
+
+        # Update pulse dot color based on state
+        if hasattr(self, 'pulse_core'):
+            if "Listening" in status:
+                self.pulse_core.bgcolor = ACCENT_GLOW
+            elif "Speaking" in status:
+                self.pulse_core.bgcolor = ACCENT
+            elif "Connected" in status:
+                self.pulse_core.bgcolor = SUCCESS
+            elif "Error" in status:
+                self.pulse_core.bgcolor = DANGER
+            elif "Reconnecting" in status:
+                self.pulse_core.bgcolor = "#F59E0B"
+            elif "Tool" in status:
+                self.pulse_core.bgcolor = AUX_BG
+            elif "timeout" in status.lower():
+                self.pulse_core.bgcolor = "#EAB308"
+            else:
+                self.pulse_core.bgcolor = INACTIVE_DOT
+
+        # Map display text
+        mapping = {
+            "Connected": "Gemini Live ready",
+            "Listening\u2026": "Listening...",
+            "Listening...": "Listening...",
+            "Speaking\u2026": "AI speaking...",
+            "Speaking...": "AI speaking...",
+            "Interrupted": "You interrupted",
+            "Tool executing\u2026": "Executing tool...",
+            "Tool executing...": "Executing tool...",
+            "Reconnecting\u2026": "Reconnecting...",
+            "Reconnecting...": "Reconnecting...",
+            "Idle timeout": "Idle timeout",
+            "Idle timeout\u2026": "Idle timeout",
+            "Error": "Error occurred",
+        }
+        display = mapping.get(status, status)
+        self._set_status(display, color)
+
+    # ── Gemini Chat: Transcript callbacks ────────────────────────────────────
+
+    def _on_gemini_user_transcript(self, transcript: str) -> None:
+        logger.info(f"User said: {transcript}")
+        self._add_transcript_message("user", transcript)
+
+    def _on_gemini_transcript(self, transcript: str) -> None:
+        """Handle AI transcript - accumulate and show in status + history."""
+        # Show in status bar
+        preview = (transcript[:50] + "..") if len(transcript) > 50 else transcript
+        self._set_status(preview, TEXT)
+        # Add to transcript history
+        self._add_transcript_message("ai", transcript)
+
+    # ── Gemini Chat: Quick Actions ───────────────────────────────────────────
+
+    def _toggle_listen_only(self) -> None:
+        """Toggle listen-only mode (mute mic input)."""
+        self._listen_only_mode = not self._listen_only_mode
+        # Sync to GeminiLiveClient if active
+        if self._gemini_live_client is not None:
+            try:
+                self._gemini_live_client.set_mute_input(self._listen_only_mode)
+            except Exception:
+                pass
+        if hasattr(self, 'mute_icon'):
+            if self._listen_only_mode:
+                self.mute_icon.name = ft.Icons.MIC_OFF_ROUNDED
+                self.mute_icon.color = DANGER
+                self.mute_btn.bgcolor = ft.Colors.with_opacity(0.3, DANGER)
+            else:
+                self.mute_icon.name = ft.Icons.MIC_ROUNDED
+                self.mute_icon.color = ACCENT
+                self.mute_btn.bgcolor = ft.Colors.with_opacity(0.2, CARD_ACTIVE)
+            self.page.update()
+
     def _stop_chat_mode(self) -> None:
         if not self._is_chatting:
             return
         self._is_chatting = False
         self._is_recording = False
+        self._listen_only_mode = False
+        self._transcript_history.clear()
+        self._transcript_panel_visible = False
+        self._tool_call_timestamps.clear()
+        self._chat_elapsed_start = 0.0
         self._stop_screen_sharing()
         if self._gemini_live_client:
             try:
@@ -926,14 +1338,21 @@ class VoxifyApp:
         self._apply_theme_to_controls()
         self._reset_to_ready()
 
-    def _set_gemini_status(self, status: str) -> None:
-        mapping = {"Connected": "Gemini Live ready", "Listening": "Listening...", "Interrupted": "You interrupted"}
-        display = mapping.get(status, status)
-        self._set_status(display, SUCCESS)
-
     def _on_gemini_error(self, error: str) -> None:
         if not self._is_chatting:
             return
+        # Show error toast
+        try:
+            toast = ft.SnackBar(
+                content=ft.Text(f"Gemini Live error: {error}", size=10, color=TEXT),
+                bgcolor=DANGER,
+                duration=5000,
+                open=True,
+            )
+            self.page.snack_bar = toast
+            self.page.update()
+        except Exception:
+            pass
         self._is_chatting = False
         self._is_recording = False
         if self._gemini_live_client:
@@ -944,10 +1363,6 @@ class VoxifyApp:
             self._gemini_live_client = None
         self._apply_theme_to_controls()
         self._on_transcription_error(f"Gemini Live: {error}")
-
-    def _on_gemini_transcript(self, transcript: str) -> None:
-        preview = (transcript[:50] + "..") if len(transcript) > 50 else transcript
-        self._set_status(preview, TEXT)
 
     RESOLUTION_MAP = {
         "low": 480,
@@ -1293,9 +1708,6 @@ class VoxifyApp:
             device_id=self._device_id,
         )
 
-    def _on_gemini_user_transcript(self, transcript: str) -> None:
-        logger.info(f"User said: {transcript}")
-
     def _on_action_click(self, _event) -> None:
         logger.info("Action button clicked")
         self._register_widget_interaction()
@@ -1453,7 +1865,7 @@ class VoxifyApp:
                 logger.warning(f"System audio unsupported: {reason}, falling back to mic")
                 preferred = "mic"
         logger.info(f"Starting live mode, source={preferred}")
-        self._live_raw_text = ""; self._live_processed_marker = 0; self._is_recording = True
+        self._live_raw_text = ""; self._live_segments = []; self._live_processed_marker = 0; self._is_recording = True
         try:
             selected_model = self.cfg.get("model", "voxtral-mini-2602").strip().lower()
             live_model = LIVE_MODEL_MAP.get(selected_model, "voxtral-mini-transcribe-realtime-2602")
@@ -1470,6 +1882,7 @@ class VoxifyApp:
                 sample_rate=int(self.cfg.get("sample_rate", 16000)),
                 source=preferred, mic_device=mic_dev,
                 on_delta=lambda t: self.page.run_thread(self._type_live_delta, t),
+                on_segment=lambda t: self.page.run_thread(self._on_segment, t),
                 on_status=lambda s: self.page.run_thread(self._set_status, s, MUTED),
                 on_done=lambda: self.page.run_thread(self._on_realtime_done),
                 on_error=lambda e: self.page.run_thread(self._on_transcription_error, e),
@@ -1532,6 +1945,21 @@ class VoxifyApp:
         else: self._set_status("Ready", MUTED)
         self._set_action("Start", ACCENT, ACCENT, TEXT, self._on_action_click)
 
+    def _on_segment(self, segment_text: str) -> None:
+        """Replace accumulated raw text with the authoritative segment text.
+
+        ``TranscriptionStreamSegmentDelta`` carries complete, correctly-spaced
+        text for each segment (sentence/clause).  We rebuild the accumulated
+        raw text from the segment history so that spacing is always correct.
+        """
+        logger.info(f"_on_segment: '{segment_text[:60]}' (len={len(segment_text)})")
+        with _live_lock:
+            self._live_segments.append(segment_text)
+            self._live_raw_text = " ".join(self._live_segments)
+        # Immediately flush so the corrected text appears without delay.
+        if self._live_paste_job: self._live_paste_job.cancel()
+        self._flush_live_buffer()
+
     def _stop_realtime(self) -> None:
         logger.info("_stop_realtime called")
         self._is_recording = False
@@ -1544,20 +1972,19 @@ class VoxifyApp:
         self._stopping = False; self._reset_to_ready()
 
     def _type_live_delta(self, delta: str) -> None:
+        """Handle a raw text delta from the realtime API.
+
+        Deltas are incremental fragments (sub-word partials, partial words,
+        or words with/without leading spaces).  We accumulate them *as-is*
+        for instant responsiveness, then let ``_on_segment`` correct the
+        full text when a complete segment arrives.
+        """
         logger.info(f"_type_live_delta: '{delta[:60]}' (raw_len={len(delta)})")
         with _live_lock:
-            # The API sends word-level text deltas without leading spaces.
-            # Accumulate the full text, inserting spaces between words so
-            # the raw text is a proper transcript.
-            if self._live_raw_text and not delta.startswith(
-                (" ", ".", ",", "!", "?", ";", ":", "\n", "\r", ")", "]", "}", "'", '"')
-            ):
-                delta = " " + delta
             self._live_raw_text += delta
         logger.debug(f"_type_live_delta: raw_text now {len(self._live_raw_text)} chars")
         if self._live_paste_job: self._live_paste_job.cancel()
-        # Use a short debounce so text appears responsively, but the
-        # accumulation guarantees spaces are correct regardless of timing.
+        # Short debounce – text appears quickly; segments correct it shortly after.
         timer = threading.Timer(0.15, self._flush_live_buffer); self._live_paste_job = timer; timer.daemon = True; timer.start()
 
     def _flush_live_buffer(self) -> None:

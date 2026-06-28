@@ -65,6 +65,17 @@ DEFAULT_CONFIG = {
     "pc_control_enabled": True,
     "auto_install_updates": True,
     "restart_after_update": True,
+    # ── Gemini Chat: Security & Safety ────────────────────────────────────────
+    "gemini_tool_confirmation_enabled": True,
+    "gemini_tool_confirmation_timeout": 10,
+    "gemini_shell_command_blocked": True,
+    "gemini_shell_timeout_max": 30,
+    "gemini_tool_rate_limit": 10,
+    "gemini_tool_rate_window": 60,
+    # ── Gemini Chat: UI & UX ──────────────────────────────────────────────────
+    "gemini_transcript_max_messages": 20,
+    "gemini_show_transcript_panel": False,
+    "gemini_listen_only_mode": False,
 }
 
 
@@ -93,18 +104,6 @@ def save(cfg: dict) -> None:
     _invalidate_cache()
     with open(CONFIG_FILE, "w", encoding="utf-8") as f:
         json.dump(cfg, f, indent=2)
-
-
-def get(key: str, default=None):
-    """Quick single-key read."""
-    return load().get(key, default)
-
-
-def set_value(key: str, value) -> None:
-    """Quick single-key write."""
-    cfg = load()
-    cfg[key] = value
-    save(cfg)
 
 
 def get(key: str, default=None):
