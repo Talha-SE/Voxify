@@ -863,6 +863,7 @@ def main(page: ft.Page) -> None:
         value=(license_state.get("licenseKey") or "").strip(),
         password=True,
         can_reveal_password=True,
+        on_submit=lambda e: _activate_license(e),
         **_field_style(),
     )
     license_status_text = ft.Text("License not activated", size=11, color=MUTED, weight=ft.FontWeight.W_700)
@@ -1000,8 +1001,17 @@ def main(page: ft.Page) -> None:
         page.update()
 
     def _show_snack(message: str) -> None:
-        page.snack_bar = ft.SnackBar(content=ft.Text(message, color=TEXT), bgcolor=CARD_SOFT, open=True)
-        page.update()
+        # Flet 0.84 removed page.snack_bar — SnackBar is a DialogControl.
+        try:
+            snack = ft.SnackBar(content=ft.Text(message, color=TEXT), bgcolor=CARD_SOFT, open=True)
+            page.show_dialog(snack)
+        except Exception:
+            # Fallback: try the old API in case the Flet version is different.
+            try:
+                page.snack_bar = ft.SnackBar(content=ft.Text(message, color=TEXT), bgcolor=CARD_SOFT, open=True)
+                page.update()
+            except Exception:
+                pass  # Last resort — swallow silently.
 
     def _open_external_url(url: str) -> None:
         try:
@@ -1077,15 +1087,25 @@ def main(page: ft.Page) -> None:
         if not key:
             _show_snack("License key is required.")
             return
+        activate_license_button.disabled = True
+        activate_license_button.text = "Activating..."
         _update_status("Activating license...", MUTED)
         page.update()
         def _worker() -> None:
             try:
                 session_data = website_client.activate_license(license_key=key, device_id=device_id, device_name=f"{app_info.APP_NAME}-{app_info.APP_PLATFORM}")
                 license_cache.save_state(token=session_data.token, license_key=key, entitlement=session_data.entitlement.__dict__)
-                page.run_thread(_render_license_entitlement, session_data.entitlement)
-                page.run_thread(_show_snack, "License activated successfully.")
-            except Exception as exc: page.run_thread(_show_snack, str(exc))
+                _render_license_entitlement(session_data.entitlement)
+                _update_status("License activated", SUCCESS)
+                _show_snack("License activated successfully.")
+            except Exception as exc:
+                logger.error(f"Activation failed: {exc}")
+                _update_status("Activation failed", WARNING)
+                _show_snack(str(exc))
+            finally:
+                activate_license_button.disabled = False
+                activate_license_button.text = "Activate"
+                page.update()
         threading.Thread(target=_worker, daemon=True).start()
 
     def _refresh_license(_event: ft.ControlEvent | None = None) -> None:
@@ -1094,12 +1114,22 @@ def main(page: ft.Page) -> None:
         if not token:
             _activate_license(_event)
             return
+        refresh_license_button.disabled = True
+        _update_status("Refreshing...", MUTED)
+        page.update()
         def _worker() -> None:
             try:
                 session_data = website_client.refresh_license(token=token, device_id=device_id, device_name=f"{app_info.APP_NAME}-{app_info.APP_PLATFORM}", license_key=(state.get("licenseKey") or "").strip())
                 license_cache.save_state(token=session_data.token, license_key=(state.get("licenseKey") or "").strip(), entitlement=session_data.entitlement.__dict__)
-                page.run_thread(_render_license_entitlement, session_data.entitlement)
-            except Exception as exc: page.run_thread(_show_snack, str(exc))
+                _render_license_entitlement(session_data.entitlement)
+                _update_status("License refreshed", SUCCESS)
+            except Exception as exc:
+                logger.error(f"Refresh failed: {exc}")
+                _update_status("Refresh failed", WARNING)
+                _show_snack(str(exc))
+            finally:
+                refresh_license_button.disabled = False
+                page.update()
         threading.Thread(target=_worker, daemon=True).start()
 
     def _check_updates(manual: bool = False) -> None:

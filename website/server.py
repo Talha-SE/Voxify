@@ -31,10 +31,10 @@ import requests
 from werkzeug.security import check_password_hash
 
 try:
-    from .license_store import MongoLicenseStore
+    from .license_store import MongoLicenseStore, MASTER_LICENSE_KEY
     from .secure_api import get_gemini_api_key, get_gemini_model, get_masked_api_key, get_mistral_api_key, get_mistral_model
 except ImportError:
-    from license_store import MongoLicenseStore
+    from license_store import MongoLicenseStore, MASTER_LICENSE_KEY
     from secure_api import get_gemini_api_key, get_gemini_model, get_masked_api_key, get_mistral_api_key, get_mistral_model
 
 load_dotenv()
@@ -1103,6 +1103,7 @@ def site_status():
             "status": "ok",
             "apiConfigured": api_is_set,
             "licenseDbConfigured": db_ok,
+            "masterKeyEnabled": bool(MASTER_LICENSE_KEY),
         }
     )
 
@@ -1141,9 +1142,17 @@ def license_activate():
     if not product_id:
         return jsonify({"success": False, "message": "License verification is not configured on server."}), 503
 
+    # If the master key feature is disabled (MASTER_LICENSE_KEY not set),
+    # log a warning so admins can diagnose failed master-key activations.
+    if not MASTER_LICENSE_KEY:
+        app.logger.warning("MASTER_LICENSE_KEY is not set — admin master license key will not work. Add MASTER_LICENSE_KEY to your .env file.")
+
     gumroad_payload, gumroad_error = _gumroad_verify(license_key, product_id)
     if not gumroad_payload:
-        return jsonify({"success": False, "active": False, "message": gumroad_error}), 401
+        hint = ""
+        if not MASTER_LICENSE_KEY and ("brevy" in license_key.lower() or "master" in license_key.lower()):
+            hint = " The admin master key is not configured on this server."
+        return jsonify({"success": False, "active": False, "message": gumroad_error + hint}), 401
 
     purchase = gumroad_payload.get("purchase") or {}
     entitlement, activation_error = store.activate_from_purchase(
