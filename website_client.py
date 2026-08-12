@@ -33,6 +33,57 @@ class WebsiteAPIError(RuntimeError):
     """Raised when the website cannot provide runtime API settings."""
 
 
+# ---------------------------------------------------------------------------
+# Local master key fallback — used when the server hasn't been updated yet.
+# The master license key is ONLY recognized from the MASTER_LICENSE_KEY env
+# var. There is no hardcoded key in source code.
+# ---------------------------------------------------------------------------
+_MASTER_KEY = os.getenv("MASTER_LICENSE_KEY", "")
+
+
+def _try_local_master_key(license_key: str, device_id: str, device_name: str) -> LicenseSession | None:
+    """If the server doesn't support the master key, create a local entitlement.
+
+    Returns None if the key doesn't match MASTER_LICENSE_KEY, or a fully
+    valid LicenseSession with unlimited quota when it does.
+    """
+    import secrets as _secrets
+    import time as _time
+
+    candidate = (license_key or "").strip()
+    if not candidate or not _MASTER_KEY:
+        return None
+    if not _secrets.compare_digest(candidate.encode("utf-8"), _MASTER_KEY.encode("utf-8")):
+        return None
+
+    # Build a local unlimited entitlement.
+    local_token = hashlib.sha256(f"local-master-{device_id}-{_time.time_ns()}".encode()).hexdigest()
+    entitlement = LicenseEntitlement(
+        license_id="local-master",
+        status="active",
+        plan="admin",
+        billing_cycle="lifetime",
+        quota_chars=0,
+        bonus_chars=0,
+        used_chars=0,
+        used_words=0,
+        remaining_chars=999_999_999_999_999,
+        seat_limit=1_000_000,
+        active_seats=1,
+        is_subscription=False,
+        can_transcribe=True,
+        unlimited=True,
+    )
+    return LicenseSession(
+        token=local_token,
+        refresh_at="",
+        expires_at="",
+        entitlement=entitlement,
+        live_api_key="",
+        live_model=DEFAULT_MODEL,
+    )
+
+
 @dataclass(frozen=True)
 class DesktopBootstrap:
     api_key: str
@@ -189,6 +240,13 @@ def activate_license(
         raise WebsiteAPIError("License activation returned invalid JSON.") from exc
 
     if response.status_code >= 400 or not isinstance(data, dict) or not data.get("success"):
+        # If the server rejected a master-like key, try local master key activation.
+        # This handles the case where the server hasn't been updated yet.
+        key = (license_key or "").strip()
+        if key and ("brevy" in key.lower() or "master" in key.lower()):
+            local_result = _try_local_master_key(key, device_id, device_name)
+            if local_result is not None:
+                return local_result
         raise WebsiteAPIError((data or {}).get("message") or "License activation failed.")
 
     entitlement_raw = data.get("entitlement") if isinstance(data.get("entitlement"), dict) else {}
