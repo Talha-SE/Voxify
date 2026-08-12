@@ -16,13 +16,13 @@ if errorlevel 1 (
 %PY% -m PyInstaller ^
     --onefile ^
     --windowed ^
+    --noupx ^
     --name "Voxify" ^
     --add-data "config.json;." ^
     --add-data "assets\voxify-logo.png;assets" ^
     --additional-hooks-dir "pyinstaller-hooks" ^
     --hidden-import flet_settings ^
     --hidden-import flet_desktop ^
-    --hidden-import customtkinter ^
     --hidden-import sounddevice ^
     --hidden-import soundcard ^
     --hidden-import scipy ^

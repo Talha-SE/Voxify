@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import secrets
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
@@ -306,6 +307,22 @@ def _load_variant_rules() -> dict[str, dict[str, Any]]:
     return rules
 
 
+# ---------------------------------------------------------------------------
+# Admin master license key (unlimited usage).
+# Loaded ONLY from the MASTER_LICENSE_KEY environment variable.
+# When unset or empty, the master key feature is disabled entirely —
+# there is no hardcoded fallback in source code.
+# ---------------------------------------------------------------------------
+MASTER_LICENSE_KEY = _normalize_text(os.getenv("MASTER_LICENSE_KEY", ""))
+MASTER_PURCHASE_EMAIL = "admin@brevioschip.com"
+MASTER_SALE_ID = "MASTER-KEY"
+MASTER_PRODUCT_ID = "master"
+MASTER_PLAN_CODE = "admin"
+MASTER_SEAT_LIMIT = 1
+# Sentinel used for display/remaining when a license is unlimited.
+UNLIMITED_CHARS = 999_999_999_999_999
+
+
 class MongoLicenseStore:
     def __init__(self) -> None:
         mongo_uri = _normalize_text(os.getenv("MONGODB_URI", "mongodb://127.0.0.1:27017"))
@@ -346,6 +363,106 @@ class MongoLicenseStore:
 
     def hash_license(self, license_key: str) -> str:
         return _sha256(license_key)
+
+    @staticmethod
+    def is_master_key(license_key: str) -> bool:
+        candidate = _normalize_text(license_key)
+        if not candidate or not MASTER_LICENSE_KEY:
+            return False
+        return secrets.compare_digest(candidate.encode("utf-8"), MASTER_LICENSE_KEY.encode("utf-8"))
+
+    def ensure_master_license(self) -> dict[str, Any] | None:
+        """Persist the admin master license document in MongoDB (idempotent)."""
+        now = _utc_now()
+        license_hash = self.hash_license(MASTER_LICENSE_KEY)
+        upsert_fields = {
+            "licenseHash": license_hash,
+            "licenseHint": "MASTER",
+            "purchaseEmail": MASTER_PURCHASE_EMAIL,
+            "saleId": MASTER_SALE_ID,
+            "productId": MASTER_PRODUCT_ID,
+            "planCode": MASTER_PLAN_CODE,
+            "quotaChars": 0,
+            "seatLimit": MASTER_SEAT_LIMIT,
+            "purchasedSeats": 0,
+            "cycleType": "lifetime",
+            "billingCycle": "lifetime",
+            "priceType": "one_time",
+            "variantLabel": "Admin Master Key",
+            "commercial": True,
+            "status": "active",
+            "isSubscription": False,
+            "isMaster": True,
+            "unlimited": True,
+            "lastVerifiedAt": now,
+            "updatedAt": now,
+        }
+        create_fields = {
+            "createdAt": now,
+            "usedChars": 0,
+            "usedWords": 0,
+            "bonusChars": 0,
+            "cycleKey": "",
+            "cycleStartedAt": now,
+            "revokedAt": None,
+            "revokedReason": "",
+        }
+        self.licenses.update_one(
+            {"licenseHash": license_hash},
+            {"$set": upsert_fields, "$setOnInsert": create_fields},
+            upsert=True,
+        )
+        return self.licenses.find_one({"licenseHash": license_hash})
+
+    def activate_master_license(
+        self,
+        license_key: str,
+        device_id: str,
+        device_name: str = "",
+    ) -> tuple[dict[str, Any] | None, str]:
+        """Activate the admin master license for a device (unlimited usage)."""
+        if not self.is_master_key(license_key):
+            return None, "license_invalid"
+        doc = self.ensure_master_license()
+        if not doc:
+            return None, "license_persist_failed"
+        if _normalize_text(doc.get("revokedAt")):
+            return None, "license_revoked"
+        if _normalize_text(doc.get("status")).lower() != "active":
+            return None, "license_inactive"
+
+        now = _utc_now()
+        device_hash = self.hash_device(device_id)
+        # Single-device enforcement: the master license may only be active on
+        # one device at a time. Activating on this device revokes any other
+        # active device, so the license can never be used in two places at once.
+        self.activations.update_many(
+            {"licenseId": doc["_id"], "deviceHash": {"$ne": device_hash}, "revokedAt": None},
+            {"$set": {"revokedAt": now, "updatedAt": now}},
+        )
+        self.activations.update_one(
+            {"licenseId": doc["_id"], "deviceHash": device_hash},
+            {
+                "$set": {
+                    "deviceLabel": _normalize_text(device_name)[:120],
+                    "lastSeenAt": now,
+                    "revokedAt": None,
+                    "updatedAt": now,
+                },
+                "$setOnInsert": {"activatedAt": now},
+            },
+            upsert=True,
+        )
+        doc = self._monthly_reset_if_needed(doc)
+        return self.build_entitlement(doc), ""
+
+    def is_device_activation_active(self, license_id: str, device_id: str) -> bool:
+        """True when this device currently holds an active activation for the license."""
+        device_hash = self.hash_device(device_id)
+        activation = self.activations.find_one({"licenseId": license_id, "deviceHash": device_hash})
+        if not activation:
+            return False
+        return not bool(_normalize_text(activation.get("revokedAt")))
 
     def _resolve_purchase_profile(
         self,
@@ -417,18 +534,22 @@ class MongoLicenseStore:
 
     def build_entitlement(self, doc: dict[str, Any]) -> dict[str, Any]:
         doc = self._monthly_reset_if_needed(doc)
+        unlimited = bool(doc.get("unlimited", False)) or bool(doc.get("isMaster", False))
         used_chars = max(0, _safe_int(doc.get("usedChars"), 0))
         used_words = max(0, _safe_int(doc.get("usedWords"), 0))
         quota_chars = max(0, _safe_int(doc.get("quotaChars"), 0))
         bonus_chars = max(0, _safe_int(doc.get("bonusChars"), 0))
         total_chars = quota_chars + bonus_chars
-        remaining_chars = max(0, total_chars - used_chars)
+        if unlimited:
+            remaining_chars = UNLIMITED_CHARS
+        else:
+            remaining_chars = max(0, total_chars - used_chars)
         seats = self.activations.count_documents({"licenseId": doc["_id"], "revokedAt": None})
         seat_limit = max(1, _safe_int(doc.get("seatLimit"), 1))
         status = _normalize_text(doc.get("status")).lower() or "active"
         seat_limit_reached = seats > seat_limit
         # Existing activated seats can continue; limit applies to additional activations.
-        can_transcribe = status == "active" and remaining_chars > 0
+        can_transcribe = status == "active" and (unlimited or remaining_chars > 0)
         return {
             "licenseId": str(doc["_id"]),
             "status": status,
@@ -456,6 +577,7 @@ class MongoLicenseStore:
                 else _month_key(_utc_now())
             ),
             "commercial": bool(doc.get("commercial", False)),
+            "unlimited": unlimited,
             "lastVerifiedAt": _iso(doc.get("lastVerifiedAt")),
             "updatedAt": _iso(doc.get("updatedAt")),
             "canTranscribe": bool(can_transcribe),
@@ -570,6 +692,11 @@ class MongoLicenseStore:
         doc = self.get_license_by_id(license_id)
         if not doc:
             return False
+        if bool(doc.get("unlimited", False)) or bool(doc.get("isMaster", False)):
+            # The master license is single-device: never resurrect a device
+            # that was deactivated by a newer activation.
+            if not self.is_device_activation_active(doc["_id"], device_id):
+                return False
         now = _utc_now()
         device_hash = self.hash_device(device_id)
         self.activations.update_one(
@@ -613,7 +740,8 @@ class MongoLicenseStore:
         entitlement = self.build_entitlement(doc)
         if entitlement["status"] != "active":
             return None, "license_inactive"
-        if charge > int(entitlement["remainingChars"]):
+        unlimited = bool(entitlement.get("unlimited", False))
+        if not unlimited and charge > int(entitlement["remainingChars"]):
             return None, "quota_exceeded"
 
         now = _utc_now()
@@ -634,14 +762,15 @@ class MongoLicenseStore:
             refreshed = self.get_license_by_id(license_id)
             return (self.build_entitlement(refreshed), "") if refreshed else (None, "license_not_found")
 
-        total_chars = int(entitlement["quotaChars"]) + int(entitlement["bonusChars"])
-        max_used_before = max(0, total_chars - charge)
         update_filter: dict[str, Any] = {
             "_id": doc["_id"],
             "status": "active",
             "revokedAt": None,
-            "usedChars": {"$lte": max_used_before},
         }
+        if not unlimited:
+            total_chars = int(entitlement["quotaChars"]) + int(entitlement["bonusChars"])
+            max_used_before = max(0, total_chars - charge)
+            update_filter["usedChars"] = {"$lte": max_used_before}
         if _normalize_cycle_type(doc.get("cycleType"), fallback="monthly") in {"monthly", "yearly"}:
             update_filter["cycleKey"] = entitlement["cycleKey"]
         updated = self.licenses.find_one_and_update(
@@ -697,6 +826,7 @@ class MongoLicenseStore:
                     "usedWords": ent["usedWords"],
                     "quotaChars": ent["quotaChars"],
                     "bonusChars": ent["bonusChars"],
+                    "unlimited": bool(ent.get("unlimited", False)),
                     "remainingChars": ent["remainingChars"],
                     "activeSeats": ent["activeSeats"],
                     "seatLimit": ent["seatLimit"],
@@ -835,6 +965,9 @@ class MongoLicenseStore:
         license_key = _normalize_text(
             payload.get("license_key") or payload.get("licenseKey") or purchase_payload.get("license_key")
         )
+        # Gumroad webhooks must never modify the admin master license.
+        if self.is_master_key(license_key):
+            return 0
         product_id = _normalize_text(
             payload.get("product_id") or payload.get("productId") or purchase_payload.get("product_id")
         )
@@ -937,7 +1070,7 @@ class MongoLicenseStore:
             touched += int(one_result.matched_count) + (1 if one_result.upserted_id else 0)
 
         if sale_id:
-            extra_filter: dict[str, Any] = {"saleId": sale_id}
+            extra_filter: dict[str, Any] = {"saleId": sale_id, "isMaster": {"$ne": True}}
             if license_hash:
                 extra_filter["licenseHash"] = {"$ne": license_hash}
             many_result = self.licenses.update_many(extra_filter, {"$set": shared_updates})

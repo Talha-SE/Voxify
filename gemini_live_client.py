@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import concurrent.futures
 import enum
 import json
 import logging
@@ -124,6 +125,7 @@ class GeminiLiveClient:
         idle_timeout: int = 300,
         thinking_level: Optional[str] = None,
         thinking_budget: Optional[int] = None,
+        media_resolution: Optional[str] = None,
     ):
         if not ephemeral_token and not api_key:
             raise ValueError("Either ephemeral_token or api_key must be provided")
@@ -145,6 +147,7 @@ class GeminiLiveClient:
         self.idle_timeout = idle_timeout
         self.thinking_level = thinking_level
         self.thinking_budget = thinking_budget
+        self.media_resolution = media_resolution
 
         # Mutable state (protected by _state_lock)
         self._state_lock = threading.Lock()
@@ -162,8 +165,11 @@ class GeminiLiveClient:
         # Mute control
         self._input_muted = False
 
-        self._input_queue: queue.Queue = queue.Queue()
-        self._output_queue: queue.Queue = queue.Queue()
+        # Bounded queues: a slow WebSocket (send) or slow playback consumer must
+        # never let audio accumulate unbounded in RAM. Overflowing audio is
+        # dropped; the live session simply skips those chunks.
+        self._input_queue: queue.Queue = queue.Queue(maxsize=300)   # ~9 s of mic audio
+        self._output_queue: queue.Queue = queue.Queue(maxsize=100)  # ~a few seconds of playback
         self._interrupted = threading.Event()
         self._ai_speaking = threading.Event()
 
@@ -178,9 +184,11 @@ class GeminiLiveClient:
         self._reconnect_pending = False
         self._goaway_received = False
 
-        # Tool call gating
-        self._gating_audio = threading.Event()
+        # Tool call tracking
         self._tool_call_in_progress = threading.Event()
+        self._tool_executor = concurrent.futures.ThreadPoolExecutor(
+            max_workers=4, thread_name_prefix="gemini_tool"
+        )
 
         # Thread references
         self._mic_thread: Optional[threading.Thread] = None
@@ -342,9 +350,11 @@ class GeminiLiveClient:
                 pass
             self._playback_stream = None
         self._ai_speaking.clear()
-        self._gating_audio.clear()
         self._tool_call_in_progress.clear()
         self._interrupted.clear()
+        # Shut down thread pool executor (non-blocking, cancels pending)
+        if hasattr(self, '_tool_executor'):
+            self._tool_executor.shutdown(wait=False)
         logger.info("Resource cleanup complete.")
 
     async def _async_main(self) -> None:
@@ -389,7 +399,7 @@ class GeminiLiveClient:
 
     def _build_ws_url(self) -> str:
         if self.ephemeral_token:
-            return f"{GEMINI_LIVE_WS_URL}?generativeai-token={self.ephemeral_token}"
+            return f"{GEMINI_LIVE_WS_URL}?access_token={self.ephemeral_token}"
         return f"{GEMINI_LIVE_WS_URL}?key={self.api_key}"
 
     def _build_setup_message(self) -> dict:
@@ -405,6 +415,9 @@ class GeminiLiveClient:
                 },
             },
         }
+        if self.media_resolution:
+            setup_payload["generation_config"]["media_resolution"] = self.media_resolution
+
         if self.session_resumption:
             setup_payload["session_resumption"] = {"transparent": True}
         if self.context_compression:
@@ -519,7 +532,10 @@ class GeminiLiveClient:
         if status:
             logger.warning(f"Mic status: {status}")
         if self._running and not self._ai_speaking.is_set() and not self._input_muted:
-            self._input_queue.put(indata.copy())
+            try:
+                self._input_queue.put_nowait(indata.copy())
+            except queue.Full:
+                pass  # consumer is behind: drop audio to keep memory bounded
 
     def _run_mic(self) -> None:
         logger.info("Starting mic capture thread.")
@@ -736,31 +752,66 @@ class GeminiLiveClient:
     # ── Tool call handling ───────────────────────────────────────────────────
 
     async def _handle_tool_call(self, ws: websockets.WebSocketClientProtocol, tool_call: dict) -> None:
+        """Handle Gemini function calls asynchronously without blocking the event loop.
+
+        Runs each tool invocation in a thread pool so that long-running or
+        confirmation-gated tools (e.g. shell commands, file operations) do not
+        block WebSocket message processing, health checks, or audio streaming.
+        """
         function_calls = tool_call.get("functionCalls", [])
+        if not function_calls:
+            return
+
         self._tool_call_in_progress.set()
         self._set_state(ChatState.TOOL_CALL)
-        function_responses = []
-        for fc in function_calls:
-            name = fc.get("name")
-            args = fc.get("args", {})
-            call_id = fc.get("id")
-            result: dict = {"success": False, "error": "No handler configured"}
-            if self.on_tool_call:
-                try:
-                    result = self.on_tool_call(name, args)
-                except Exception as exc:
-                    result = {"success": False, "error": str(exc)}
-            function_responses.append({
-                "id": call_id, "name": name,
-                "response": {"output": result},
-                "scheduling": "SILENT",
-            })
 
-        if function_responses:
+        loop = asyncio.get_running_loop()
+        TOOL_TIMEOUT = 120.0  # maximum seconds per tool call
+
+        async def _run_single_tool(fc: dict) -> dict:
+            name: str = fc.get("name", "unknown")
+            args: dict = fc.get("args", {})
+            call_id: str = fc.get("id", "")
+            logger.info(f"Tool call: {name} id={call_id}")
+
+            if not self.on_tool_call:
+                return {
+                    "id": call_id, "name": name,
+                    "response": {"output": {"success": False, "error": "No handler configured"}, "scheduling": "SILENT"},
+                }
+
             try:
-                await ws.send(json.dumps({"toolResponse": {"functionResponses": function_responses}}))
+                # Run the (potentially blocking) tool handler in a thread pool
+                # so the async event loop stays responsive.
+                result: dict = await asyncio.wait_for(
+                    loop.run_in_executor(self._tool_executor, self.on_tool_call, name, args),
+                    timeout=TOOL_TIMEOUT,
+                )
+            except asyncio.TimeoutError:
+                logger.error(f"Tool call timed out after {TOOL_TIMEOUT}s: {name}")
+                result = {"success": False, "error": f"Tool call timed out after {TOOL_TIMEOUT}s"}
             except Exception as exc:
-                logger.error(f"Error sending tool responses: {exc}")
+                logger.error(f"Tool call exception: {name} - {exc}", exc_info=True)
+                result = {"success": False, "error": str(exc)}
+
+            return {
+                "id": call_id, "name": name,
+                "response": {"output": result, "scheduling": "SILENT"},
+            }
+
+        # Run all tools concurrently (they share the same thread pool)
+        function_responses = await asyncio.gather(
+            *[_run_single_tool(fc) for fc in function_calls],
+            return_exceptions=False,
+        )
+
+        # Send responses back to Gemini
+        try:
+            await ws.send(json.dumps({
+                "toolResponse": {"functionResponses": function_responses}
+            }))
+        except Exception as exc:
+            logger.error(f"Error sending tool responses: {exc}")
 
         self._tool_call_in_progress.clear()
         self._set_state(ChatState.LISTENING)

@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+*.egg-info/
+
+# Env / secrets (NEVER commit real keys)
+.env
+.env.*
+!.env.example
+
+# Build artifacts (PyInstaller)
+build/
+dist/
+release/
+release/*.zip
+release/*.pdf
+*.spec.bak
+
+# Logs
+*.log
+voxify_debug.log
+reliability_events.jsonl
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Editor
+.vscode/
+.idea/

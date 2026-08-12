@@ -47,6 +47,7 @@ app.config["SESSION_COOKIE_SECURE"] = os.getenv("SESSION_SECURE_COOKIE", "false"
 
 LOGIN_WINDOW_SECONDS = 300
 MAX_LOGIN_ATTEMPTS = 5
+MAX_FAILED_ATTEMPT_IPS = 10_000
 _failed_attempts: dict[str, list[float]] = {}
 
 GUMROAD_VERIFY_URL = "https://api.gumroad.com/v2/licenses/verify"
@@ -220,14 +221,35 @@ def _normalize_checkout_url(value: str, fallback: str) -> str:
     return fallback
 
 
+def _prune_failed_attempts(now: float) -> None:
+    """Drop stale/empty login-attempt entries and cap the dict size."""
+    stale = [
+        ip
+        for ip, entries in _failed_attempts.items()
+        if not entries or (now - entries[-1]) > LOGIN_WINDOW_SECONDS
+    ]
+    for ip in stale:
+        _failed_attempts.pop(ip, None)
+    if len(_failed_attempts) > MAX_FAILED_ATTEMPT_IPS:
+        ordered = sorted(
+            _failed_attempts.items(),
+            key=lambda kv: (kv[1][-1] if kv[1] else 0.0),
+            reverse=True,
+        )
+        for ip, _ in ordered[MAX_FAILED_ATTEMPT_IPS:]:
+            _failed_attempts.pop(ip, None)
+
+
 def _is_rate_limited(client_ip: str) -> bool:
     now = time.time()
+    _prune_failed_attempts(now)
     entries = [ts for ts in _failed_attempts.get(client_ip, []) if now - ts < LOGIN_WINDOW_SECONDS]
     _failed_attempts[client_ip] = entries
     return len(entries) >= MAX_LOGIN_ATTEMPTS
 
 
 def _register_failed_attempt(client_ip: str) -> None:
+    _prune_failed_attempts(time.time())
     _failed_attempts.setdefault(client_ip, []).append(time.time())
 
 
@@ -510,6 +532,24 @@ def _append_reliability_event(event: dict) -> None:
         handle.write(json.dumps(event, ensure_ascii=True) + "\n")
 
 
+def _tail_lines(path: Path, max_bytes: int = 262_144) -> list[str]:
+    """Return the trailing lines of a file without loading the whole file."""
+    try:
+        size = path.stat().st_size
+        with path.open("rb") as handle:
+            if size <= max_bytes:
+                raw = handle.read()
+            else:
+                handle.seek(size - max_bytes)
+                raw = handle.read()
+                first_nl = raw.find(b"\n")
+                if first_nl != -1:
+                    raw = raw[first_nl + 1 :]
+        return raw.decode("utf-8", errors="replace").splitlines()
+    except Exception:
+        return []
+
+
 def _summarize_reliability_events(limit: int = 2000) -> dict:
     if not RELIABILITY_EVENTS_FILE.exists():
         return {
@@ -520,7 +560,7 @@ def _summarize_reliability_events(limit: int = 2000) -> dict:
             "lastTimestamp": "",
         }
 
-    lines = RELIABILITY_EVENTS_FILE.read_text(encoding="utf-8").splitlines()[-limit:]
+    lines = _tail_lines(RELIABILITY_EVENTS_FILE)[-limit:]
     event_type_counts = Counter()
     error_counts = Counter()
     latency_values = []
@@ -631,6 +671,12 @@ def _validate_token_and_license(device_id: str, token: str) -> tuple[dict[str, A
     doc = store.get_license_by_id(_text(payload.get("lid")))
     if not doc:
         return None, None, "License not found."
+    if bool(doc.get("unlimited", False)) or bool(doc.get("isMaster", False)):
+        # Single-device enforcement for the master license: only the currently
+        # active device may use it. A device replaced by a newer activation is
+        # rejected on every token-protected endpoint.
+        if not store.is_device_activation_active(doc["_id"], device_id):
+            return None, None, "This license is already in use on another device."
     entitlement = store.build_entitlement(doc)
     return entitlement, payload, ""
 
@@ -1070,13 +1116,30 @@ def license_activate():
     device_name = _text(payload.get("deviceName"))
     if not license_key or not device_id:
         return jsonify({"success": False, "message": "licenseKey and deviceId are required."}), 400
-    if not product_id:
-        return jsonify({"success": False, "message": "License verification is not configured on server."}), 503
 
     store = _get_store()
     if not store:
         data, status = _store_problem()
         return jsonify(data), status
+
+    if store.is_master_key(license_key):
+        entitlement, master_error = store.activate_master_license(
+            license_key=license_key,
+            device_id=device_id,
+            device_name=device_name,
+        )
+        if not entitlement:
+            message_map = {
+                "license_revoked": "This license was revoked.",
+                "license_inactive": "This license is inactive.",
+            }
+            return jsonify({"success": False, "message": message_map.get(master_error, "Unable to activate the master license.")}), 403
+        app.logger.info(f"Master license activated for device: {device_id}")
+        token = _mint_license_token(entitlement["licenseId"], store.hash_device(device_id))
+        return jsonify(_entitlement_payload(entitlement, token, include_runtime_key=True))
+
+    if not product_id:
+        return jsonify({"success": False, "message": "License verification is not configured on server."}), 503
 
     gumroad_payload, gumroad_error = _gumroad_verify(license_key, product_id)
     if not gumroad_payload:
@@ -1123,31 +1186,38 @@ def license_refresh():
     sync_key = _text(payload.get("licenseKey"))
     sync_product_id = _text(payload.get("productId"))
     if sync_key:
-        product_id_to_verify = sync_product_id
-        if not product_id_to_verify:
-            license_doc = store.get_license_by_id(entitlement["licenseId"])
-            product_id_to_verify = _text((license_doc or {}).get("productId"))
-
-        if product_id_to_verify:
-            gumroad_payload, gumroad_error = _gumroad_verify(sync_key, product_id_to_verify)
+        if store.is_master_key(sync_key):
+            # The master license is single-device. The token validation above
+            # already confirmed this device is the current active device, so a
+            # refresh must NOT steal the license from another device. Only an
+            # explicit activation on a device may take over the master license.
+            pass
         else:
-            gumroad_payload, gumroad_error = None, ""
+            product_id_to_verify = sync_product_id
+            if not product_id_to_verify:
+                license_doc = store.get_license_by_id(entitlement["licenseId"])
+                product_id_to_verify = _text((license_doc or {}).get("productId"))
 
-        if gumroad_payload:
-            purchase = gumroad_payload.get("purchase") or {}
-            synced_entitlement, synced_error = store.activate_from_purchase(
-                license_key=sync_key,
-                product_id=product_id_to_verify,
-                device_id=device_id,
-                device_name=device_name,
-                purchase=purchase,
-            )
-            if synced_entitlement:
-                entitlement = synced_entitlement
-            elif synced_error == "license_inactive":
+            if product_id_to_verify:
+                gumroad_payload, gumroad_error = _gumroad_verify(sync_key, product_id_to_verify)
+            else:
+                gumroad_payload, gumroad_error = None, ""
+
+            if gumroad_payload:
+                purchase = gumroad_payload.get("purchase") or {}
+                synced_entitlement, synced_error = store.activate_from_purchase(
+                    license_key=sync_key,
+                    product_id=product_id_to_verify,
+                    device_id=device_id,
+                    device_name=device_name,
+                    purchase=purchase,
+                )
+                if synced_entitlement:
+                    entitlement = synced_entitlement
+                elif synced_error == "license_inactive":
+                    return jsonify({"success": False, "message": "License is inactive."}), 403
+            elif "invalid or inactive" in gumroad_error.lower():
                 return jsonify({"success": False, "message": "License is inactive."}), 403
-        elif "invalid or inactive" in gumroad_error.lower():
-            return jsonify({"success": False, "message": "License is inactive."}), 403
 
     store.touch_activation(entitlement["licenseId"], device_id, device_name=device_name)
     doc = store.get_license_by_id(entitlement["licenseId"])
@@ -1280,7 +1350,7 @@ def generate_ephemeral_token():
 
     try:
         resp = requests.post(
-            f"https://generativelanguage.googleapis.com/v1beta/models/{gemini_model}:generateEphemeralToken",
+            "https://generativelanguage.googleapis.com/v1alpha/auth_tokens",
             params={"key": gemini_key},
             headers={"Content-Type": "application/json"},
             json={},
@@ -1291,7 +1361,7 @@ def generate_ephemeral_token():
         app.logger.info(f"Ephemeral token generated for device: {device_id}")
         return jsonify({
             "success": True,
-            "ephemeralToken": data["token"],
+            "ephemeralToken": data.get("name", ""),
             "model": gemini_model,
         })
     except requests.RequestException as exc:
@@ -1460,6 +1530,40 @@ def verify_license():
     device_id = _text(payload.get("deviceId") or "legacy-device")
     if not license_key:
         return jsonify({"success": False, "message": "licenseKey is required."}), 400
+
+    store = _get_store()
+    if not store:
+        data, status = _store_problem()
+        return jsonify(data), status
+
+    if store.is_master_key(license_key):
+        entitlement, master_error = store.activate_master_license(
+            license_key=license_key,
+            device_id=device_id,
+            device_name=_text(payload.get("deviceName")),
+        )
+        if not entitlement:
+            message_map = {
+                "license_revoked": "This license was revoked.",
+                "license_inactive": "This license is inactive.",
+            }
+            return jsonify({"success": False, "active": False, "message": message_map.get(master_error, "Unable to activate the master license.")}), 403
+        app.logger.info(f"Master license verified for device: {device_id}")
+        token = _mint_license_token(entitlement["licenseId"], store.hash_device(device_id))
+        return jsonify(
+            {
+                "success": True,
+                "active": True,
+                "purchaseEmail": entitlement.get("purchaseEmail", ""),
+                "saleId": entitlement.get("saleId", ""),
+                "isSubscription": False,
+                "subscriptionEndedAt": "",
+                "subscriptionCancelledAt": "",
+                "token": token,
+                "entitlement": entitlement,
+            }
+        )
+
     if not product_id:
         return jsonify({"success": False, "message": "License verification is not configured on server."}), 503
 
@@ -1467,11 +1571,6 @@ def verify_license():
     if not gumroad_payload:
         return jsonify({"success": False, "active": False, "message": gumroad_error}), 401
     purchase = gumroad_payload.get("purchase") or {}
-
-    store = _get_store()
-    if not store:
-        data, status = _store_problem()
-        return jsonify(data), status
 
     entitlement, activation_error = store.activate_from_purchase(
         license_key=license_key,

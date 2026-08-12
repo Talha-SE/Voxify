@@ -10,14 +10,11 @@ from pathlib import Path
 from tkinter import filedialog
 
 import flet as ft
-import numpy as np
-from scipy.io import wavfile
 
 import app_info
 import branding
 import config
 import license_cache
-import recorder as rec_module
 import website_client
 
 IMAGE_FIT_CONTAIN = getattr(
@@ -367,7 +364,7 @@ def main(page: ft.Page) -> None:
             "restart_after_update": bool(restart_after_update_switch.value),
             "personal_dictionary": _parse_multiline_list(personal_dictionary_field.value or ""),
             "text_replacements": _parse_replacements(text_replacements_field.value or ""),
-            "screen_share_resolution": (screen_resolution_field.value or "medium").strip(),
+            "screen_share_resolution": (screen_resolution_field.value or "low").strip(),
             "screen_share_pause_on_idle": bool(screen_pause_on_idle_switch.value),
             # ── Safety & Security ────────────────────────────────────────
             "gemini_tool_confirmation_enabled": bool(tool_confirmation_switch.value),
@@ -986,12 +983,19 @@ def main(page: ft.Page) -> None:
             license_status_text.color = SUCCESS if entitlement.status == "active" else MUTED
         license_plan_text.value = f"Plan: {(entitlement.plan or '').title() or '-'}"
         license_cycle_text.value = f"Billing cycle: {_format_billing_cycle(entitlement.billing_cycle)}"
-        license_quota_text.value = (
-            f"Usage: {_fmt_chars(entitlement.used_chars)} / {_fmt_chars(entitlement.quota_chars + entitlement.bonus_chars)} chars"
-            f" | {_fmt_chars(entitlement.used_words)} words"
-            f" | Remaining {_fmt_chars(entitlement.remaining_chars)}"
-            f"{' | Top up required' if quota_exhausted else ''}"
-        )
+        if getattr(entitlement, "unlimited", False):
+            license_quota_text.value = (
+                f"Usage: {_fmt_chars(entitlement.used_chars)} chars (Unlimited)"
+                f" | {_fmt_chars(entitlement.used_words)} words"
+                f" | Remaining: Unlimited"
+            )
+        else:
+            license_quota_text.value = (
+                f"Usage: {_fmt_chars(entitlement.used_chars)} / {_fmt_chars(entitlement.quota_chars + entitlement.bonus_chars)} chars"
+                f" | {_fmt_chars(entitlement.used_words)} words"
+                f" | Remaining {_fmt_chars(entitlement.remaining_chars)}"
+                f"{' | Top up required' if quota_exhausted else ''}"
+            )
         license_seat_text.value = f"Seats: {entitlement.active_seats} / {entitlement.seat_limit}"
         page.update()
 
@@ -1008,6 +1012,12 @@ def main(page: ft.Page) -> None:
     def _diagnostic_probe(source: str, label: str) -> tuple[bool, str]:
         wav_path = ""
         try:
+            # Heavy audio deps are imported here (not at module load) so the
+            # settings window opens quickly.
+            import numpy as np
+            from scipy.io import wavfile
+            import recorder as rec_module
+
             sample_rate = int(config.load().get("sample_rate", 16000))
             probe = rec_module.Recorder(source=source, sample_rate=sample_rate, silence_trim_enabled=False, reliability_mode="latency")
             probe.start()
@@ -1145,7 +1155,7 @@ def main(page: ft.Page) -> None:
 
     screen_resolution_field = ft.Dropdown(
         label="Share Resolution",
-        value=cfg.get("screen_share_resolution", "medium"),
+        value=cfg.get("screen_share_resolution", "low"),
         options=[
             ft.dropdown.Option("low", "Low (480p)"),
             ft.dropdown.Option("medium", "Medium (768p)"),

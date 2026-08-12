@@ -15,6 +15,7 @@ import sys
 import tempfile
 import threading
 import time
+import wave
 from pathlib import Path
 from typing import Literal
 
@@ -38,6 +39,12 @@ except ImportError:
 
 AudioSource = Literal["mic", "system"]
 ReliabilityMode = Literal["balanced", "latency", "accuracy"]
+
+# Safety cap for in-memory audio buffering. Short recordings are kept fully in
+# RAM (exact previous behaviour); once a recording exceeds this many seconds,
+# further audio is streamed to a temp WAV file so RAM stays bounded no matter
+# how long the mic is left running.
+MAX_IN_MEMORY_SECONDS = 300  # ~5 minutes (~19 MB float32 at 16 kHz)
 
 
 def _system_capture_keywords() -> tuple[str, ...]:
@@ -235,6 +242,9 @@ class Recorder:
         self._recording = False
         self._thread: threading.Thread | None = None
         self._thread_error: Exception | None = None
+        self._captured_samples = 0
+        self._disk_path: str | None = None   # temp WAV used once RAM cap is exceeded
+        self._disk_writer: wave.Wave_write | None = None
 
     # ── Public API ──────────────────────────────────────────────────────────
 
@@ -244,6 +254,9 @@ class Recorder:
             return
         self._frames.clear()
         self._thread_error = None
+        self._captured_samples = 0
+        self._close_disk_writer()
+        self._disk_path = None
         self._recording = True
         target = (
             self._record_mic if self.source == "mic" else self._record_system
@@ -267,19 +280,74 @@ class Recorder:
             self._recording = False
             raise RuntimeError(str(error)) from error
 
+    def _write_to_disk(self, chunk: np.ndarray) -> None:
+        """Append a float32 chunk to the streaming temp WAV file (mono int16)."""
+        if self._disk_writer is None:
+            tmp = tempfile.NamedTemporaryFile(
+                suffix=".wav", delete=False, prefix="voxtral_stream_"
+            )
+            self._disk_path = tmp.name
+            tmp.close()
+            self._disk_writer = wave.open(self._disk_path, "wb")
+            self._disk_writer.setnchannels(1)
+            self._disk_writer.setsampwidth(2)
+            self._disk_writer.setframerate(self.sample_rate)
+        mono = chunk.mean(axis=1) if chunk.ndim > 1 and self.channels == 1 else chunk
+        data = (np.clip(mono, -1.0, 1.0) * 32767).astype(np.int16)
+        self._disk_writer.writeframes(data.tobytes())
+
+    def _close_disk_writer(self) -> None:
+        if self._disk_writer is not None:
+            try:
+                self._disk_writer.close()
+            except Exception:
+                pass
+            self._disk_writer = None
+
     def stop(self) -> str:
         """Stop recording and return path to a temp WAV file."""
         self._recording = False
         if self._thread:
             self._thread.join(timeout=5)
             self._thread = None
+        self._close_disk_writer()
 
-        if not self._frames:
+        if not self._frames and not self._disk_path:
             if self._thread_error is not None:
                 raise RuntimeError(str(self._thread_error)) from self._thread_error
             raise RuntimeError("No audio captured.")
 
-        audio = np.concatenate(self._frames, axis=0)
+        if self._disk_path is not None:
+            # Long recording: combine the in-RAM head with the streamed tail
+            # read back from disk (transient). Steady-state RAM stays bounded.
+            with wave.open(self._disk_path, "rb") as rf:
+                frame_count = rf.getnframes()
+                raw = rf.readframes(frame_count)
+            disk_audio = (
+                np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32767.0
+            )
+            del raw
+            channels = max(1, int(self.channels or 1))
+            disk_audio = disk_audio.reshape(-1, channels)
+            if self._frames:
+                ram = np.concatenate(self._frames, axis=0)
+                if ram.ndim == 1:
+                    ram = ram.reshape(-1, 1)
+                audio = np.concatenate([ram, disk_audio], axis=0)
+                del ram
+            else:
+                audio = disk_audio
+            del disk_audio
+            try:
+                os.remove(self._disk_path)
+            except Exception:
+                pass
+            self._disk_path = None
+        else:
+            audio = np.concatenate(self._frames, axis=0)
+
+        self._frames.clear()
+        self._captured_samples = 0
 
         # Convert to mono if needed
         if audio.ndim > 1 and self.channels == 1:
@@ -295,6 +363,7 @@ class Recorder:
         if peak > 0:
             audio = audio / peak
         audio_int16 = (audio * 32767).astype(np.int16)
+        del audio
 
         # Write to temp file
         tmp = tempfile.NamedTemporaryFile(
@@ -315,10 +384,15 @@ class Recorder:
             raise RuntimeError("sounddevice not installed.")
 
         chunk = max(256, int(self.sample_rate * 0.05))  # ~50 ms chunks
+        max_in_memory = self.sample_rate * MAX_IN_MEMORY_SECONDS
 
         def callback(indata, frames, time_info, status):
             if self._recording:
-                self._frames.append(indata.copy())
+                if self._captured_samples < max_in_memory:
+                    self._frames.append(indata.copy())
+                else:
+                    self._write_to_disk(indata)
+                self._captured_samples += frames
 
         with sd.InputStream(
             samplerate=self.sample_rate,
@@ -338,6 +412,7 @@ class Recorder:
         mic = _resolve_system_microphone()
 
         chunk = max(256, int(self.sample_rate * 0.05))
+        max_in_memory = self.sample_rate * MAX_IN_MEMORY_SECONDS
         last_exc: Exception | None = None
 
         for channel_count in _system_channel_candidates(self.channels):
@@ -345,7 +420,11 @@ class Recorder:
                 with mic.recorder(samplerate=self.sample_rate, channels=channel_count) as m:
                     while self._recording:
                         data = m.record(numframes=chunk)
-                        self._frames.append(data.copy())
+                        if self._captured_samples < max_in_memory:
+                            self._frames.append(data.copy())
+                        else:
+                            self._write_to_disk(data)
+                        self._captured_samples += data.shape[0]
                 return
             except Exception as exc:
                 last_exc = exc

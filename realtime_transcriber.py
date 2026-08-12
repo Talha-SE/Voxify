@@ -260,9 +260,10 @@ class RealtimeTranscriber:
         TARGET_RMS = 5189
         MAX_GAIN   = 4.0   # 12 dB cap to avoid amplifying noise too much
 
-        # Use a queue to bridge the blocking callback with the async generator
+        # Use a queue to bridge the blocking callback with the async generator.
+        # Bounded so a network/API stall can never balloon RAM with audio.
         import queue as _queue
-        audio_queue: _queue.Queue = _queue.Queue()
+        audio_queue: _queue.Queue = _queue.Queue(maxsize=200)
         self._chunks_captured = 0
 
         def callback(indata, frames, time_info, status):
@@ -283,7 +284,10 @@ class RealtimeTranscriber:
                 samples = np.clip(
                     samples.astype(np.float64) * gain, -32768, 32767
                 ).astype(np.int16)
-            audio_queue.put(samples.tobytes())
+            try:
+                audio_queue.put_nowait(samples.tobytes())
+            except _queue.Full:
+                logger.debug("Audio queue full; dropping chunk to bound memory")
 
         # ── Resolve microphone device ────────────────────────────────────────
         device_kw = {}

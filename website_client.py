@@ -11,7 +11,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-import requests
+from lazyimport import LazyModule
+
+# requests is imported lazily on first network call — importing it eagerly at
+# module load adds ~1s to app startup.
+requests = LazyModule("requests")
 
 DEFAULT_WEBSITE_URL = os.getenv("VOXIFY_WEBSITE_URL") or os.getenv("SONUS_WEBSITE_URL", "https://voxify.brevios.com")
 STATUS_TIMEOUT = 2.0
@@ -86,6 +90,7 @@ class LicenseEntitlement:
     active_seats: int
     is_subscription: bool
     can_transcribe: bool
+    unlimited: bool = False
 
 
 @dataclass(frozen=True)
@@ -134,6 +139,7 @@ def _parse_entitlement(raw: dict[str, Any]) -> LicenseEntitlement:
         active_seats=int(_get(raw, "activeSeats", "active_seats") or 0),
         is_subscription=bool(_get(raw, "isSubscription", "is_subscription") or False),
         can_transcribe=bool(_get(raw, "canTranscribe", "can_transcribe") or False),
+        unlimited=bool(_get(raw, "unlimited") or False),
     )
 
 

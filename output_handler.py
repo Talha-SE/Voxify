@@ -17,17 +17,14 @@ from typing import Callable, Literal, Optional
 
 logger = logging.getLogger("output_handler")
 
-try:
-    import pyperclip
-    _CLIP_OK = True
-except ImportError:
-    _CLIP_OK = False
+from lazyimport import LazyModule
 
-try:
-    import pyautogui
-    _GUI_OK = True
-except ImportError:
-    _GUI_OK = False
+# pyperclip / pyautogui are imported lazily on first use — importing them
+# eagerly at module load slows app startup by several hundred milliseconds.
+pyperclip = LazyModule("pyperclip")
+_CLIP_OK = pyperclip
+pyautogui = LazyModule("pyautogui")
+_GUI_OK = pyautogui
 
 try:
     import ctypes

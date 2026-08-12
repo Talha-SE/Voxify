@@ -16,12 +16,12 @@ python3 -m pip install pyinstaller -q
 python3 -m PyInstaller \
   --onefile \
   --name "Voxify" \
+  --noupx \
   --add-data "config.json:." \
   --add-data "assets/voxify-logo.png:assets" \
   --additional-hooks-dir "pyinstaller-hooks" \
   --hidden-import flet_settings \
   --hidden-import flet_desktop \
-  --hidden-import customtkinter \
   --hidden-import sounddevice \
   --hidden-import soundcard \
   --hidden-import scipy \

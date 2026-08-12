@@ -12,6 +12,10 @@ import website_client
 
 EVENT_LOG_FILE = Path(__file__).with_name("reliability_events.jsonl")
 
+# Keep the local event log bounded: rotate once it exceeds these limits.
+MAX_EVENT_LOG_BYTES = 2 * 1024 * 1024   # 2 MB
+MAX_EVENT_LOG_LINES = 5000
+
 
 ERROR_HINT_MAP = {
     "busy": "audio_device_busy",
@@ -55,8 +59,24 @@ def build_event(
     }
 
 
+def _rotate_event_log_if_needed() -> None:
+    """Trim the local event log once it grows beyond the size/line limits."""
+    try:
+        if not EVENT_LOG_FILE.exists():
+            return
+        if EVENT_LOG_FILE.stat().st_size <= MAX_EVENT_LOG_BYTES:
+            return
+        lines = EVENT_LOG_FILE.read_text(encoding="utf-8").splitlines()
+        if len(lines) > MAX_EVENT_LOG_LINES:
+            lines = lines[-MAX_EVENT_LOG_LINES:]
+        EVENT_LOG_FILE.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    except Exception:
+        pass
+
+
 def log_local_event(event: dict) -> None:
     EVENT_LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+    _rotate_event_log_if_needed()
     with EVENT_LOG_FILE.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(event, ensure_ascii=True) + "\n")
 

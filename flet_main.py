@@ -50,6 +50,11 @@ logger.info("=" * 60)
 # Thread safety lock shared across callbacks
 _live_lock = threading.Lock()
 
+# Live-mode memory guards: cap the segment history and the accumulated delta
+# text so a very long mic session never grows unbounded strings in RAM.
+LIVE_SEGMENTS_MAX = 400          # most recent authoritative segments kept
+LIVE_RAW_TEXT_MAX = 200_000      # max chars of accumulated delta text
+
 import config
 import app_info
 import branding
@@ -262,6 +267,7 @@ class VoxifyApp:
         self._transcript_panel_visible = False
         self._listen_only_mode = False
         self._tool_call_timestamps: list[float] = []  # for rate limiting
+        self._tool_rate_lock = threading.Lock()
         self._pending_tool_confirmations: dict = {}   # call_id -> threading.Event
         self._chat_elapsed_start: float = 0.0
 
@@ -276,6 +282,9 @@ class VoxifyApp:
         self._apply_theme_globals()
 
         self._setup_page()
+        # Paint the window immediately with a lightweight placeholder so the
+        # app feels instant while the full UI is constructed below.
+        self._show_startup_frame()
         self._build_ui()
         threading.Thread(target=self._warmup_startup, daemon=True).start()
         threading.Thread(target=self._watch_config_changes, daemon=True).start()
@@ -366,6 +375,8 @@ class VoxifyApp:
             
             self.action_button.visible = False
             self.video_btn.visible = True
+            # Refresh video button state to reflect current sharing + theme colors
+            self._update_video_btn_ui(sharing=self._is_sharing_screen)
             # Show quick actions and transcript panel in chat mode
             self._quick_actions_row.visible = True
             self.mute_btn.visible = True
@@ -406,6 +417,22 @@ class VoxifyApp:
             if self._is_minimized
             else ft.Padding.symmetric(horizontal=10, vertical=6)
         )
+        w, h = self._get_full_dimensions()
+        self.widget_shell.width = WIDGET_MINI_WIDTH if self._is_minimized else w
+        self.widget_shell.height = WIDGET_MINI_HEIGHT if self._is_minimized else h
+        self.widget_shell.border_radius = (WIDGET_MINI_WIDTH // 2) if self._is_minimized else 20
+        
+        # Sync OS window dimensions safely
+        if not self._is_minimized:
+            try:
+                self.page.window.max_width = w
+                self.page.window.max_height = h
+                self.page.window.width = w
+                self.page.window.height = h
+                self.page.window.min_width = w
+                self.page.window.min_height = h
+            except Exception:
+                pass
         self.widget_shell.border = None
         self.widget_shell.shadow = None
 
@@ -491,39 +518,86 @@ class VoxifyApp:
 
     def _register_widget_interaction(self) -> None:
         if self._is_minimized:
-            self._set_minimized(False)
+            try:
+                self.page.run_thread(self._set_minimized, False)
+            except Exception:
+                self._set_minimized(False)
         self._schedule_auto_minimize_timer()
 
     def _on_widget_hover(self, event: ft.ControlEvent) -> None:
         if str(event.data).lower() == "true":
             self._register_widget_interaction()
 
+    def _get_full_dimensions(self) -> tuple[int, int]:
+        w = WIDGET_FULL_WIDTH
+        if self._is_chatting:
+            if self._transcript_panel_visible:
+                h = 320
+            else:
+                h = 210
+        else:
+            h = WIDGET_FULL_HEIGHT
+        return w, h
+
     def _set_minimized(self, minimized: bool) -> None:
         if minimized == self._is_minimized:
             return
 
         self._is_minimized = minimized
-        self.full_mode_container.visible = not minimized
-        self.minimized_mode_container.visible = minimized
 
         try:
             if minimized:
+                # Step 1: Hide full content, show minimized content
+                self.full_mode_container.visible = False
+                self.minimized_mode_container.visible = True
+                
+                # Step 2: Animate container size down to mini (56x56)
+                self.widget_shell.width = WIDGET_MINI_WIDTH
+                self.widget_shell.height = WIDGET_MINI_HEIGHT
+                self.widget_shell.border_radius = WIDGET_MINI_WIDTH // 2
                 self.widget_shell.padding = ft.Padding.all(0)
-                self.page.window.min_width = WIDGET_MINI_WIDTH
-                self.page.window.max_width = WIDGET_MINI_WIDTH
-                self.page.window.min_height = WIDGET_MINI_HEIGHT
-                self.page.window.max_height = WIDGET_MINI_HEIGHT
-                self.page.window.width = WIDGET_MINI_WIDTH
-                self.page.window.height = WIDGET_MINI_HEIGHT
+                self.page.update()
+                
+                # Step 3: Wait for animation to finish, then resize OS window
+                def _shrink_window():
+                    time.sleep(0.32)  # wait for the 300ms animation
+                    if self._is_minimized:  # verify state hasn't changed
+                        try:
+                            # Safe order to avoid constraint violations
+                            self.page.window.min_width = WIDGET_MINI_WIDTH
+                            self.page.window.min_height = WIDGET_MINI_HEIGHT
+                            self.page.window.width = WIDGET_MINI_WIDTH
+                            self.page.window.height = WIDGET_MINI_HEIGHT
+                            self.page.window.max_width = WIDGET_MINI_WIDTH
+                            self.page.window.max_height = WIDGET_MINI_HEIGHT
+                            self.page.update()
+                        except Exception:
+                            pass
+                threading.Thread(target=_shrink_window, daemon=True).start()
                 self._cancel_auto_minimize_timer()
             else:
+                # Step 1: Instantly expand OS window first (Safe order to avoid constraints violations)
+                w, h = self._get_full_dimensions()
+                try:
+                    self.page.window.max_width = w
+                    self.page.window.max_height = h
+                    self.page.window.width = w
+                    self.page.window.height = h
+                    self.page.window.min_width = w
+                    self.page.window.min_height = h
+                except Exception:
+                    pass
+                    
+                # Step 2: Animate container size to full
+                self.full_mode_container.visible = True
+                self.minimized_mode_container.visible = False
+                
+                self.widget_shell.width = w
+                self.widget_shell.height = h
+                self.widget_shell.border_radius = 20
                 self.widget_shell.padding = ft.Padding.symmetric(horizontal=10, vertical=6)
-                self.page.window.min_width = WIDGET_FULL_WIDTH
-                self.page.window.max_width = WIDGET_FULL_WIDTH
-                self.page.window.min_height = WIDGET_FULL_HEIGHT
-                self.page.window.max_height = WIDGET_FULL_HEIGHT
-                self.page.window.width = WIDGET_FULL_WIDTH
-                self.page.window.height = WIDGET_FULL_HEIGHT
+                self.page.update()
+                
                 self._schedule_auto_minimize_timer()
         except Exception:
             pass
@@ -532,6 +606,28 @@ class VoxifyApp:
             self.page.update()
         except Exception:
             pass
+
+    def _show_startup_frame(self) -> None:
+        """Show the window immediately with a lightweight starting indicator."""
+        try:
+            self._startup_frame = ft.Container(
+                expand=True,
+                alignment=ft.Alignment(0, 0),
+                bgcolor=BG,
+                content=ft.Column(
+                    horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                    spacing=6,
+                    controls=[
+                        ft.ProgressRing(width=22, height=22, stroke_width=2, color=ACCENT),
+                        ft.Text("Starting…", size=8, weight=ft.FontWeight.W_600, color=MUTED),
+                    ],
+                ),
+            )
+            self.page.controls.clear()
+            self.page.add(self._startup_frame)
+            self.page.update()
+        except Exception:
+            self._startup_frame = None
 
     def _build_ui(self) -> None:
         self.title_text = ft.Text("Voxify", size=10, weight=ft.FontWeight.W_900, color=TEXT)
@@ -622,11 +718,52 @@ class VoxifyApp:
             visible=False,
         )
 
-        self.full_mode_container = ft.Container(visible=True, content=ft.Column(alignment=ft.MainAxisAlignment.SPACE_BETWEEN, horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=8, controls=[ft.Row(alignment=ft.MainAxisAlignment.CENTER, vertical_alignment=ft.CrossAxisAlignment.CENTER, spacing=8, controls=[indicator, brand_block]), ft.Column(horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=4, controls=[waveform, self.aux_chip]), self._quick_actions_row, self._transcript_panel_container, self.controls_group]))
+        # Gemini Live Caption Container (smooth modern UI overlay)
+        self.caption_text = ft.Text(
+            "", 
+            size=9, 
+            weight=ft.FontWeight.W_500, 
+            color=TEXT, 
+            text_align=ft.TextAlign.CENTER, 
+            max_lines=2, 
+            overflow=ft.TextOverflow.ELLIPSIS
+        )
+        self.caption_container = ft.Container(
+            content=self.caption_text,
+            alignment=ft.Alignment(0, 0),
+            padding=ft.Padding.all(0),
+            bgcolor=ft.Colors.with_opacity(0.12, ACCENT),
+            border_radius=10,
+            border=ft.Border.all(1, ft.Colors.with_opacity(0.18, ACCENT_GLOW)),
+            visible=True,
+            opacity=0.0,
+            height=0,
+            animate=ft.Animation(300, "decelerate")
+        )
+
+        self.full_mode_container = ft.Container(visible=True, content=ft.Column(alignment=ft.MainAxisAlignment.SPACE_BETWEEN, horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=8, controls=[ft.Row(alignment=ft.MainAxisAlignment.CENTER, vertical_alignment=ft.CrossAxisAlignment.CENTER, spacing=8, controls=[indicator, brand_block]), ft.Column(horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=4, controls=[waveform, self.aux_chip]), self._quick_actions_row, self.caption_container, self._transcript_panel_container, self.controls_group]))
         self.minimized_mode_container = ft.Container(visible=False, alignment=ft.Alignment(0, 0), content=self.minimized_action_button)
 
-        self.widget_shell = ft.Container(expand=True, margin=ft.Margin.all(0), padding=ft.Padding.symmetric(horizontal=12, vertical=12), border_radius=20, gradient=ft.LinearGradient(begin=ft.Alignment(-1, -1), end=ft.Alignment(1, 1), colors=[CARD, WIDGET_GRADIENT_END]), on_hover=self._on_widget_hover, content=ft.Stack(expand=True, controls=[self.full_mode_container, self.minimized_mode_container]))
-        root = ft.WindowDragArea(maximizable=False, content=self.widget_shell)
+        self.widget_shell = ft.Container(
+            width=WIDGET_FULL_WIDTH,
+            height=WIDGET_FULL_HEIGHT,
+            margin=ft.Margin.all(0), 
+            padding=ft.Padding.symmetric(horizontal=12, vertical=12), 
+            border_radius=20, 
+            gradient=ft.LinearGradient(begin=ft.Alignment(-1, -1), end=ft.Alignment(1, 1), colors=[CARD, WIDGET_GRADIENT_END]), 
+            on_hover=self._on_widget_hover, 
+            content=ft.Stack(expand=True, controls=[self.full_mode_container, self.minimized_mode_container]),
+            animate=ft.Animation(300, "decelerate"),
+            clip_behavior="antiAlias"
+        )
+        
+        self.centered_shell_container = ft.Container(
+            content=self.widget_shell,
+            alignment=ft.Alignment(0, 0),
+            expand=True,
+            bgcolor=ft.Colors.TRANSPARENT,
+        )
+        root = ft.WindowDragArea(maximizable=False, content=self.centered_shell_container)
 
         # ── Set initial UI state before first paint ──────────────────────
         mode_value = (self.cfg.get("mode") or "Batch").strip().lower()
@@ -644,6 +781,8 @@ class VoxifyApp:
         self.action_label.color = TEXT
         self.status_text.value = "Ready"
 
+        # Swap the startup placeholder for the real UI.
+        self.page.controls.clear()
         self.page.add(root)
         self.page.update()
 
@@ -786,6 +925,11 @@ class VoxifyApp:
             while self._wave_anim_running:
                 try:
                     active = self._is_visual_active()
+                    if self._is_minimized:
+                        # Widget is hidden — repainting the wave bars is wasted
+                        # work. Sleep longer and skip the UI update entirely.
+                        time.sleep(1.5)
+                        continue
                     pattern = wave_heights[step % len(wave_heights)] if active else wave_heights[0]
                     pulse = (math.sin(step * 0.6) + 1.0) / 2.0
                     for index, bar in enumerate(self.wave_bars):
@@ -804,7 +948,7 @@ class VoxifyApp:
                     self._wave_anim_running = False
                     break
                 step += 1
-                time.sleep(0.15 if active else 0.28)
+                time.sleep(0.15 if active else 0.6)
 
         threading.Thread(target=_animate, daemon=True).start()
 
@@ -859,7 +1003,7 @@ class VoxifyApp:
                 "## CRITICAL VOICE ONLY RULES (MUST OBEY):\n"
                 "1. NO MARKDOWN OR BOLD TEXT: You must NEVER use bold markdown formatting (like '**') or headers in your speech. Speak strictly in normal plain-text conversational English sentences. Never output strings like '**Initiating Contact Sequence**' or '**Acquiring Window Data**'.\n"
                 "2. NO TOOL NARRATION: You must NEVER speak about your tool calls, thoughts, plans, or step-by-step progress. Do not say 'I am opening...', 'Let me check...', 'I've retrieved...', or explain your math/calculations. Do not announce context gathering.\n"
-                "3. BE EXTREMELY CONCISE: Speak only one or two short sentences. Answer directly and wait for the user.\n"
+                "3. BE EXTREMELY CONCISE - NO ECHOING: Speak only one or two short sentences. Answer directly and wait for the user. NEVER repeat or paraphrase what the user just said to you. For example, if the user says 'What's the weather in Tokyo?', do NOT say 'I am checking the weather in Tokyo as you said.' or 'You asked about the weather in Tokyo.' Instead, silently call the tool and respond with just the answer: 'The weather in Tokyo is 22°C and sunny.' Do NOT start your response by restating the user's query.\n"
                 "4. SILENT CONTEXT GATHERING: When you gather context using 'get_active_window_info' or 'read_clipboard', do it completely silently. Just call the tools and use the data to respond directly to the user's query.\n"
                 "5. READING/LOOKING AT THE SCREEN: If the user asks you to read, locate, click, or analyze text/buttons on the screen, call the 'parse_screen_text' tool immediately. However, if screen sharing is NOT active (you can check via 'get_screen_share_status'), honestly tell the user you cannot see their screen and ask them to enable screen sharing.\n"
                 "6. ALARMS AND TIMERS: If the user asks you to set an alarm, timer, or reminder, calculate the duration in seconds and call the 'set_timer' tool.\n"
@@ -870,7 +1014,8 @@ class VoxifyApp:
                 "11. NO LYING OR FLUFF: Never pretend to have capabilities you don't have. Never fabricate information. Never say you can do something unless you have actually confirmed it. Be direct, concise, and 100% truthful about your current abilities. If you cannot do something, say so clearly without apology or excuse.\n"
                 "12. TYPING ON SCREEN: When asked to type or write something on screen, use the 'type_text' tool. This tool PHYSICALLY TYPES each character on screen via real keyboard input — it does NOT use clipboard or cmd.\n"
                 "13. SEARCH BEHAVIOR: 'search_web' opens a browser tab with a Google URL. 'web_search' silently fetches results in the background. If you need to type something into a website's search field after opening it, use 'type_text' with coordinates.\n"
-                "14. SAFETY FIRST: All tools use direct Win32 API or Python libraries — NOT cmd/PowerShell — UNLESS the user explicitly asks you to run a shell command. 'run_shell_command' is the ONLY tool that runs PowerShell, and you should ONLY use it when the user asks you to run a command. Never secretely run commands in cmd or PowerShell."
+                "14. SAFETY FIRST: All tools use direct Win32 API or Python libraries — NOT cmd/PowerShell — UNLESS the user explicitly asks you to run a shell command. 'run_shell_command' is the ONLY tool that runs PowerShell, and you should ONLY use it when the user asks you to run a command. Never secretely run commands in cmd or PowerShell.\n"
+                "15. NO PARROTING OR PREAMBLE: Never start your response by repeating the user's question back to them. Avoid phrases like 'As you said...', 'You asked about...', 'I see you want me to...', 'Let me check that for you...', 'I'll look up...', 'I am checking...', or any similar preamble. The user already knows what they said. Just answer directly with the information they asked for. A response like 'Checking the weather...' or 'Let me search for that...' is strictly forbidden. Go straight to the answer."
             )
 
             SILENT = "SILENT EXECUTION. "
@@ -918,6 +1063,9 @@ class VoxifyApp:
             context_compression = self.cfg.get("gemini_context_compression", False)
             idle_timeout = int(self.cfg.get("gemini_idle_timeout", 300))
 
+            res_key = self.cfg.get("screen_share_resolution", "low")
+            media_res_str = {"low": "MEDIA_RESOLUTION_LOW", "medium": "MEDIA_RESOLUTION_MEDIUM", "high": "MEDIA_RESOLUTION_HIGH"}.get(res_key, "MEDIA_RESOLUTION_LOW")
+
             self._gemini_live_client = _import_gemini_live().GeminiLiveClient(
                 api_key=gemini_key if gemini_key else None,
                 ephemeral_token=ephemeral_token,
@@ -928,6 +1076,7 @@ class VoxifyApp:
                 session_resumption=session_resumption,
                 context_compression=context_compression,
                 idle_timeout=idle_timeout,
+                media_resolution=media_res_str,
                 on_status=lambda s: self.page.run_thread(self._set_gemini_status, s),
                 on_error=lambda e: self.page.run_thread(self._on_gemini_error, e),
                 on_transcript=lambda t: self.page.run_thread(self._on_gemini_transcript, t),
@@ -984,19 +1133,23 @@ class VoxifyApp:
         return False
 
     def _check_tool_rate_limit(self) -> bool:
-        """Return True if the tool call is within rate limits."""
+        """Return True if the tool call is within rate limits. Thread-safe."""
         cfg = config.load()
         limit = cfg.get("gemini_tool_rate_limit", 10)
         window = cfg.get("gemini_tool_rate_window", 60)
         now = time.time()
-        # Prune old timestamps outside the window
-        self._tool_call_timestamps = [
-            ts for ts in self._tool_call_timestamps if (now - ts) < window
-        ]
-        if len(self._tool_call_timestamps) >= limit:
-            logger.warning(f"Tool rate limit exceeded: {len(self._tool_call_timestamps)}/{limit} in {window}s")
-            return False
-        self._tool_call_timestamps.append(now)
+        with self._tool_rate_lock:
+            # Prune old timestamps outside the window
+            self._tool_call_timestamps = [
+                ts for ts in self._tool_call_timestamps if (now - ts) < window
+            ]
+            if len(self._tool_call_timestamps) >= limit:
+                logger.warning(
+                    f"Tool rate limit exceeded: {len(self._tool_call_timestamps)}/"
+                    f"{limit} in {window}s"
+                )
+                return False
+            self._tool_call_timestamps.append(now)
         return True
 
     def _validate_tool_args(self, name: str, args: dict) -> dict | None:
@@ -1104,7 +1257,8 @@ class VoxifyApp:
         allowed_tools = [
             "web_search", "get_local_time", "get_system_status", "read_clipboard",
             "get_active_window_info", "list_windows", "list_files", "parse_screen_text",
-            "list_running_processes"
+            "list_running_processes", "get_mouse_position", "get_screens_info",
+            "get_screen_share_status",
         ]
 
         if not pc_control_enabled and name not in allowed_tools:
@@ -1165,6 +1319,7 @@ class VoxifyApp:
             elif name == "web_search": return {"success": True, "results": output_handler.web_search(query=args.get("query", ""))}
             elif name == "open_url": return {"success": output_handler.open_url(url=args.get("url", ""), mode=args.get("mode", "tab"))}
             elif name == "get_local_time": return {"success": True, "time": output_handler.get_local_time()}
+            elif name == "get_mouse_position": x, y = output_handler.get_mouse_position(); return {"success": True, "x": x, "y": y}
             elif name == "get_screen_share_status": return {"success": True, "screen_sharing_active": self._is_sharing_screen}
         except Exception as exc:
             logger.error(f"Tool call failed: {name} - {exc}")
@@ -1234,6 +1389,19 @@ class VoxifyApp:
                     ft.Icons.KEYBOARD_ARROW_DOWN_ROUNDED if self._transcript_panel_visible
                     else ft.Icons.KEYBOARD_ARROW_UP_ROUNDED
                 )
+            if not self._is_minimized:
+                w, h = self._get_full_dimensions()
+                try:
+                    self.page.window.max_width = w
+                    self.page.window.max_height = h
+                    self.page.window.width = w
+                    self.page.window.height = h
+                    self.page.window.min_width = w
+                    self.page.window.min_height = h
+                    self.widget_shell.width = w
+                    self.widget_shell.height = h
+                except Exception:
+                    pass
             self.page.update()
 
     # ── Gemini Chat: Rich Status ─────────────────────────────────────────────
@@ -1296,6 +1464,17 @@ class VoxifyApp:
         display = mapping.get(status, status)
         self._set_status(display, color)
 
+        # Hide caption overlay if Gemini stops speaking (e.g. listening, executing tools, etc.)
+        if "Speaking" not in status:
+            if hasattr(self, 'caption_container'):
+                self.caption_container.height = 0
+                self.caption_container.opacity = 0.0
+                self.caption_container.padding = ft.Padding.all(0)
+                try:
+                    self.page.update()
+                except Exception:
+                    pass
+
     # ── Gemini Chat: Transcript callbacks ────────────────────────────────────
 
     def _on_gemini_user_transcript(self, transcript: str) -> None:
@@ -1307,6 +1486,25 @@ class VoxifyApp:
         # Show in status bar
         preview = (transcript[:50] + "..") if len(transcript) > 50 else transcript
         self._set_status(preview, TEXT)
+        
+        # Show in the modern caption text overlay!
+        if hasattr(self, 'caption_text') and hasattr(self, 'caption_container'):
+            self.caption_text.value = transcript
+            if transcript.strip():
+                # Make caption container visible with animation
+                self.caption_container.height = 44
+                self.caption_container.opacity = 1.0
+                self.caption_container.padding = ft.Padding.symmetric(horizontal=10, vertical=6)
+            else:
+                # Hide caption container
+                self.caption_container.height = 0
+                self.caption_container.opacity = 0.0
+                self.caption_container.padding = ft.Padding.all(0)
+            try:
+                self.page.update()
+            except Exception:
+                pass
+                
         # Add to transcript history
         self._add_transcript_message("ai", transcript)
 
@@ -1340,7 +1538,8 @@ class VoxifyApp:
         self._listen_only_mode = False
         self._transcript_history.clear()
         self._transcript_panel_visible = False
-        self._tool_call_timestamps.clear()
+        with self._tool_rate_lock:
+            self._tool_call_timestamps.clear()
         self._chat_elapsed_start = 0.0
         self._stop_screen_sharing()
         if self._gemini_live_client:
@@ -1349,6 +1548,13 @@ class VoxifyApp:
             except Exception:
                 pass
             self._gemini_live_client = None
+
+        # Hide caption overlay on close
+        if hasattr(self, 'caption_container'):
+            self.caption_container.height = 0
+            self.caption_container.opacity = 0.0
+            self.caption_container.padding = ft.Padding.all(0)
+
         self._set_status("Chat closed", MUTED)
         self._apply_theme_to_controls()
         self._reset_to_ready()
@@ -1356,6 +1562,11 @@ class VoxifyApp:
     def _on_gemini_error(self, error: str) -> None:
         if not self._is_chatting:
             return
+        # Hide caption overlay on error
+        if hasattr(self, 'caption_container'):
+            self.caption_container.height = 0
+            self.caption_container.opacity = 0.0
+            self.caption_container.padding = ft.Padding.all(0)
         # Show error toast
         try:
             toast = ft.SnackBar(
@@ -1370,6 +1581,7 @@ class VoxifyApp:
             pass
         self._is_chatting = False
         self._is_recording = False
+        self._stop_screen_sharing()
         if self._gemini_live_client:
             try:
                 self._gemini_live_client.stop()
@@ -1404,6 +1616,9 @@ class VoxifyApp:
     def _start_screen_sharing(self) -> None:
         if not self._is_chatting or not self._gemini_live_client:
             return
+        if self._is_sharing_screen:
+            logger.warning("Screen sharing already active — ignoring duplicate start")
+            return
         self._is_sharing_screen = True
         self._screen_share_paused = False
         self._last_frame_bytes = None
@@ -1418,6 +1633,9 @@ class VoxifyApp:
         self.page.update()
 
     def _stop_screen_sharing(self) -> None:
+        if not self._is_sharing_screen and self._screen_capture_thread is None:
+            logger.warning("Screen sharing not active — ignoring duplicate stop")
+            return
         self._is_sharing_screen = False
         self._screen_share_paused = False
         self._last_frame_bytes = None
@@ -1488,8 +1706,8 @@ class VoxifyApp:
                 except Exception: pass
                 return
 
-        resolution_key = self.cfg.get("screen_share_resolution", "medium")
-        max_dim = self.RESOLUTION_MAP.get(resolution_key, 768)
+        resolution_key = self.cfg.get("screen_share_resolution", "low")
+        max_dim = self.RESOLUTION_MAP.get(resolution_key, 480)
         MIN_INTERVAL = 1.0
 
         sct = mss.mss() if _use_mss else None
@@ -1535,9 +1753,8 @@ class VoxifyApp:
                     self._last_frame_bytes = frame_bytes
                     self._last_frame_pixels = frame_pixels
                     if self._gemini_live_client:
-                        self.page.run_thread(
-                            self._gemini_live_client.send_video_frame, frame_bytes
-                        )
+                        # send_video_frame is thread-safe (no UI access) — call directly
+                        self._gemini_live_client.send_video_frame(frame_bytes)
 
                 # Adaptive sleep: more change = faster. Never exceed 1 FPS.
                 if self._last_frame_pixels is not None:
@@ -1554,7 +1771,7 @@ class VoxifyApp:
                 time.sleep(max(sleep, MIN_INTERVAL))
 
         except Exception:
-            pass
+            logger.warning("Screen capture thread crashed", exc_info=True)
         finally:
             if sct:
                 try: sct.close()
@@ -1562,6 +1779,7 @@ class VoxifyApp:
             self._is_sharing_screen = False
             self._last_frame_bytes = None
             self._last_frame_pixels = None
+            self._screen_capture_thread = None
             # Always reset button UI when the capture thread exits
             try:
                 self.page.run_thread(lambda: self._update_video_btn_ui(False))
@@ -1655,6 +1873,7 @@ class VoxifyApp:
                     active_seats=int(raw_entitlement.get("activeSeats") or raw_entitlement.get("active_seats") or 0),
                     is_subscription=bool(raw_entitlement.get("isSubscription") or raw_entitlement.get("is_subscription") or False),
                     can_transcribe=bool(raw_entitlement.get("canTranscribe") or raw_entitlement.get("can_transcribe") or False),
+                    unlimited=bool(raw_entitlement.get("unlimited") or False),
                 )
             except Exception: self._license_entitlement = None
 
@@ -1687,8 +1906,12 @@ class VoxifyApp:
         token = (state.get("token") or self._license_token or "").strip()
         if not token: raise website_client.WebsiteAPIError("License required. Activate in Settings.")
         try: session_data = website_client.refresh_license(token=token, device_id=self._device_id, device_name=f"{app_info.APP_NAME}-{app_info.APP_PLATFORM}", license_key=(state.get("licenseKey") or "").strip())
-        except Exception:
+        except Exception as exc:
             if not (state.get("licenseKey") or "").strip(): raise
+            # If the master license is already in use on another device, do not
+            # silently steal it here; the user must explicitly activate on this
+            # device to take over.
+            if "in use on another device" in str(exc): raise
             session_data = website_client.activate_license(license_key=(state.get("licenseKey") or "").strip(), device_id=self._device_id, device_name=f"{app_info.APP_NAME}-{app_info.APP_PLATFORM}")
         with self._license_lock:
             self._license_token = session_data.token; self._license_entitlement = session_data.entitlement
@@ -1976,6 +2199,8 @@ class VoxifyApp:
         logger.info(f"_on_segment: '{segment_text[:60]}' (len={len(segment_text)})")
         with _live_lock:
             self._live_segments.append(segment_text)
+            if len(self._live_segments) > LIVE_SEGMENTS_MAX:
+                del self._live_segments[: len(self._live_segments) - LIVE_SEGMENTS_MAX]
             self._live_raw_text = " ".join(self._live_segments)
         # Immediately flush so the corrected text appears without delay.
         if self._live_paste_job: self._live_paste_job.cancel()
@@ -2003,6 +2228,10 @@ class VoxifyApp:
         logger.info(f"_type_live_delta: '{delta[:60]}' (raw_len={len(delta)})")
         with _live_lock:
             self._live_raw_text += delta
+            if len(self._live_raw_text) > LIVE_RAW_TEXT_MAX:
+                excess = len(self._live_raw_text) - LIVE_RAW_TEXT_MAX
+                self._live_raw_text = self._live_raw_text[excess:]
+                self._live_processed_marker = max(0, self._live_processed_marker - excess)
         logger.debug(f"_type_live_delta: raw_text now {len(self._live_raw_text)} chars")
         if self._live_paste_job: self._live_paste_job.cancel()
         # Short debounce – text appears quickly; segments correct it shortly after.
@@ -2045,7 +2274,7 @@ class VoxifyApp:
 
     def _serialize_entitlement(self, ent: website_client.LicenseEntitlement | None) -> dict:
         if not ent: return {}
-        return {"licenseId": ent.license_id, "status": ent.status, "plan": ent.plan, "billingCycle": ent.billing_cycle, "quotaChars": ent.quota_chars, "bonusChars": ent.bonus_chars, "usedChars": ent.used_chars, "usedWords": ent.used_words, "remainingChars": ent.remaining_chars, "seatLimit": ent.seat_limit, "activeSeats": ent.active_seats, "isSubscription": ent.is_subscription, "canTranscribe": ent.can_transcribe}
+        return {"licenseId": ent.license_id, "status": ent.status, "plan": ent.plan, "billingCycle": ent.billing_cycle, "quotaChars": ent.quota_chars, "bonusChars": ent.bonus_chars, "usedChars": ent.used_chars, "usedWords": ent.used_words, "remainingChars": ent.remaining_chars, "seatLimit": ent.seat_limit, "activeSeats": ent.active_seats, "isSubscription": ent.is_subscription, "canTranscribe": ent.can_transcribe, "unlimited": bool(getattr(ent, "unlimited", False))}
 
     def _process_transcript(self, raw_text: str) -> dictation_features.ProcessedTranscript:
         return dictation_features.process_transcript(raw_text=raw_text, profile=self.cfg.get("dictation_profile", "notes"), replacements=self.cfg.get("text_replacements", {}), personal_dictionary=self.cfg.get("personal_dictionary", []), voice_commands_enabled=bool(self.cfg.get("voice_commands_enabled", True)), command_prefix=self.cfg.get("command_prefix", "command"))
