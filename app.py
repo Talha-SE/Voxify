@@ -3,7 +3,7 @@ Voxify - Floating Speech-to-Text Desktop Tool
 =============================================
 A compact, always-on-top floating desktop widget that:
     - records mic or system audio
-    - transcribes speech in batch or live mode
+    - transcribes speech in real-time live mode
     - delivers text by auto-typing or clipboard copy
 """
 

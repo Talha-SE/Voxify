@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import math
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -84,11 +85,6 @@ def _import_realtime_transcriber():
     return rt_module
 
 
-def _import_transcriber():
-    import transcriber as tr_module
-    return tr_module
-
-
 def _import_gemini_live():
     import gemini_live_client
     return gemini_live_client
@@ -144,14 +140,15 @@ SETTINGS_ICON = "#60A5FA"
 CLOSE_ICON = "#93A8C6"
 AUX_BG = "#B45309"
 AUX_BORDER = "#FB923C"
-MODE_BATCH_BG = "#1D4ED8"
-MODE_BATCH_BORDER = "#60A5FA"
-MODE_BATCH_TEXT = "#93C5FD"
-BATCH_MODEL = "voxtral-mini-2602"
-LIVE_MODELS = {"voxtral-mini-transcribe-realtime-2602"}
+LIVE_MODELS = {
+    "voxtral-mini-transcribe-realtime-2602",
+    "voxtral-mini-transcribe-realtime-3",
+}
 # Maps the user-facing config model to the actual realtime model for live mode.
 LIVE_MODEL_MAP = {
     "voxtral-mini-2602": "voxtral-mini-transcribe-realtime-2602",
+    "voxtral-mini-transcribe-realtime-2602": "voxtral-mini-transcribe-realtime-2602",
+    "voxtral-mini-transcribe-realtime-3": "voxtral-mini-transcribe-realtime-3",
 }
 WIDGET_FULL_WIDTH = 200
 WIDGET_FULL_HEIGHT = 160
@@ -181,9 +178,6 @@ THEMES: dict[str, dict[str, str]] = {
         "CLOSE_ICON": "#93A8C6",
         "AUX_BG": "#B45309",
         "AUX_BORDER": "#FB923C",
-        "MODE_BATCH_BG": "#1D4ED8",
-        "MODE_BATCH_BORDER": "#60A5FA",
-        "MODE_BATCH_TEXT": "#93C5FD",
     },
     "light": {
         "ACCENT": "#2563EB",
@@ -207,9 +201,6 @@ THEMES: dict[str, dict[str, str]] = {
         "CLOSE_ICON": "#3B5B88",
         "AUX_BG": "#F59E0B",
         "AUX_BORDER": "#D97706",
-        "MODE_BATCH_BG": "#BFDBFE",
-        "MODE_BATCH_BORDER": "#93C5FD",
-        "MODE_BATCH_TEXT": "#1E3A8A",
     },
 }
 
@@ -227,10 +218,13 @@ class VoxifyApp:
         self._is_chatting = False
         self._chat_starting = False
         self._is_sharing_screen = False
+        self._pending_screen_share = False
         self._screen_share_paused = False
         self._screen_capture_thread: Optional[threading.Thread] = None
         self._last_frame_bytes: Optional[bytes] = None
         self._last_frame_pixels: Optional["np.ndarray"] = None
+        self._current_ai_turn_text = ""
+        self._caption_fade_timer: Optional[threading.Timer] = None
         self._stopping = False
         self._gemini_live_client = None
         self._live_raw_text: str = ""           # accumulated text from deltas (corrected by segments)
@@ -303,7 +297,7 @@ class VoxifyApp:
         global BORDER, TEXT, MUTED, MUTED_SOFT, DANGER, SUCCESS
         global ACTIVE_DOT, INACTIVE_DOT, BAR_ACTIVE, BAR_INACTIVE
         global WIDGET_GRADIENT_END, SETTINGS_ICON, CLOSE_ICON
-        global AUX_BG, AUX_BORDER, MODE_BATCH_BG, MODE_BATCH_BORDER, MODE_BATCH_TEXT
+        global AUX_BG, AUX_BORDER
 
         theme_name = self._desired_theme_name()
         palette = THEMES[theme_name]
@@ -329,9 +323,6 @@ class VoxifyApp:
         CLOSE_ICON = palette["CLOSE_ICON"]
         AUX_BG = palette["AUX_BG"]
         AUX_BORDER = palette["AUX_BORDER"]
-        MODE_BATCH_BG = palette["MODE_BATCH_BG"]
-        MODE_BATCH_BORDER = palette["MODE_BATCH_BORDER"]
-        MODE_BATCH_TEXT = palette["MODE_BATCH_TEXT"]
 
         changed = self._theme_name != theme_name
         self._theme_name = theme_name
@@ -373,19 +364,21 @@ class VoxifyApp:
             )
             self.chat_btn.border = ft.Border.all(1, ft.Colors.with_opacity(0.5, ACCENT_GLOW))
             
-            self.action_button.visible = False
-            self.video_btn.visible = True
-            # Refresh video button state to reflect current sharing + theme colors
-            self._update_video_btn_ui(sharing=self._is_sharing_screen)
-            # Show quick actions and transcript panel in chat mode
+            # Both buttons stay visible and active for seamless 1-click mode switching
+            self.action_button.visible = True
+            self.action_button.opacity = 1.0
+            self.action_button.disabled = False
+            self.minimized_action_button.opacity = 1.0
+            self.minimized_action_button.disabled = False
+            self.minimized_action_button.bgcolor = CARD_ACTIVE
+            self.minimized_action_icon.color = ACCENT
+            
+            # Show quick actions and video button in chat mode
             self._quick_actions_row.visible = True
+            self.video_btn.visible = True
             self.mute_btn.visible = True
             self.history_btn.visible = True
-            
-            self.minimized_action_button.opacity = 0.4
-            self.minimized_action_button.disabled = True
-            self.minimized_action_button.bgcolor = ft.Colors.with_opacity(0.1, MUTED)
-            self.minimized_action_icon.color = MUTED_SOFT
+            self._update_video_btn_ui(sharing=self._is_sharing_screen)
         else:
             self.chat_icon.name = ft.Icons.AUTO_AWESOME_ROUNDED
             self.chat_icon.color = ACCENT
@@ -395,16 +388,18 @@ class VoxifyApp:
             self.chat_btn.border = ft.Border.all(1, ft.Colors.with_opacity(0.2, BORDER))
             
             self.action_button.visible = True
-            self.video_btn.visible = False
-            # Hide quick actions and transcript panel when not in chat mode
-            self._quick_actions_row.visible = False
-            self._transcript_panel_container.visible = False
-            self._transcript_panel_visible = False
-            
             self.action_button.opacity = 1.0
             self.action_button.disabled = False
             self.minimized_action_button.opacity = 1.0
             self.minimized_action_button.disabled = False
+            
+            # Hide quick actions when not in chat mode
+            self._quick_actions_row.visible = False
+            self.video_btn.visible = False
+            self.mute_btn.visible = False
+            self.history_btn.visible = False
+            self._transcript_panel_container.visible = False
+            self._transcript_panel_visible = False
 
         self.controls_group.border = None
         self.widget_shell.gradient = ft.LinearGradient(
@@ -534,7 +529,7 @@ class VoxifyApp:
             if self._transcript_panel_visible:
                 h = 320
             else:
-                h = 210
+                h = 220
         else:
             h = WIDGET_FULL_HEIGHT
         return w, h
@@ -649,25 +644,61 @@ class VoxifyApp:
 
         self.action_label = ft.Text("Start", color=TEXT)
         self.action_icon = ft.Icon(ft.Icons.MIC_NONE_ROUNDED, size=16, color=ACCENT)
-        self.action_button = ft.Container(width=36, height=36, border_radius=18, alignment=ft.Alignment(0, 0), bgcolor=CARD_ACTIVE, border=ft.Border.all(1, ft.Colors.with_opacity(0.45, ACCENT)), content=self.action_icon, on_click=self._on_action_click, animate=160, shadow=ft.BoxShadow(blur_radius=14, spread_radius=0, color=ft.Colors.with_opacity(0.22, ACCENT)))
+        self.action_button = ft.Container(
+            width=36, height=36, border_radius=18, alignment=ft.Alignment(0, 0),
+            bgcolor=CARD_ACTIVE, border=ft.Border.all(1, ft.Colors.with_opacity(0.45, ACCENT)),
+            content=self.action_icon, on_click=self._on_action_click, animate=160,
+            shadow=ft.BoxShadow(blur_radius=14, spread_radius=0, color=ft.Colors.with_opacity(0.22, ACCENT)),
+            ink=True, tooltip="Voice Transcription (Speech-to-Text)"
+        )
         self.minimized_action_icon = ft.Icon(ft.Icons.MIC_NONE_ROUNDED, size=20, color=ACCENT)
-        self.minimized_action_button = ft.Container(width=56, height=56, border_radius=28, alignment=ft.Alignment(0, 0), bgcolor=CARD_ACTIVE, border=ft.Border.all(1, ft.Colors.with_opacity(0.45, ACCENT)), content=self.minimized_action_icon, on_click=self._on_action_click, animate=160, shadow=ft.BoxShadow(blur_radius=16, spread_radius=0, color=ft.Colors.with_opacity(0.24, ACCENT)))
+        self.minimized_action_button = ft.Container(
+            width=56, height=56, border_radius=28, alignment=ft.Alignment(0, 0),
+            bgcolor=CARD_ACTIVE, border=ft.Border.all(1, ft.Colors.with_opacity(0.45, ACCENT)),
+            content=self.minimized_action_icon, on_click=self._on_action_click, animate=160,
+            shadow=ft.BoxShadow(blur_radius=16, spread_radius=0, color=ft.Colors.with_opacity(0.24, ACCENT)),
+            ink=True, tooltip="Voice Transcription"
+        )
 
         self.settings_icon = ft.Icon(ft.Icons.SETTINGS_ROUNDED, size=14, color=ft.Colors.with_opacity(0.8, SETTINGS_ICON))
-        self.settings_btn = ft.Container(width=28, height=28, border_radius=14, alignment=ft.Alignment(0, 0), bgcolor=ft.Colors.with_opacity(0.2, CARD_ACTIVE), border=ft.Border.all(1, ft.Colors.with_opacity(0.2, BORDER)), content=self.settings_icon, on_click=self._open_settings, ink=True)
+        self.settings_btn = ft.Container(
+            width=28, height=28, border_radius=14, alignment=ft.Alignment(0, 0),
+            bgcolor=ft.Colors.with_opacity(0.2, CARD_ACTIVE), border=ft.Border.all(1, ft.Colors.with_opacity(0.2, BORDER)),
+            content=self.settings_icon, on_click=self._open_settings, ink=True, tooltip="Settings"
+        )
         self.minimize_icon = ft.Icon(ft.Icons.CLOSE_ROUNDED, size=14, color=ft.Colors.with_opacity(0.9, CLOSE_ICON))
-        self.minimize_btn = ft.Container(width=28, height=28, border_radius=14, alignment=ft.Alignment(0, 0), bgcolor=ft.Colors.with_opacity(0.18, DANGER), border=ft.Border.all(1, ft.Colors.with_opacity(0.45, DANGER)), content=self.minimize_icon, on_click=self._close_app, ink=True)
+        self.minimize_btn = ft.Container(
+            width=28, height=28, border_radius=14, alignment=ft.Alignment(0, 0),
+            bgcolor=ft.Colors.with_opacity(0.18, DANGER), border=ft.Border.all(1, ft.Colors.with_opacity(0.45, DANGER)),
+            content=self.minimize_icon, on_click=self._close_app, ink=True, tooltip="Close"
+        )
         self.chat_icon = ft.Icon(ft.Icons.AUTO_AWESOME_ROUNDED, size=14, color=ACCENT)
-        self.chat_btn = ft.Container(width=28, height=28, border_radius=14, alignment=ft.Alignment(0, 0), bgcolor=ft.Colors.with_opacity(0.2, CARD_ACTIVE), border=ft.Border.all(1, ft.Colors.with_opacity(0.2, BORDER)), content=self.chat_icon, on_click=self._on_chat_click, ink=True)
+        self.chat_btn = ft.Container(
+            width=28, height=28, border_radius=14, alignment=ft.Alignment(0, 0),
+            bgcolor=ft.Colors.with_opacity(0.2, CARD_ACTIVE), border=ft.Border.all(1, ft.Colors.with_opacity(0.2, BORDER)),
+            content=self.chat_icon, on_click=self._on_chat_click, ink=True, tooltip="AI Voice Assistant (Gemini Live)"
+        )
         
-        self.video_icon = ft.Icon(ft.Icons.VIDEOCAM_OUTLINED, size=14, color=ACCENT)
-        self.video_btn = ft.Container(width=36, height=36, border_radius=18, alignment=ft.Alignment(0, 0), bgcolor=ft.Colors.with_opacity(0.2, CARD_ACTIVE), border=ft.Border.all(1, ft.Colors.with_opacity(0.2, BORDER)), content=self.video_icon, on_click=self._on_video_click, visible=False, ink=True)
+        self.video_icon = ft.Icon(ft.Icons.VIDEOCAM_OUTLINED, size=12, color=ACCENT)
+        self.video_btn = ft.Container(
+            width=24, height=24, border_radius=12, alignment=ft.Alignment(0, 0),
+            bgcolor=ft.Colors.with_opacity(0.2, CARD_ACTIVE), border=ft.Border.all(1, ft.Colors.with_opacity(0.2, BORDER)),
+            content=self.video_icon, on_click=self._on_video_click, visible=False, ink=True, tooltip="Share Screen"
+        )
 
         # ── Quick action buttons (visible only in chat mode) ──────────────
         self.mute_icon = ft.Icon(ft.Icons.MIC_ROUNDED, size=12, color=ACCENT)
-        self.mute_btn = ft.Container(width=24, height=24, border_radius=12, alignment=ft.Alignment(0, 0), bgcolor=ft.Colors.with_opacity(0.2, CARD_ACTIVE), border=ft.Border.all(1, ft.Colors.with_opacity(0.2, BORDER)), content=self.mute_icon, on_click=lambda _: self._toggle_listen_only(), visible=False, ink=True)
+        self.mute_btn = ft.Container(
+            width=24, height=24, border_radius=12, alignment=ft.Alignment(0, 0),
+            bgcolor=ft.Colors.with_opacity(0.2, CARD_ACTIVE), border=ft.Border.all(1, ft.Colors.with_opacity(0.2, BORDER)),
+            content=self.mute_icon, on_click=lambda _: self._toggle_listen_only(), visible=False, ink=True, tooltip="Mute Microphone"
+        )
         self.history_icon = ft.Icon(ft.Icons.CHAT_BUBBLE_OUTLINE_ROUNDED, size=12, color=ACCENT)
-        self.history_btn = ft.Container(width=24, height=24, border_radius=12, alignment=ft.Alignment(0, 0), bgcolor=ft.Colors.with_opacity(0.2, CARD_ACTIVE), border=ft.Border.all(1, ft.Colors.with_opacity(0.2, BORDER)), content=self.history_icon, on_click=lambda _: self._toggle_transcript_panel(), visible=False, ink=True)
+        self.history_btn = ft.Container(
+            width=24, height=24, border_radius=12, alignment=ft.Alignment(0, 0),
+            bgcolor=ft.Colors.with_opacity(0.2, CARD_ACTIVE), border=ft.Border.all(1, ft.Colors.with_opacity(0.2, BORDER)),
+            content=self.history_icon, on_click=lambda _: self._toggle_transcript_panel(), visible=False, ink=True, tooltip="Transcript History"
+        )
 
         # ── Transcript history panel ─────────────────────────────────────
         self._transcript_list = ft.Column(spacing=4, controls=[])
@@ -707,14 +738,22 @@ class VoxifyApp:
                 self.aux_chip
             ]
         )
-        self.controls_group = ft.Container(padding=ft.Padding.symmetric(vertical=4), content=ft.Row(spacing=6, alignment=ft.MainAxisAlignment.CENTER, vertical_alignment=ft.CrossAxisAlignment.CENTER, controls=[self.action_button, self.video_btn, self.chat_btn, self.settings_btn, self.minimize_btn]))
+        self.controls_group = ft.Container(
+            padding=ft.Padding.symmetric(vertical=4),
+            content=ft.Row(
+                spacing=8,
+                alignment=ft.MainAxisAlignment.CENTER,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                controls=[self.action_button, self.chat_btn, self.settings_btn, self.minimize_btn]
+            )
+        )
 
         # Quick actions row (visible only during chat mode)
         self._quick_actions_row = ft.Row(
-            spacing=4,
+            spacing=6,
             alignment=ft.MainAxisAlignment.CENTER,
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
-            controls=[self.mute_btn, self.history_btn],
+            controls=[self.mute_btn, self.video_btn, self.history_btn],
             visible=False,
         )
 
@@ -731,14 +770,15 @@ class VoxifyApp:
         self.caption_container = ft.Container(
             content=self.caption_text,
             alignment=ft.Alignment(0, 0),
+            width=180,
             padding=ft.Padding.all(0),
             bgcolor=ft.Colors.with_opacity(0.12, ACCENT),
-            border_radius=10,
+            border_radius=8,
             border=ft.Border.all(1, ft.Colors.with_opacity(0.18, ACCENT_GLOW)),
             visible=True,
             opacity=0.0,
             height=0,
-            animate=ft.Animation(300, "decelerate")
+            animate=ft.Animation(250, "decelerate")
         )
 
         self.full_mode_container = ft.Container(visible=True, content=ft.Column(alignment=ft.MainAxisAlignment.SPACE_BETWEEN, horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=8, controls=[ft.Row(alignment=ft.MainAxisAlignment.CENTER, vertical_alignment=ft.CrossAxisAlignment.CENTER, spacing=8, controls=[indicator, brand_block]), ft.Column(horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=4, controls=[waveform, self.aux_chip]), self._quick_actions_row, self.caption_container, self._transcript_panel_container, self.controls_group]))
@@ -766,17 +806,10 @@ class VoxifyApp:
         root = ft.WindowDragArea(maximizable=False, content=self.centered_shell_container)
 
         # ── Set initial UI state before first paint ──────────────────────
-        mode_value = (self.cfg.get("mode") or "Batch").strip().lower()
-        mode_label = "Live" if mode_value == "live" else "Batch"
-        self.mode_badge_text.value = mode_label.upper()
-        if mode_label == "Live":
-            self.mode_badge.bgcolor = ft.Colors.with_opacity(0.16, ACCENT)
-            self.mode_badge.border = ft.Border.all(1, ft.Colors.with_opacity(0.45, ACCENT))
-            self.mode_badge_text.color = ACCENT_GLOW
-        else:
-            self.mode_badge.bgcolor = ft.Colors.with_opacity(0.16, MODE_BATCH_BG)
-            self.mode_badge.border = ft.Border.all(1, ft.Colors.with_opacity(0.4, MODE_BATCH_BORDER))
-            self.mode_badge_text.color = MODE_BATCH_TEXT
+        self.mode_badge_text.value = "LIVE"
+        self.mode_badge.bgcolor = ft.Colors.with_opacity(0.16, ACCENT)
+        self.mode_badge.border = ft.Border.all(1, ft.Colors.with_opacity(0.45, ACCENT))
+        self.mode_badge_text.color = ACCENT_GLOW
         self.action_label.value = "Start"
         self.action_label.color = TEXT
         self.status_text.value = "Ready"
@@ -790,33 +823,14 @@ class VoxifyApp:
         self._schedule_auto_minimize_timer()
 
     def _set_mode_badge(self) -> None:
-        mode_value = (self.cfg.get("mode") or "Batch").strip().lower()
-        mode_label = "Live" if mode_value == "live" else "Batch"
-        self.mode_badge_text.value = mode_label.upper()
-        if mode_label == "Live":
-            self.mode_badge.bgcolor = ft.Colors.with_opacity(0.16, ACCENT)
-            self.mode_badge.border = ft.Border.all(1, ft.Colors.with_opacity(0.45, ACCENT))
-            self.mode_badge_text.color = ACCENT_GLOW
-        else:
-            self.mode_badge.bgcolor = ft.Colors.with_opacity(0.16, MODE_BATCH_BG)
-            self.mode_badge.border = ft.Border.all(1, ft.Colors.with_opacity(0.4, MODE_BATCH_BORDER))
-            self.mode_badge_text.color = MODE_BATCH_TEXT
+        self.mode_badge_text.value = "LIVE"
+        self.mode_badge.bgcolor = ft.Colors.with_opacity(0.16, ACCENT)
+        self.mode_badge.border = ft.Border.all(1, ft.Colors.with_opacity(0.45, ACCENT))
+        self.mode_badge_text.color = ACCENT_GLOW
         self.page.update()
 
     def _is_live_mode(self) -> bool:
-        return (self.cfg.get("mode") or "Live").strip().lower() == "live"
-
-    def _selected_batch_model(self) -> str:
-        """Return the model to use for batch transcription.
-
-        If the user's selected model supports batch (it's a valid Mistral
-        transcription model), use it as-is. Otherwise fall back to the
-        default batch model.
-        """
-        selected = (self.cfg.get("model") or BATCH_MODEL).strip().lower()
-        if selected in LIVE_MODELS:
-            return selected
-        return BATCH_MODEL
+        return True
 
     def _set_action(self, label: str, fg: str, border: str, text_color: str, on_click) -> None:
         self.action_label.value = label
@@ -892,18 +906,18 @@ class VoxifyApp:
             glow_color = ft.Colors.with_opacity(0.15, border)
 
         self.action_icon.name = icon_name
-        self.action_icon.color = MUTED_SOFT if self._is_chatting else icon_color
-        self.action_button.bgcolor = ft.Colors.with_opacity(0.1, MUTED) if self._is_chatting else button_bg
-        self.action_button.gradient = None if self._is_chatting else button_gradient
+        self.action_icon.color = icon_color
+        self.action_button.bgcolor = button_bg
+        self.action_button.gradient = button_gradient
         self.action_button.border = ft.Border.all(1, button_border) if not isinstance(button_border, ft.Border) else button_border
-        self.action_button.shadow = ft.BoxShadow(blur_radius=16, spread_radius=0, color=ft.Colors.with_opacity(0.0 if self._is_chatting else 1.0, glow_color) if isinstance(glow_color, str) else glow_color)
+        self.action_button.shadow = ft.BoxShadow(blur_radius=16, spread_radius=0, color=glow_color if isinstance(glow_color, str) else glow_color)
 
         self.minimized_action_icon.name = icon_name
-        self.minimized_action_icon.color = MUTED_SOFT if self._is_chatting else icon_color
-        self.minimized_action_button.bgcolor = ft.Colors.with_opacity(0.1, MUTED) if self._is_chatting else button_bg
-        self.minimized_action_button.gradient = None if self._is_chatting else button_gradient
+        self.minimized_action_icon.color = icon_color
+        self.minimized_action_button.bgcolor = button_bg
+        self.minimized_action_button.gradient = button_gradient
         self.minimized_action_button.border = ft.Border.all(1, button_border) if not isinstance(button_border, ft.Border) else button_border
-        self.minimized_action_button.shadow = ft.BoxShadow(blur_radius=16, spread_radius=0, color=ft.Colors.with_opacity(0.0 if self._is_chatting else 1.0, glow_color) if isinstance(glow_color, str) else glow_color)
+        self.minimized_action_button.shadow = ft.BoxShadow(blur_radius=16, spread_radius=0, color=glow_color if isinstance(glow_color, str) else glow_color)
 
     def _set_aux_chip(self, text: str = "", active: bool = False) -> None:
         self.aux_chip.visible = active
@@ -952,155 +966,227 @@ class VoxifyApp:
 
         threading.Thread(target=_animate, daemon=True).start()
 
+    def _abort_transcription(self) -> None:
+        """Immediately and cleanly stop all transcription activities and free audio resources."""
+        self._is_recording = False
+        self._stopping = False
+        self._waiting_click = False
+        self._api_check_in_flight = False
+        self._stop_target_listener()
+        try:
+            self.page.window.opacity = 1.0
+        except Exception:
+            pass
+
+        if hasattr(self, '_live_paste_job') and self._live_paste_job:
+            try:
+                self._live_paste_job.cancel()
+            except Exception:
+                pass
+            self._live_paste_job = None
+
+        if self._rt_transcriber:
+            try:
+                self._rt_transcriber.stop()
+            except Exception:
+                pass
+            self._rt_transcriber = None
+
+        if self._recorder:
+            try:
+                self._recorder._recording = False
+                if getattr(self._recorder, '_thread', None):
+                    self._recorder._thread.join(timeout=0.3)
+                self._recorder._close_disk_writer()
+            except Exception:
+                pass
+            self._recorder = None
+
+        self._set_aux_chip("", False)
+
     def _on_chat_click(self, _event) -> None:
         self._register_widget_interaction()
-        if self._is_chatting:
+        if self._is_chatting or getattr(self, '_chat_starting', False):
             self._stop_chat_mode()
             return
-        # Guard against rapid double-click
-        if hasattr(self, '_chat_starting') and self._chat_starting:
-            return
-        self._chat_starting = True
-        try:
-            self._api_check_in_flight = False
-            self._waiting_click = False
-            self._stop_target_listener()
-            self.page.window.opacity = 1.0
-            if self._is_recording:
-                self._is_recording = False
-                if self._rt_transcriber: self._rt_transcriber.stop(); self._rt_transcriber = None
-                if self._recorder: self._recorder = None
-            self._start_chat_mode()
-        finally:
-            self._chat_starting = False
+        # Mutual exclusivity: instantly abort any voice transcription
+        self._abort_transcription()
+        self._start_chat_mode()
 
     def _start_chat_mode(self) -> None:
         self._is_chatting = True
+        self._chat_starting = True
         self._set_status("Connecting to Gemini...", ACCENT, animate=True)
         self._apply_theme_to_controls()
-        try:
-            gemini_key = ""
-            ephemeral_token = None
-            gemini_model = self.cfg.get("gemini_model", "gemini-3.1-flash-live-preview")
-            gemini_voice = self.cfg.get("gemini_voice", "Puck")
-            use_ephemeral = self.cfg.get("gemini_use_ephemeral_tokens", True)
-
-            if use_ephemeral:
-                try:
-                    ephemeral_result = self._get_gemini_ephemeral_token()
-                    ephemeral_token = ephemeral_result.token
-                    gemini_model = ephemeral_result.model
-                    logger.info("Using ephemeral token for Gemini connection.")
-                except Exception as exc:
-                    logger.warning(f"Ephemeral token failed, falling back to API key: {exc}")
-                    use_ephemeral = False
-
-            if not use_ephemeral or not ephemeral_token:
-                gemini_key = self._get_gemini_api_key()
-
-            system_instruction = (
-                "You are Voxify, a highly intelligent and autonomous PC voice assistant.\n\n"
-                "## CRITICAL VOICE ONLY RULES (MUST OBEY):\n"
-                "1. NO MARKDOWN OR BOLD TEXT: You must NEVER use bold markdown formatting (like '**') or headers in your speech. Speak strictly in normal plain-text conversational English sentences. Never output strings like '**Initiating Contact Sequence**' or '**Acquiring Window Data**'.\n"
-                "2. NO TOOL NARRATION: You must NEVER speak about your tool calls, thoughts, plans, or step-by-step progress. Do not say 'I am opening...', 'Let me check...', 'I've retrieved...', or explain your math/calculations. Do not announce context gathering.\n"
-                "3. BE EXTREMELY CONCISE - NO ECHOING: Speak only one or two short sentences. Answer directly and wait for the user. NEVER repeat or paraphrase what the user just said to you. For example, if the user says 'What's the weather in Tokyo?', do NOT say 'I am checking the weather in Tokyo as you said.' or 'You asked about the weather in Tokyo.' Instead, silently call the tool and respond with just the answer: 'The weather in Tokyo is 22°C and sunny.' Do NOT start your response by restating the user's query.\n"
-                "4. SILENT CONTEXT GATHERING: When you gather context using 'get_active_window_info' or 'read_clipboard', do it completely silently. Just call the tools and use the data to respond directly to the user's query.\n"
-                "5. READING/LOOKING AT THE SCREEN: If the user asks you to read, locate, click, or analyze text/buttons on the screen, call the 'parse_screen_text' tool immediately. However, if screen sharing is NOT active (you can check via 'get_screen_share_status'), honestly tell the user you cannot see their screen and ask them to enable screen sharing.\n"
-                "6. ALARMS AND TIMERS: If the user asks you to set an alarm, timer, or reminder, calculate the duration in seconds and call the 'set_timer' tool.\n"
-                "7. VERIFICATION: Use the screen share (if enabled) to verify visual actions (typing, clicking) succeeded. If they failed, try an alternative silently or report the failure concisely.\n"
-                "8. SPEAK AFTER TOOLS: After you have called all necessary tools and gathered the required information, you MUST reply to the user with a normal spoken response. Do NOT keep calling tools endlessly. When you have enough context, finish your turn and speak.\n"
-                "9. LANGUAGE: Speak only in English.\n"
-                "10. HONESTY ABOUT SCREEN: You can ONLY see the user's screen if you are actively receiving video frames. You are NOT receiving video frames unless screen sharing is enabled by the user. If the user asks if you can see their screen, call the 'get_screen_share_status' tool to check whether sharing is active, and answer honestly based on the result. NEVER claim you can see the screen if sharing is not active.\n"
-                "11. NO LYING OR FLUFF: Never pretend to have capabilities you don't have. Never fabricate information. Never say you can do something unless you have actually confirmed it. Be direct, concise, and 100% truthful about your current abilities. If you cannot do something, say so clearly without apology or excuse.\n"
-                "12. TYPING ON SCREEN: When asked to type or write something on screen, use the 'type_text' tool. This tool PHYSICALLY TYPES each character on screen via real keyboard input — it does NOT use clipboard or cmd.\n"
-                "13. SEARCH BEHAVIOR: 'search_web' opens a browser tab with a Google URL. 'web_search' silently fetches results in the background. If you need to type something into a website's search field after opening it, use 'type_text' with coordinates.\n"
-                "14. SAFETY FIRST: All tools use direct Win32 API or Python libraries — NOT cmd/PowerShell — UNLESS the user explicitly asks you to run a shell command. 'run_shell_command' is the ONLY tool that runs PowerShell, and you should ONLY use it when the user asks you to run a command. Never secretely run commands in cmd or PowerShell.\n"
-                "15. NO PARROTING OR PREAMBLE: Never start your response by repeating the user's question back to them. Avoid phrases like 'As you said...', 'You asked about...', 'I see you want me to...', 'Let me check that for you...', 'I'll look up...', 'I am checking...', or any similar preamble. The user already knows what they said. Just answer directly with the information they asked for. A response like 'Checking the weather...' or 'Let me search for that...' is strictly forbidden. Go straight to the answer."
-            )
-
-            SILENT = "SILENT EXECUTION. "
-            tools = [{"functionDeclarations": [
-                {"name": "open_app", "description": SILENT + "Searches for and opens an application on the computer.", "parameters": {"type": "OBJECT", "properties": {"query": {"type": "STRING", "description": "App name (e.g., 'chrome', 'notepad')."}}, "required": ["query"]}},
-                {"name": "mouse_click", "description": SILENT + "Clicks at specific screen coordinates.", "parameters": {"type": "OBJECT", "properties": {"x": {"type": "INTEGER"}, "y": {"type": "INTEGER"}, "button": {"type": "STRING", "enum": ["left", "right", "middle"], "default": "left"}, "double": {"type": "BOOLEAN", "default": False}}, "required": ["x", "y"]}},
-                {"name": "move_mouse", "description": SILENT + "Moves the mouse cursor to specific screen coordinates.", "parameters": {"type": "OBJECT", "properties": {"x": {"type": "INTEGER"}, "y": {"type": "INTEGER"}, "duration": {"type": "NUMBER", "default": 0.2}}, "required": ["x", "y"]}},
-                {"name": "move_mouse_relative", "description": SILENT + "Moves the mouse cursor by a pixel offset from its current position.", "parameters": {"type": "OBJECT", "properties": {"dx": {"type": "INTEGER"}, "dy": {"type": "INTEGER"}}, "required": ["dx", "dy"]}},
-                {"name": "mouse_drag", "description": SILENT + "Drags the mouse from one point to another.", "parameters": {"type": "OBJECT", "properties": {"x1": {"type": "INTEGER"}, "y1": {"type": "INTEGER"}, "x2": {"type": "INTEGER"}, "y2": {"type": "INTEGER"}, "button": {"type": "STRING", "enum": ["left", "right"], "default": "left"}}, "required": ["x1", "y1", "x2", "y2"]}},
-                {"name": "type_text", "description": SILENT + "PHYSICALLY TYPES each character on screen using real keyboard input (SendInput). Not clipboard, not cmd. Clicks at x,y first if provided. Use this when the user asks you to type or write something anywhere on screen.", "parameters": {"type": "OBJECT", "properties": {"text": {"type": "STRING"}, "press_enter": {"type": "BOOLEAN", "default": True}, "x": {"type": "INTEGER", "description": "Optional x coordinate to click before typing."}, "y": {"type": "INTEGER", "description": "Optional y coordinate to click before typing."}}, "required": ["text"]}},
-                {"name": "smooth_scroll", "description": SILENT + "Scrolls the screen up or down smoothly.", "parameters": {"type": "OBJECT", "properties": {"direction": {"type": "STRING", "enum": ["up", "down"]}, "clicks": {"type": "INTEGER", "description": "Scroll distance.", "default": 3}}, "required": ["direction"]}},
-                {"name": "start_scrolling", "description": SILENT + "Starts scrolling the page continuously.", "parameters": {"type": "OBJECT", "properties": {"direction": {"type": "STRING", "enum": ["up", "down"]}, "speed": {"type": "NUMBER", "description": "Seconds between scroll steps (smaller is faster).", "default": 0.5}}, "required": ["direction"]}},
-                {"name": "stop_scrolling", "description": SILENT + "Stops the continuous scrolling action.", "parameters": {"type": "OBJECT", "properties": {}}},
-                {"name": "press_key", "description": SILENT + "Presses a specific keyboard key.", "parameters": {"type": "OBJECT", "properties": {"key": {"type": "STRING", "description": "Key like 'enter', 'win', 'tab'."}}, "required": ["key"]}},
-                {"name": "press_key_combination", "description": SILENT + "Presses multiple keyboard keys simultaneously (hotkeys).", "parameters": {"type": "OBJECT", "properties": {"keys": {"type": "ARRAY", "items": {"type": "STRING"}, "description": "List of key names to press (e.g., ['ctrl', 'shift', 'p'])."}}, "required": ["keys"]}},
-                {"name": "parse_screen_text", "description": SILENT + "Captures the screen and uses OCR to find all visible text and their coordinates. Use this to find where text/dropdowns/buttons are on screen BEFORE using type_text or mouse_click.", "parameters": {"type": "OBJECT", "properties": {}}},
-                {"name": "set_timer", "description": SILENT + "Sets a timer/alarm for a specified duration in seconds.", "parameters": {"type": "OBJECT", "properties": {"duration_seconds": {"type": "INTEGER", "description": "The timer duration in seconds."}, "label": {"type": "STRING", "description": "Optional name or label for the timer."}}, "required": ["duration_seconds"]}},
-                {"name": "list_windows", "description": SILENT + "Returns titles of all currently visible windows.", "parameters": {"type": "OBJECT", "properties": {}}},
-                {"name": "manage_window", "description": SILENT + "Activates, minimizes, maximizes, or closes a specific window.", "parameters": {"type": "OBJECT", "properties": {"title": {"type": "STRING", "description": "Full or partial window title."}, "action": {"type": "STRING", "enum": ["activate", "minimize", "maximize", "close"]}}, "required": ["title", "action"]}},
-                {"name": "get_system_status", "description": SILENT + "Retrieves system resource usage (CPU, RAM, Battery) and local time.", "parameters": {"type": "OBJECT", "properties": {}}},
-                {"name": "read_clipboard", "description": SILENT + "Reads the current text content from the system clipboard.", "parameters": {"type": "OBJECT", "properties": {}}},
-                {"name": "get_active_window_info", "description": SILENT + "Returns title and process name of the active window.", "parameters": {"type": "OBJECT", "properties": {}}},
-                {"name": "system_action", "description": SILENT + "Locks the PC or puts it to sleep.", "parameters": {"type": "OBJECT", "properties": {"action": {"type": "STRING", "enum": ["lock", "sleep", "empty_trash"]}}, "required": ["action"]}},
-                {"name": "set_volume", "description": SILENT + "Sets the system volume to a specific percentage (0-100) using Win32 API directly — no shell/cmd.", "parameters": {"type": "OBJECT", "properties": {"level": {"type": "INTEGER", "description": "Volume percentage (0-100)."}}, "required": ["level"]}},
-                {"name": "set_brightness", "description": SILENT + "Sets the screen brightness to a specific percentage (0-100). Uses PowerShell for WMI (commonly allowed, user-knows).", "parameters": {"type": "OBJECT", "properties": {"level": {"type": "INTEGER", "description": "Brightness percentage (0-100)."}}, "required": ["level"]}},
-                {"name": "run_shell_command", "description": "EXECUTES A POWERSHELL COMMAND. Only use this if the user EXPLICITLY asks you to run a command in terminal/PowerShell. For normal typing on screen, use type_text instead.", "parameters": {"type": "OBJECT", "properties": {"command": {"type": "STRING"}}, "required": ["command"]}},
-                {"name": "list_files", "description": SILENT + "Lists recent files in a specific user directory.", "parameters": {"type": "OBJECT", "properties": {"directory": {"type": "STRING", "enum": ["downloads", "documents", "desktop", "pictures", "videos"], "default": "downloads"}}, "required": ["directory"]}},
-                {"name": "read_file", "description": SILENT + "Reads the first 5000 characters of a text file.", "parameters": {"type": "OBJECT", "properties": {"path": {"type": "STRING", "description": "Full file path."}}, "required": ["path"]}},
-                {"name": "write_file_content", "description": SILENT + "Creates or overwrites a text file with the specified content.", "parameters": {"type": "OBJECT", "properties": {"path": {"type": "STRING", "description": "Full file path."}, "content": {"type": "STRING", "description": "Content to write."}}, "required": ["path", "content"]}},
-                {"name": "file_operation", "description": SILENT + "Copies, moves, deletes, or renames files or folders.", "parameters": {"type": "OBJECT", "properties": {"source": {"type": "STRING", "description": "Source path."}, "target": {"type": "STRING", "description": "Target path (optional)."}, "action": {"type": "STRING", "enum": ["copy", "move", "delete", "rename"]}}, "required": ["source", "action"]}},
-                {"name": "create_folder", "description": SILENT + "Creates a new folder at the specified path.", "parameters": {"type": "OBJECT", "properties": {"path": {"type": "STRING", "description": "Folder path to create."}}, "required": ["path"]}},
-                {"name": "list_running_processes", "description": SILENT + "Returns running processes with PIDs, names, CPU and memory usage.", "parameters": {"type": "OBJECT", "properties": {}}},
-                {"name": "kill_process", "description": SILENT + "Terminates a process by its PID or name.", "parameters": {"type": "OBJECT", "properties": {"pid_or_name": {"type": "STRING", "description": "The PID or process name."}}, "required": ["pid_or_name"]}},
-                {"name": "get_screens_info", "description": SILENT + "Returns details about all connected monitors.", "parameters": {"type": "OBJECT", "properties": {}}},
-                {"name": "media_control", "description": SILENT + "Controls system media playback (play/pause, next, previous, volume, mute).", "parameters": {"type": "OBJECT", "properties": {"action": {"type": "STRING", "enum": ["play_pause", "next", "previous", "volume_up", "volume_down", "mute"]}}, "required": ["action"]}},
-                {"name": "search_web", "description": SILENT + "Opens the default browser and navigates to a Google search URL. Does NOT type in a search box. For typing into a search field on a website, use type_text after search_web.", "parameters": {"type": "OBJECT", "properties": {"query": {"type": "STRING"}, "mode": {"type": "STRING", "enum": ["tab", "window"], "default": "tab"}}, "required": ["query"]}},
-                {"name": "web_search", "description": SILENT + "Performs a background web search and returns text snippets. Use this to answer questions without opening a browser.", "parameters": {"type": "OBJECT", "properties": {"query": {"type": "STRING"}}, "required": ["query"]}},
-                {"name": "open_url", "description": SILENT + "Opens a specific URL in the default browser.", "parameters": {"type": "OBJECT", "properties": {"url": {"type": "STRING"}, "mode": {"type": "STRING", "enum": ["tab", "window"], "default": "tab"}}, "required": ["url"]}},
-                {"name": "get_local_time", "description": SILENT + "Returns the current local date and time.", "parameters": {"type": "OBJECT", "properties": {}}},
-                {"name": "get_mouse_position", "description": SILENT + "Returns the current (x, y) coordinates of the mouse cursor.", "parameters": {"type": "OBJECT", "properties": {}}},
-                {"name": "get_screen_share_status", "description": "Checks whether screen sharing is currently active and returning video frames to you. Call this tool whenever the user asks if you can see their screen, then answer honestly based on the result.", "parameters": {"type": "OBJECT", "properties": {}}}
-            ]}]
-
-            session_resumption = self.cfg.get("gemini_session_resumption", False)
-            context_compression = self.cfg.get("gemini_context_compression", False)
-            idle_timeout = int(self.cfg.get("gemini_idle_timeout", 300))
-
-            res_key = self.cfg.get("screen_share_resolution", "low")
-            media_res_str = {"low": "MEDIA_RESOLUTION_LOW", "medium": "MEDIA_RESOLUTION_MEDIUM", "high": "MEDIA_RESOLUTION_HIGH"}.get(res_key, "MEDIA_RESOLUTION_LOW")
-
-            self._gemini_live_client = _import_gemini_live().GeminiLiveClient(
-                api_key=gemini_key if gemini_key else None,
-                ephemeral_token=ephemeral_token,
-                model=gemini_model,
-                voice_name=gemini_voice,
-                tools=tools,
-                system_instruction=system_instruction,
-                session_resumption=session_resumption,
-                context_compression=context_compression,
-                idle_timeout=idle_timeout,
-                media_resolution=media_res_str,
-                on_status=lambda s: self.page.run_thread(self._set_gemini_status, s),
-                on_error=lambda e: self.page.run_thread(self._on_gemini_error, e),
-                on_transcript=lambda t: self.page.run_thread(self._on_gemini_transcript, t),
-                on_user_transcript=lambda t: self.page.run_thread(self._on_gemini_user_transcript, t),
-                on_tool_call=self._handle_ai_tool_call,
-            )
-            self._gemini_live_client.start()
-            self._is_recording = True
-        except Exception as exc:
-            self._is_chatting = False
-            self._is_recording = False
-            self._on_transcription_error(f"Gemini Live failed: {exc}")
-            self._apply_theme_to_controls()
-            return
         self.page.update()
 
-        # Apply gemini_show_transcript_panel config at start
+        def _connect_worker() -> None:
+            try:
+                gemini_key = ""
+                ephemeral_token = None
+                gemini_model = self.cfg.get("gemini_model", "gemini-3.8-live")
+                gemini_voice = self.cfg.get("gemini_voice", "Puck")
+                use_ephemeral = self.cfg.get("gemini_use_ephemeral_tokens", False)
+
+                # Always retrieve direct API key from license bootstrap
+                try:
+                    gemini_key = self._get_gemini_api_key()
+                except Exception as exc:
+                    logger.warning(f"Direct Gemini key retrieval failed: {exc}")
+                    gemini_key = ""
+
+                # If ephemeral requested or direct key unavailable, fetch ephemeral token
+                if use_ephemeral or not gemini_key:
+                    try:
+                        ephemeral_result = self._get_gemini_ephemeral_token()
+                        ephemeral_token = ephemeral_result.token
+                        gemini_model = self.cfg.get("gemini_model") or ephemeral_result.model or "gemini-3.8-live"
+                        logger.info(f"Retrieved ephemeral token for Gemini connection (Model: {gemini_model}).")
+                    except Exception as exc:
+                        logger.warning(f"Ephemeral token retrieval failed: {exc}")
+                        if not gemini_key:
+                            gemini_key = self._get_gemini_api_key()
+
+                if not gemini_key and not ephemeral_token:
+                    raise website_client.WebsiteAPIError("Failed to obtain Gemini authentication credentials. Check your license key in Settings.")
+
+                # User toggled away while connecting
+                if not self._is_chatting:
+                    logger.info("Chat mode cancelled during startup.")
+                    return
+
+                system_instruction = (
+                    "You are Voxify, a highly intelligent and autonomous PC voice assistant.\n\n"
+                    "## CRITICAL VOICE ONLY RULES (MUST OBEY):\n"
+                    "1. NO MARKDOWN OR BOLD TEXT: You must NEVER use bold markdown formatting (like '**') or headers in your speech. Speak strictly in normal plain-text conversational English sentences. Never output strings like '**Initiating Contact Sequence**' or '**Acquiring Window Data**'.\n"
+                    "2. NO TOOL NARRATION: You must NEVER speak about your tool calls, thoughts, plans, or step-by-step progress. Do not say 'I am opening...', 'Let me check...', 'I've retrieved...', or explain your math/calculations. Do not announce context gathering.\n"
+                    "3. BE EXTREMELY CONCISE - NO ECHOING: Speak only one or two short sentences. Answer directly and wait for the user. NEVER repeat or paraphrase what the user just said to you. For example, if the user says 'What's the weather in Tokyo?', do NOT say 'I am checking the weather in Tokyo as you said.' or 'You asked about the weather in Tokyo.' Instead, silently call the tool and respond with just the answer: 'The weather in Tokyo is 22°C and sunny.' Do NOT start your response by restating the user's query.\n"
+                    "4. SILENT CONTEXT GATHERING: When you gather context using 'get_active_window_info' or 'read_clipboard', do it completely silently. Just call the tools and use the data to respond directly to the user's query.\n"
+                    "5. READING/LOOKING AT THE SCREEN: If the user asks you to read, locate, click, or analyze text/buttons on the screen, call the 'parse_screen_text' tool immediately. However, if screen sharing is NOT active (you can check via 'get_screen_share_status'), honestly tell the user you cannot see their screen and ask them to enable screen sharing.\n"
+                    "6. ALARMS AND TIMERS: If the user asks you to set an alarm, timer, or reminder, calculate the duration in seconds and call the 'set_timer' tool.\n"
+                    "7. VERIFICATION: Use the screen share (if enabled) to verify visual actions (typing, clicking) succeeded. If they failed, try an alternative silently or report the failure concisely.\n"
+                    "8. SPEAK AFTER TOOLS: After you have called all necessary tools and gathered the required information, you MUST reply to the user with a normal spoken response. Do NOT keep calling tools endlessly. When you have enough context, finish your turn and speak.\n"
+                    "9. LANGUAGE: Speak only in English.\n"
+                    "10. HONESTY ABOUT SCREEN: You can ONLY see the user's screen if you are actively receiving video frames. You are NOT receiving video frames unless screen sharing is enabled by the user. If the user asks if you can see their screen, call the 'get_screen_share_status' tool to check whether sharing is active, and answer honestly based on the result. NEVER claim you can see the screen if sharing is not active.\n"
+                    "11. NO LYING OR FLUFF: Never pretend to have capabilities you don't have. Never fabricate information. Never say you can do something unless you have actually confirmed it. Be direct, concise, and 100% truthful about your current abilities. If you cannot do something, say so clearly without apology or excuse.\n"
+                    "12. TYPING ON SCREEN: When asked to type or write something on screen, use the 'type_text' tool. This tool PHYSICALLY TYPES each character on screen via real keyboard input — it does NOT use clipboard or cmd.\n"
+                    "13. SEARCH & FACTUAL GROUNDING: You have native real-time Google Search Grounding enabled. For any queries regarding current events, news, live weather, facts, sports scores, stocks, or real-time internet information, use your built-in Google Search grounding automatically without opening any browser or asking the user to open Chrome. Only use 'search_web' if the user explicitly asks you to 'open a search in my browser' or 'open Google in Chrome'. Never open a browser for general factual queries.\n"
+                    "14. SAFETY FIRST: All tools use direct Win32 API or Python libraries — NOT cmd/PowerShell — UNLESS the user explicitly asks you to run a shell command. 'run_shell_command' is the ONLY tool that runs PowerShell, and you should ONLY use it when the user asks you to run a command. Never secretely run commands in cmd or PowerShell.\n"
+                    "15. NO PARROTING OR PREAMBLE: Never start your response by repeating the user's question back to them. Avoid phrases like 'As you said...', 'You asked about...', 'I see you want me to...', 'Let me check that for you...', 'I'll look up...', 'I am checking...', or any similar preamble. The user already knows what they said. Just answer directly with the information they asked for. A response like 'Checking the weather...' or 'Let me search for that...' is strictly forbidden. Go straight to the answer."
+                )
+
+                SILENT = "SILENT EXECUTION. "
+                tools = [{"functionDeclarations": [
+                    {"name": "open_app", "description": SILENT + "Searches for and opens an application on the computer.", "parameters": {"type": "OBJECT", "properties": {"query": {"type": "STRING", "description": "App name (e.g., 'chrome', 'notepad')."}}, "required": ["query"]}},
+                    {"name": "mouse_click", "description": SILENT + "Clicks at specific screen coordinates.", "parameters": {"type": "OBJECT", "properties": {"x": {"type": "INTEGER"}, "y": {"type": "INTEGER"}, "button": {"type": "STRING", "enum": ["left", "right", "middle"], "default": "left"}, "double": {"type": "BOOLEAN", "default": False}}, "required": ["x", "y"]}},
+                    {"name": "move_mouse", "description": SILENT + "Moves the mouse cursor to specific screen coordinates.", "parameters": {"type": "OBJECT", "properties": {"x": {"type": "INTEGER"}, "y": {"type": "INTEGER"}, "duration": {"type": "NUMBER", "default": 0.2}}, "required": ["x", "y"]}},
+                    {"name": "move_mouse_relative", "description": SILENT + "Moves the mouse cursor by a pixel offset from its current position.", "parameters": {"type": "OBJECT", "properties": {"dx": {"type": "INTEGER"}, "dy": {"type": "INTEGER"}}, "required": ["dx", "dy"]}},
+                    {"name": "mouse_drag", "description": SILENT + "Drags the mouse from one point to another.", "parameters": {"type": "OBJECT", "properties": {"x1": {"type": "INTEGER"}, "y1": {"type": "INTEGER"}, "x2": {"type": "INTEGER"}, "y2": {"type": "INTEGER"}, "button": {"type": "STRING", "enum": ["left", "right"], "default": "left"}}, "required": ["x1", "y1", "x2", "y2"]}},
+                    {"name": "type_text", "description": SILENT + "PHYSICALLY TYPES each character on screen using real keyboard input (SendInput). Not clipboard, not cmd. Clicks at x,y first if provided. Use this when the user asks you to type or write something anywhere on screen.", "parameters": {"type": "OBJECT", "properties": {"text": {"type": "STRING"}, "press_enter": {"type": "BOOLEAN", "default": True}, "x": {"type": "INTEGER", "description": "Optional x coordinate to click before typing."}, "y": {"type": "INTEGER", "description": "Optional y coordinate to click before typing."}}, "required": ["text"]}},
+                    {"name": "smooth_scroll", "description": SILENT + "Scrolls the screen up or down smoothly.", "parameters": {"type": "OBJECT", "properties": {"direction": {"type": "STRING", "enum": ["up", "down"]}, "clicks": {"type": "INTEGER", "description": "Scroll distance.", "default": 3}}, "required": ["direction"]}},
+                    {"name": "start_scrolling", "description": SILENT + "Starts scrolling the page continuously.", "parameters": {"type": "OBJECT", "properties": {"direction": {"type": "STRING", "enum": ["up", "down"]}, "speed": {"type": "NUMBER", "description": "Seconds between scroll steps (smaller is faster).", "default": 0.5}}, "required": ["direction"]}},
+                    {"name": "stop_scrolling", "description": SILENT + "Stops the continuous scrolling action.", "parameters": {"type": "OBJECT", "properties": {}}},
+                    {"name": "press_key", "description": SILENT + "Presses a specific keyboard key.", "parameters": {"type": "OBJECT", "properties": {"key": {"type": "STRING", "description": "Key like 'enter', 'win', 'tab'."}}, "required": ["key"]}},
+                    {"name": "press_key_combination", "description": SILENT + "Presses multiple keyboard keys simultaneously (hotkeys).", "parameters": {"type": "OBJECT", "properties": {"keys": {"type": "ARRAY", "items": {"type": "STRING"}, "description": "List of key names to press (e.g., ['ctrl', 'shift', 'p'])."}}, "required": ["keys"]}},
+                    {"name": "parse_screen_text", "description": SILENT + "Captures the screen and uses OCR to find all visible text and their coordinates. Use this to find where text/dropdowns/buttons are on screen BEFORE using type_text or mouse_click.", "parameters": {"type": "OBJECT", "properties": {}}},
+                    {"name": "set_timer", "description": SILENT + "Sets a timer/alarm for a specified duration in seconds.", "parameters": {"type": "OBJECT", "properties": {"duration_seconds": {"type": "INTEGER", "description": "The timer duration in seconds."}, "label": {"type": "STRING", "description": "Optional name or label for the timer."}}, "required": ["duration_seconds"]}},
+                    {"name": "list_windows", "description": SILENT + "Returns titles of all currently visible windows.", "parameters": {"type": "OBJECT", "properties": {}}},
+                    {"name": "manage_window", "description": SILENT + "Activates, minimizes, maximizes, or closes a specific window.", "parameters": {"type": "OBJECT", "properties": {"title": {"type": "STRING", "description": "Full or partial window title."}, "action": {"type": "STRING", "enum": ["activate", "minimize", "maximize", "close"]}}, "required": ["title", "action"]}},
+                    {"name": "get_system_status", "description": SILENT + "Retrieves system resource usage (CPU, RAM, Battery) and local time.", "parameters": {"type": "OBJECT", "properties": {}}},
+                    {"name": "read_clipboard", "description": SILENT + "Reads the current text content from the system clipboard.", "parameters": {"type": "OBJECT", "properties": {}}},
+                    {"name": "get_active_window_info", "description": SILENT + "Returns title and process name of the active window.", "parameters": {"type": "OBJECT", "properties": {}}},
+                    {"name": "system_action", "description": SILENT + "Locks the PC or puts it to sleep.", "parameters": {"type": "OBJECT", "properties": {"action": {"type": "STRING", "enum": ["lock", "sleep", "empty_trash"]}}, "required": ["action"]}},
+                    {"name": "set_volume", "description": SILENT + "Sets the system volume to a specific percentage (0-100) using Win32 API directly — no shell/cmd.", "parameters": {"type": "OBJECT", "properties": {"level": {"type": "INTEGER", "description": "Volume percentage (0-100)."}}, "required": ["level"]}},
+                    {"name": "set_brightness", "description": SILENT + "Sets the screen brightness to a specific percentage (0-100). Uses PowerShell for WMI (commonly allowed, user-knows).", "parameters": {"type": "OBJECT", "properties": {"level": {"type": "INTEGER", "description": "Brightness percentage (0-100)."}}, "required": ["level"]}},
+                    {"name": "run_shell_command", "description": "EXECUTES A POWERSHELL COMMAND. Only use this if the user EXPLICITLY asks you to run a command in terminal/PowerShell. For normal typing on screen, use type_text instead.", "parameters": {"type": "OBJECT", "properties": {"command": {"type": "STRING"}}, "required": ["command"]}},
+                    {"name": "list_files", "description": SILENT + "Lists recent files in a specific user directory.", "parameters": {"type": "OBJECT", "properties": {"directory": {"type": "STRING", "enum": ["downloads", "documents", "desktop", "pictures", "videos"], "default": "downloads"}}, "required": ["directory"]}},
+                    {"name": "read_file", "description": SILENT + "Reads the first 5000 characters of a text file.", "parameters": {"type": "OBJECT", "properties": {"path": {"type": "STRING", "description": "Full file path."}}, "required": ["path"]}},
+                    {"name": "write_file_content", "description": SILENT + "Creates or overwrites a text file with the specified content.", "parameters": {"type": "OBJECT", "properties": {"path": {"type": "STRING", "description": "Full file path."}, "content": {"type": "STRING", "description": "Content to write."}}, "required": ["path", "content"]}},
+                    {"name": "file_operation", "description": SILENT + "Copies, moves, deletes, or renames files or folders.", "parameters": {"type": "OBJECT", "properties": {"source": {"type": "STRING", "description": "Source path."}, "target": {"type": "STRING", "description": "Target path (optional)."}, "action": {"type": "STRING", "enum": ["copy", "move", "delete", "rename"]}}, "required": ["source", "action"]}},
+                    {"name": "create_folder", "description": SILENT + "Creates a new folder at the specified path.", "parameters": {"type": "OBJECT", "properties": {"path": {"type": "STRING", "description": "Folder path to create."}}, "required": ["path"]}},
+                    {"name": "list_running_processes", "description": SILENT + "Returns running processes with PIDs, names, CPU and memory usage.", "parameters": {"type": "OBJECT", "properties": {}}},
+                    {"name": "kill_process", "description": SILENT + "Terminates a process by its PID or name.", "parameters": {"type": "OBJECT", "properties": {"pid_or_name": {"type": "STRING", "description": "The PID or process name."}}, "required": ["pid_or_name"]}},
+                    {"name": "get_screens_info", "description": SILENT + "Returns details about all connected monitors.", "parameters": {"type": "OBJECT", "properties": {}}},
+                    {"name": "media_control", "description": SILENT + "Controls system media playback (play/pause, next, previous, volume, mute).", "parameters": {"type": "OBJECT", "properties": {"action": {"type": "STRING", "enum": ["play_pause", "next", "previous", "volume_up", "volume_down", "mute"]}}, "required": ["action"]}},
+                    {"name": "search_web", "description": SILENT + "Opens the default browser and navigates to a Google search URL. Does NOT type in a search box. For typing into a search field on a website, use type_text after search_web.", "parameters": {"type": "OBJECT", "properties": {"query": {"type": "STRING"}, "mode": {"type": "STRING", "enum": ["tab", "window"], "default": "tab"}}, "required": ["query"]}},
+                    {"name": "web_search", "description": SILENT + "Performs a background web search and returns text snippets. Use this to answer questions without opening a browser.", "parameters": {"type": "OBJECT", "properties": {"query": {"type": "STRING"}}, "required": ["query"]}},
+                    {"name": "open_url", "description": SILENT + "Opens a specific URL in the default browser.", "parameters": {"type": "OBJECT", "properties": {"url": {"type": "STRING"}, "mode": {"type": "STRING", "enum": ["tab", "window"], "default": "tab"}}, "required": ["url"]}},
+                    {"name": "get_local_time", "description": SILENT + "Returns the current local date and time.", "parameters": {"type": "OBJECT", "properties": {}}},
+                    {"name": "get_mouse_position", "description": SILENT + "Returns the current (x, y) coordinates of the mouse cursor.", "parameters": {"type": "OBJECT", "properties": {}}},
+                    {"name": "get_screen_share_status", "description": "Checks whether screen sharing is currently active and returning video frames to you. Call this tool whenever the user asks if you can see their screen, then answer honestly based on the result.", "parameters": {"type": "OBJECT", "properties": {}}}
+                ]}]
+
+                session_resumption = self.cfg.get("gemini_session_resumption", False)
+                context_compression = self.cfg.get("gemini_context_compression", False)
+                idle_timeout = int(self.cfg.get("gemini_idle_timeout", 300))
+                thinking_level = self.cfg.get("gemini_thinking_level", "high")
+                thinking_budget = int(self.cfg.get("gemini_thinking_budget", 0) or 0)
+
+                res_key = self.cfg.get("screen_share_resolution", "low")
+                media_res_str = {"low": "MEDIA_RESOLUTION_LOW", "medium": "MEDIA_RESOLUTION_MEDIUM", "high": "MEDIA_RESOLUTION_HIGH"}.get(res_key, "MEDIA_RESOLUTION_LOW")
+
+                search_grounding = bool(self.cfg.get("gemini_search_grounding", True))
+
+                client = _import_gemini_live().GeminiLiveClient(
+                    api_key=gemini_key if gemini_key else None,
+                    ephemeral_token=ephemeral_token,
+                    model=gemini_model,
+                    voice_name=gemini_voice,
+                    tools=tools,
+                    system_instruction=system_instruction,
+                    enable_search_grounding=search_grounding,
+                    session_resumption=session_resumption,
+                    context_compression=context_compression,
+                    idle_timeout=idle_timeout,
+                    thinking_level=thinking_level,
+                    thinking_budget=thinking_budget,
+                    media_resolution=media_res_str,
+                    on_status=lambda s: self.page.run_thread(self._set_gemini_status, s),
+                    on_error=lambda e: self.page.run_thread(self._on_gemini_error, e),
+                    on_transcript=lambda t: self.page.run_thread(self._on_gemini_transcript, t),
+                    on_user_transcript=lambda t: self.page.run_thread(self._on_gemini_user_transcript, t),
+                    on_search_grounding=lambda q: self.page.run_thread(self._on_search_grounding, q),
+                    on_turn_complete=lambda: self.page.run_thread(self._on_gemini_turn_complete),
+                    on_tool_call=self._handle_ai_tool_call,
+                )
+                client.start()
+
+                if not self._is_chatting:
+                    threading.Thread(target=self._safe_stop_client, args=(client,), daemon=True).start()
+                    return
+
+                self._gemini_live_client = client
+                self._is_recording = True
+                self.page.run_thread(self._on_chat_started)
+            except Exception as exc:
+                logger.error(f"Gemini Live failed to start: {exc}")
+                self.page.run_thread(self._on_chat_start_failed, str(exc))
+            finally:
+                self._chat_starting = False
+
+        threading.Thread(target=_connect_worker, daemon=True).start()
+
+    def _on_chat_started(self) -> None:
+        if not self._is_chatting:
+            return
+        if getattr(self, '_pending_screen_share', False):
+            self._pending_screen_share = False
+            self._start_screen_sharing()
         if config.load().get("gemini_show_transcript_panel", False):
             self._transcript_panel_visible = True
             if hasattr(self, '_transcript_panel_container'):
                 self._transcript_panel_container.visible = True
                 if hasattr(self, '_transcript_chevron'):
                     self._transcript_chevron.name = ft.Icons.KEYBOARD_ARROW_DOWN_ROUNDED
-            self.page.update()
+        self.page.update()
+
+    def _on_chat_start_failed(self, error_message: str) -> None:
+        self._is_chatting = False
+        self._chat_starting = False
+        self._is_recording = False
+        self._pending_screen_share = False
+        self._apply_theme_to_controls()
+        self._on_transcription_error(f"Gemini Live: {error_message}")
 
     # ── Gemini Chat: Security & Safety ───────────────────────────────────────
 
@@ -1414,6 +1500,8 @@ class VoxifyApp:
             "Listening...": ACCENT_GLOW,
             "Speaking\u2026": ACCENT,
             "Speaking...": ACCENT,
+            "Thinking\u2026": AUX_BG,
+            "Thinking...": AUX_BG,
             "Interrupted": MUTED,
             "Tool executing\u2026": AUX_BG,
             "Tool executing...": AUX_BG,
@@ -1432,6 +1520,8 @@ class VoxifyApp:
                 self.pulse_core.bgcolor = ACCENT_GLOW
             elif "Speaking" in status:
                 self.pulse_core.bgcolor = ACCENT
+            elif "Thinking" in status:
+                self.pulse_core.bgcolor = AUX_BG
             elif "Connected" in status:
                 self.pulse_core.bgcolor = SUCCESS
             elif "Error" in status:
@@ -1452,6 +1542,8 @@ class VoxifyApp:
             "Listening...": "Listening...",
             "Speaking\u2026": "AI speaking...",
             "Speaking...": "AI speaking...",
+            "Thinking\u2026": "Thinking...",
+            "Thinking...": "Thinking...",
             "Interrupted": "You interrupted",
             "Tool executing\u2026": "Executing tool...",
             "Tool executing...": "Executing tool...",
@@ -1464,49 +1556,110 @@ class VoxifyApp:
         display = mapping.get(status, status)
         self._set_status(display, color)
 
-        # Hide caption overlay if Gemini stops speaking (e.g. listening, executing tools, etc.)
-        if "Speaking" not in status:
-            if hasattr(self, 'caption_container'):
-                self.caption_container.height = 0
-                self.caption_container.opacity = 0.0
-                self.caption_container.padding = ft.Padding.all(0)
-                try:
-                    self.page.update()
-                except Exception:
-                    pass
+    # ── Gemini Chat: Live Captions ───────────────────────────────────────────
 
-    # ── Gemini Chat: Transcript callbacks ────────────────────────────────────
+    def _show_caption(self, text: str, is_user: bool = False) -> None:
+        """Display sleek, compact live captions for user speech or AI speech."""
+        if not hasattr(self, 'caption_text') or not hasattr(self, 'caption_container'):
+            return
 
-    def _on_gemini_user_transcript(self, transcript: str) -> None:
-        logger.info(f"User said: {transcript}")
-        self._add_transcript_message("user", transcript)
+        if self._caption_fade_timer:
+            try:
+                self._caption_fade_timer.cancel()
+            except Exception:
+                pass
+            self._caption_fade_timer = None
 
-    def _on_gemini_transcript(self, transcript: str) -> None:
-        """Handle AI transcript - accumulate and show in status + history."""
-        # Show in status bar
-        preview = (transcript[:50] + "..") if len(transcript) > 50 else transcript
-        self._set_status(preview, TEXT)
-        
-        # Show in the modern caption text overlay!
-        if hasattr(self, 'caption_text') and hasattr(self, 'caption_container'):
-            self.caption_text.value = transcript
-            if transcript.strip():
-                # Make caption container visible with animation
-                self.caption_container.height = 44
-                self.caption_container.opacity = 1.0
-                self.caption_container.padding = ft.Padding.symmetric(horizontal=10, vertical=6)
-            else:
-                # Hide caption container
-                self.caption_container.height = 0
-                self.caption_container.opacity = 0.0
-                self.caption_container.padding = ft.Padding.all(0)
+        cleaned = text.strip()
+        if not cleaned:
+            self._hide_caption_now()
+            return
+
+        prefix = "You: " if is_user else "AI: "
+        self.caption_text.value = f"{prefix}{cleaned}"
+        self.caption_text.color = ACCENT if is_user else TEXT
+
+        # Compact, clean pill container that fits nicely without taking screen space
+        self.caption_container.bgcolor = ft.Colors.with_opacity(0.14, ACCENT if is_user else SURFACE)
+        self.caption_container.border = ft.Border.all(1, ft.Colors.with_opacity(0.25, ACCENT_GLOW if is_user else BORDER))
+        self.caption_container.padding = ft.Padding.symmetric(horizontal=8, vertical=4)
+        self.caption_container.height = 36
+        self.caption_container.opacity = 1.0
+
+        try:
+            self.page.update()
+        except Exception:
+            pass
+
+        self._schedule_caption_fadeout(3.0)
+
+    def _schedule_caption_fadeout(self, delay: float = 3.0) -> None:
+        """Schedule caption overlay to decel fade-out after delay seconds."""
+        if self._caption_fade_timer:
+            try:
+                self._caption_fade_timer.cancel()
+            except Exception:
+                pass
+        self._caption_fade_timer = threading.Timer(
+            delay,
+            lambda: self.page.run_thread(self._hide_caption_now)
+        )
+        self._caption_fade_timer.daemon = True
+        self._caption_fade_timer.start()
+
+    def _hide_caption_now(self) -> None:
+        """Instantly collapse caption container with smooth animation."""
+        if hasattr(self, 'caption_container'):
+            self.caption_container.height = 0
+            self.caption_container.opacity = 0.0
+            self.caption_container.padding = ft.Padding.all(0)
             try:
                 self.page.update()
             except Exception:
                 pass
-                
-        # Add to transcript history
-        self._add_transcript_message("ai", transcript)
+
+    # ── Gemini Chat: Transcript callbacks ────────────────────────────────────
+
+    def _on_search_grounding(self, queries: list[str]) -> None:
+        """Handle real-time search queries triggered by Gemini Live."""
+        if not queries:
+            return
+        query = queries[0]
+        if len(query) > 35:
+            query = query[:32] + "..."
+        self._set_status(f"Searching: {query}", ACCENT)
+        if hasattr(self, 'pulse_core'):
+            self.pulse_core.bgcolor = ACCENT
+        try:
+            self.page.update()
+        except Exception:
+            pass
+
+    def _on_gemini_user_transcript(self, transcript: str) -> None:
+        logger.info(f"User said: {transcript}")
+        self._show_caption(transcript, is_user=True)
+        self._add_transcript_message("user", transcript)
+
+    def _on_gemini_transcript(self, transcript: str) -> None:
+        """Handle incremental AI speech chunks: rolling sentence caption."""
+        self._current_ai_turn_text += transcript
+        clean_full = self._current_ai_turn_text.strip()
+
+        # Update status bar preview
+        preview = (clean_full[:50] + "..") if len(clean_full) > 50 else clean_full
+        self._set_status(preview, TEXT)
+
+        # Extract active rolling sentence for compact line-by-line display
+        sentences = [s.strip() for s in re.split(r'(?<=[.?!])\s+', clean_full) if s.strip()]
+        active_sentence = sentences[-1] if sentences else clean_full
+        self._show_caption(active_sentence, is_user=False)
+
+    def _on_gemini_turn_complete(self) -> None:
+        """Finalize AI speech turn: save full turn to history and schedule caption fade."""
+        if self._current_ai_turn_text.strip():
+            self._add_transcript_message("ai", self._current_ai_turn_text.strip())
+            self._current_ai_turn_text = ""
+        self._schedule_caption_fadeout(2.5)
 
     # ── Gemini Chat: Quick Actions ───────────────────────────────────────────
 
@@ -1524,49 +1677,60 @@ class VoxifyApp:
                 self.mute_icon.name = ft.Icons.MIC_OFF_ROUNDED
                 self.mute_icon.color = DANGER
                 self.mute_btn.bgcolor = ft.Colors.with_opacity(0.3, DANGER)
+                self.mute_btn.tooltip = "Unmute Microphone"
             else:
                 self.mute_icon.name = ft.Icons.MIC_ROUNDED
                 self.mute_icon.color = ACCENT
                 self.mute_btn.bgcolor = ft.Colors.with_opacity(0.2, CARD_ACTIVE)
+                self.mute_btn.tooltip = "Mute Microphone"
             self.page.update()
 
+    @staticmethod
+    def _safe_stop_client(client) -> None:
+        try:
+            client.stop()
+        except Exception as exc:
+            logger.warning(f"Error stopping Gemini client: {exc}")
+
     def _stop_chat_mode(self) -> None:
-        if not self._is_chatting:
+        if not self._is_chatting and not getattr(self, '_chat_starting', False):
             return
         self._is_chatting = False
+        self._chat_starting = False
         self._is_recording = False
         self._listen_only_mode = False
+        self._pending_screen_share = False
+        self._current_ai_turn_text = ""
         self._transcript_history.clear()
         self._transcript_panel_visible = False
         with self._tool_rate_lock:
             self._tool_call_timestamps.clear()
         self._chat_elapsed_start = 0.0
         self._stop_screen_sharing()
-        if self._gemini_live_client:
-            try:
-                self._gemini_live_client.stop()
-            except Exception:
-                pass
-            self._gemini_live_client = None
+        client = self._gemini_live_client
+        self._gemini_live_client = None
+        if client:
+            threading.Thread(target=self._safe_stop_client, args=(client,), daemon=True).start()
 
         # Hide caption overlay on close
-        if hasattr(self, 'caption_container'):
-            self.caption_container.height = 0
-            self.caption_container.opacity = 0.0
-            self.caption_container.padding = ft.Padding.all(0)
+        self._hide_caption_now()
 
-        self._set_status("Chat closed", MUTED)
+        # Reset mute button UI
+        if hasattr(self, 'mute_icon'):
+            self.mute_icon.name = ft.Icons.MIC_ROUNDED
+            self.mute_icon.color = ACCENT
+            self.mute_btn.bgcolor = ft.Colors.with_opacity(0.2, CARD_ACTIVE)
+            self.mute_btn.tooltip = "Mute Microphone"
+
+        self._set_status("Ready", MUTED)
         self._apply_theme_to_controls()
         self._reset_to_ready()
 
     def _on_gemini_error(self, error: str) -> None:
         if not self._is_chatting:
             return
-        # Hide caption overlay on error
-        if hasattr(self, 'caption_container'):
-            self.caption_container.height = 0
-            self.caption_container.opacity = 0.0
-            self.caption_container.padding = ft.Padding.all(0)
+        self._pending_screen_share = False
+        self._hide_caption_now()
         # Show error toast
         try:
             toast = ft.SnackBar(
@@ -1614,12 +1778,19 @@ class VoxifyApp:
             self._start_screen_sharing()
 
     def _start_screen_sharing(self) -> None:
-        if not self._is_chatting or not self._gemini_live_client:
+        if not self._is_chatting:
+            self._set_status("Start AI chat first", MUTED)
+            return
+        if not self._gemini_live_client:
+            self._pending_screen_share = True
+            self._update_video_btn_ui(sharing=True)
+            self._set_status("Connecting video...", ACCENT)
             return
         if self._is_sharing_screen:
             logger.warning("Screen sharing already active — ignoring duplicate start")
             return
         self._is_sharing_screen = True
+        self._pending_screen_share = False
         self._screen_share_paused = False
         self._last_frame_bytes = None
         self._last_frame_pixels = None
@@ -1627,27 +1798,32 @@ class VoxifyApp:
         self._set_status("Sharing screen", SUCCESS)
         self._screen_capture_thread = threading.Thread(target=self._run_screen_capture, daemon=True)
         self._screen_capture_thread.start()
-        # Notify the AI that it can now see the screen
+        # Inform the AI model session silently without forcing an unprompted spoken turn
         if self._gemini_live_client:
-            self._gemini_live_client.send_text("[System: Screen sharing has been enabled. You can now see the user's screen. Be honest about this capability.]")
+            self._gemini_live_client.send_text(
+                "[System: Screen sharing is active. You can now see the user's screen in real-time video frames.]",
+                end_of_turn=False
+            )
         self.page.update()
 
     def _stop_screen_sharing(self) -> None:
+        self._pending_screen_share = False
         if not self._is_sharing_screen and self._screen_capture_thread is None:
-            logger.warning("Screen sharing not active — ignoring duplicate stop")
             return
         self._is_sharing_screen = False
         self._screen_share_paused = False
         self._last_frame_bytes = None
         self._last_frame_pixels = None
-        # Wait for the capture thread to finish so the finally block runs cleanly
         thread = getattr(self, '_screen_capture_thread', None)
-        if thread and thread is not threading.current_thread():
-            thread.join(timeout=2.0)
+        if thread and thread is not threading.current_thread() and thread.is_alive():
+            thread.join(timeout=1.0)
         self._screen_capture_thread = None
-        # Notify the AI that it can no longer see the screen
+        # Inform the AI model session silently
         if self._gemini_live_client:
-            self._gemini_live_client.send_text("[System: Screen sharing has been disabled. You can no longer see the user's screen. If asked, honestly say you cannot see the screen.]")
+            self._gemini_live_client.send_text(
+                "[System: Screen sharing has been stopped. You can no longer see the user's screen.]",
+                end_of_turn=False
+            )
         self._update_video_btn_ui(sharing=False)
         if self._is_chatting:
             self._set_status("Listening...", SUCCESS)
@@ -1666,6 +1842,7 @@ class VoxifyApp:
                 color=ft.Colors.with_opacity(0.5, ACCENT_GLOW),
             )
             self.video_btn.border = ft.Border.all(1, ft.Colors.with_opacity(0.6, ACCENT_GLOW))
+            self.video_btn.tooltip = "Stop Screen Sharing"
         else:
             self.video_icon.name = ft.Icons.VIDEOCAM_OUTLINED
             self.video_icon.color = ACCENT
@@ -1673,6 +1850,7 @@ class VoxifyApp:
             self.video_btn.gradient = None
             self.video_btn.shadow = None
             self.video_btn.border = ft.Border.all(1, ft.Colors.with_opacity(0.2, BORDER))
+            self.video_btn.tooltip = "Share Screen"
         self.page.update()
 
     def _run_screen_capture(self) -> None:
@@ -1717,12 +1895,18 @@ class VoxifyApp:
                     time.sleep(0.3)
                     continue
 
-                # ── Capture ──────────────────────────────────────────────
-                if _use_mss:
-                    raw = sct.grab(sct.monitors[1])
-                    screenshot = PILImage.frombytes("RGB", raw.size, raw.rgb)
-                else:
-                    screenshot = pyautogui.screenshot()
+                # ── Capture with error tolerance ─────────────────────────
+                try:
+                    if _use_mss:
+                        mon_idx = 1 if len(sct.monitors) > 1 else 0
+                        raw = sct.grab(sct.monitors[mon_idx])
+                        screenshot = PILImage.frombytes("RGB", raw.size, raw.rgb)
+                    else:
+                        screenshot = pyautogui.screenshot()
+                except Exception as grab_exc:
+                    logger.debug(f"Transient screen capture error: {grab_exc}")
+                    time.sleep(0.5)
+                    continue
 
                 # ── Resize ───────────────────────────────────────────────
                 w, h = screenshot.size
@@ -1748,8 +1932,8 @@ class VoxifyApp:
                 screenshot.save(img_buf, format="JPEG", quality=85)
                 frame_bytes = img_buf.getvalue()
 
-                # ── Send if changed ──────────────────────────────────────
-                if frame_bytes != self._last_frame_bytes:
+                # ── Send if changed or first frame ───────────────────────
+                if self._last_frame_bytes is None or frame_bytes != self._last_frame_bytes:
                     self._last_frame_bytes = frame_bytes
                     self._last_frame_pixels = frame_pixels
                     if self._gemini_live_client:
@@ -1901,24 +2085,63 @@ class VoxifyApp:
     def _refresh_license_session(self, force: bool = False) -> website_client.LicenseEntitlement:
         now = time.time()
         with self._license_lock:
-            if not force and self._license_entitlement is not None and self._license_token and now < self._license_refresh_at: return self._license_entitlement
+            if not force and self._license_entitlement is not None and self._license_token and now < self._license_refresh_at:
+                return self._license_entitlement
         state = license_cache.load_state()
         token = (state.get("token") or self._license_token or "").strip()
-        if not token: raise website_client.WebsiteAPIError("License required. Activate in Settings.")
-        try: session_data = website_client.refresh_license(token=token, device_id=self._device_id, device_name=f"{app_info.APP_NAME}-{app_info.APP_PLATFORM}", license_key=(state.get("licenseKey") or "").strip())
+        if not token:
+            raise website_client.WebsiteAPIError("License required. Activate in Settings.")
+        
+        try:
+            session_data = website_client.refresh_license(
+                token=token,
+                device_id=self._device_id,
+                device_name=f"{app_info.APP_NAME}-{app_info.APP_PLATFORM}",
+                license_key=(state.get("licenseKey") or "").strip(),
+            )
         except Exception as exc:
-            if not (state.get("licenseKey") or "").strip(): raise
-            # If the master license is already in use on another device, do not
-            # silently steal it here; the user must explicitly activate on this
-            # device to take over.
-            if "in use on another device" in str(exc): raise
-            session_data = website_client.activate_license(license_key=(state.get("licenseKey") or "").strip(), device_id=self._device_id, device_name=f"{app_info.APP_NAME}-{app_info.APP_PLATFORM}")
+            if not (state.get("licenseKey") or "").strip():
+                if license_cache.is_in_grace_period(state) and self._license_entitlement:
+                    hours_left = license_cache.get_grace_remaining_seconds(state) / 3600.0
+                    logger.warning(f"License refresh failed: {exc}. Operating in offline grace period ({hours_left:.1f}h remaining).")
+                    return self._license_entitlement
+                raise
+            if "in use on another device" in str(exc):
+                raise
+            try:
+                session_data = website_client.activate_license(
+                    license_key=(state.get("licenseKey") or "").strip(),
+                    device_id=self._device_id,
+                    device_name=f"{app_info.APP_NAME}-{app_info.APP_PLATFORM}",
+                )
+            except Exception as act_exc:
+                if license_cache.is_in_grace_period(state):
+                    hours_left = license_cache.get_grace_remaining_seconds(state) / 3600.0
+                    logger.warning(f"License server unreachable ({act_exc}). Operating in 48-hour offline grace period ({hours_left:.1f}h remaining).")
+                    if not self._license_entitlement:
+                        self._load_cached_license_state()
+                    if self._license_entitlement and self._license_entitlement.can_transcribe:
+                        with self._license_lock:
+                            self._license_refresh_at = time.time() + 300
+                            if not self._runtime_api_key:
+                                self._runtime_api_key = state.get("runtimeApiKey") or ""
+                        return self._license_entitlement
+                raise act_exc
+
         with self._license_lock:
-            self._license_token = session_data.token; self._license_entitlement = session_data.entitlement
+            self._license_token = session_data.token
+            self._license_entitlement = session_data.entitlement
             self._license_refresh_at = time.time() + 1800
             self._runtime_api_key = session_data.live_api_key or self._runtime_api_key
-            if session_data.live_api_key: self._api_last_check_at = time.time()
-        license_cache.save_state(token=session_data.token, license_key=(state.get("licenseKey") or "").strip(), entitlement=self._serialize_entitlement(session_data.entitlement))
+            if session_data.live_api_key:
+                self._api_last_check_at = time.time()
+        license_cache.save_state(
+            token=session_data.token,
+            license_key=(state.get("licenseKey") or "").strip(),
+            entitlement=self._serialize_entitlement(session_data.entitlement),
+            runtime_api_key=self._runtime_api_key,
+            gemini_api_key=self._gemini_api_key,
+        )
         return session_data.entitlement
 
     def _get_runtime_api_key(self) -> str:
@@ -1931,19 +2154,48 @@ class VoxifyApp:
                 return cfg_key
             if self._runtime_api_key and (now - self._api_last_check_at) < self._api_cache_ttl_sec:
                 return self._runtime_api_key
-        
+
         logger.info("Fetching gated runtime API key from website")
-        bootstrap = website_client.get_desktop_bootstrap(token=self._license_token, device_id=self._device_id)
-        with self._api_lock:
-            self._runtime_api_key = bootstrap.api_key.strip()
-            self._api_last_check_at = time.time()
+        try:
+            bootstrap = website_client.get_desktop_bootstrap(token=self._license_token, device_id=self._device_id)
+            with self._api_lock:
+                self._runtime_api_key = bootstrap.api_key.strip()
+                self._api_last_check_at = time.time()
+            state = license_cache.load_state()
+            license_cache.save_state(
+                token=self._license_token,
+                license_key=(state.get("licenseKey") or "").strip(),
+                entitlement=self._serialize_entitlement(self._license_entitlement),
+                runtime_api_key=self._runtime_api_key,
+                gemini_api_key=bootstrap.gemini_api_key.strip() if getattr(bootstrap, "gemini_api_key", "") else self._gemini_api_key,
+            )
+        except Exception as exc:
+            state = license_cache.load_state()
+            if license_cache.is_in_grace_period(state) and (state.get("runtimeApiKey") or self._runtime_api_key):
+                hours_left = license_cache.get_grace_remaining_seconds(state) / 3600.0
+                logger.warning(f"Bootstrap fetch failed ({exc}). Using offline grace cached runtime key ({hours_left:.1f}h left).")
+                with self._api_lock:
+                    self._runtime_api_key = self._runtime_api_key or state.get("runtimeApiKey", "")
+                    self._api_last_check_at = time.time()
+                return self._runtime_api_key
+            raise
         return self._runtime_api_key
 
     def _get_gemini_api_key(self) -> str:
         now = time.time()
-        if self._gemini_api_key and (now - self._gemini_api_last_check) < 300: return self._gemini_api_key
-        bootstrap = website_client.get_desktop_bootstrap(token=self._license_token, device_id=self._device_id)
-        self._gemini_api_key = bootstrap.gemini_api_key.strip(); self._gemini_api_last_check = now
+        if self._gemini_api_key and (now - self._gemini_api_last_check) < 300:
+            return self._gemini_api_key
+        try:
+            bootstrap = website_client.get_desktop_bootstrap(token=self._license_token, device_id=self._device_id)
+            self._gemini_api_key = bootstrap.gemini_api_key.strip()
+            self._gemini_api_last_check = now
+        except Exception as exc:
+            state = license_cache.load_state()
+            if license_cache.is_in_grace_period(state) and (state.get("geminiApiKey") or self._gemini_api_key):
+                self._gemini_api_key = self._gemini_api_key or state.get("geminiApiKey", "")
+                self._gemini_api_last_check = now
+                return self._gemini_api_key
+            raise
         return self._gemini_api_key
 
     def _get_gemini_ephemeral_token(self) -> website_client.EphemeralTokenResult:
@@ -1955,10 +2207,10 @@ class VoxifyApp:
     def _on_action_click(self, _event) -> None:
         logger.info("Action button clicked")
         self._register_widget_interaction()
-        if self._is_chatting:
-            logger.info("Action blocked: chat mode active")
-            self.page.snack_bar = ft.SnackBar(content=ft.Text("Stop chat mode first", color=TEXT), bgcolor=CARD_SOFT, open=True)
-            self.page.update(); return
+        # Mutual exclusivity: if chat mode is active, automatically stop it and switch to transcription
+        if self._is_chatting or getattr(self, '_chat_starting', False):
+            logger.info("Chat mode active: automatically switching to transcription")
+            self._stop_chat_mode()
         if self._is_recording:
             logger.info("Stopping recording via button")
             self._stop_recording(); return
@@ -2023,6 +2275,17 @@ class VoxifyApp:
                 return
             if not self._waiting_click: return True
             logger.info(f"Target clicked at ({x}, {y})")
+            if os.name == "nt":
+                try:
+                    import ctypes
+                    from ctypes import wintypes
+                    pt = wintypes.POINT(int(x), int(y))
+                    h = ctypes.windll.user32.WindowFromPoint(pt)
+                    self._target_hwnd = int(ctypes.windll.user32.GetAncestor(h, 2) or h)
+                    logger.info(f"Target window resolved and locked: hwnd={self._target_hwnd}")
+                except Exception as ex:
+                    logger.warning(f"Could not resolve target hwnd: {ex}")
+                    self._target_hwnd = None
             try: listener.stop()
             except Exception: pass
             self.page.run_thread(self._on_target_selected)
@@ -2036,6 +2299,7 @@ class VoxifyApp:
 
     def _cancel_target_selection(self) -> None:
         logger.info("Target selection cancelled")
+        self._target_hwnd = None
         self._waiting_click = False; self.page.window.opacity = 1; self._stop_target_listener(); self._reset_to_ready()
 
     def _on_target_selected(self) -> None:
@@ -2057,44 +2321,8 @@ class VoxifyApp:
         self._stopping = False
         self._set_aux_chip("", False)
         self._set_action("Preparing...", CARD_SOFT, BORDER, MUTED, lambda _e: None)
-        mode = "Live" if self._is_live_mode() else "Batch"
-        logger.info(f"Starting {mode} mode recording, source={self.cfg.get('source', 'mic')}, sample_rate={self.cfg.get('sample_rate', 16000)}")
-        if self._is_live_mode(): self._start_live_mode()
-        else: self._start_batch_mode()
-
-    def _start_batch_mode(self) -> None:
-        sample_rate = int(self.cfg.get("sample_rate", 16000))
-        preferred = self.cfg.get("source", "mic")
-        runtime_cfg = self._runtime_config or self._load_runtime_config(force=False)
-        endpointing_mode = self.cfg.get("reliability_mode", "balanced")
-        if runtime_cfg and runtime_cfg.in_rollout:
-            endpointing_mode = runtime_cfg.endpointing_mode or endpointing_mode
-        if preferred == "system":
-            supported, reason = _get_recorder().system_audio_support_status()
-            if not supported:
-                logger.warning(f"System audio unsupported: {reason}, falling back to mic")
-                preferred = "mic"
-        sources = [preferred]
-        alt = "system" if preferred == "mic" else "mic"
-        if alt not in sources: sources.append(alt)
-        logger.info(f"Batch sources: {sources}, endpointing={endpointing_mode}")
-        last_exc = None
-        for source in sources:
-            logger.info(f"Trying recorder source={source}")
-            self._recorder = _get_recorder().Recorder(source=source, sample_rate=sample_rate, silence_trim_enabled=self._silence_trim_enabled(), reliability_mode=endpointing_mode)
-            try:
-                self._recorder.start()
-                self._is_recording = True
-                logger.info(f"Recording started on source={source}")
-                self._set_status("Recording", TEXT)
-                self._set_action("Stop recording", CARD_SOFT, DANGER, DANGER, self._on_action_click)
-                return
-            except Exception as exc:
-                last_exc = exc
-                logger.warning(f"Source {source} failed: {exc}")
-                self._recorder = None
-        logger.error(f"All sources failed: {last_exc}")
-        self._on_transcription_error(str(last_exc or "Unable to start recording source."))
+        logger.info(f"Starting Live mode recording, source={self.cfg.get('source', 'mic')}, sample_rate={self.cfg.get('sample_rate', 16000)}")
+        self._start_live_mode()
 
     def _start_live_mode(self) -> None:
         api_key = self._get_runtime_api_key()
@@ -2143,34 +2371,7 @@ class VoxifyApp:
     def _stop_recording(self) -> None:
         logger.info("Stop recording requested")
         self._stopping = True
-        if self._is_live_mode(): self._stop_realtime()
-        else:
-            self._is_recording = False
-            logger.info("Starting batch transcription worker")
-            threading.Thread(target=self._transcribe_batch_worker, daemon=True).start()
-
-    def _transcribe_batch_worker(self) -> None:
-        wav_path = None
-        try:
-            wav_path = self._recorder.stop()
-            logger.info(f"Audio captured to {wav_path}")
-            client = _import_transcriber().TranscriptionClient(api_key=self._runtime_api_key, model=self._selected_batch_model(), license_token=self._license_token, device_id=self._device_id)
-            raw_text = client.transcribe(wav_path, language=self.cfg.get("language") or None)
-            logger.info(f"Transcription received: {len(raw_text)} chars")
-            processed = self._process_transcript(raw_text)
-            output_handler.type_text(processed.text)
-            self.page.run_thread(self._on_transcription_done, processed.text)
-        except Exception as exc:
-            logger.error(f"Batch transcription error: {exc}")
-            self.page.run_thread(self._on_transcription_error, str(exc))
-        finally:
-            if wav_path:
-                _import_transcriber().cleanup_temp(wav_path)
-                logger.debug(f"Temp file cleaned: {wav_path}")
-
-    def _on_transcription_done(self, text: str) -> None:
-        logger.info(f"Transcription done: {len(text)} chars typed")
-        self._stopping = False; self._reset_to_ready()
+        self._stop_realtime()
 
     def _on_transcription_error(self, err: str) -> None:
         logger.error(f"Transcription error: {err}")
@@ -2183,6 +2384,7 @@ class VoxifyApp:
         self.status_text.value = text; self.status_text.color = color; self.page.update()
 
     def _reset_to_ready(self) -> None:
+        self._target_hwnd = None
         self._is_recording = False
         self._api_check_in_flight = False
         if self._is_chatting: self._set_status("Ask me anything", SUCCESS)
@@ -2251,7 +2453,8 @@ class VoxifyApp:
             self._live_processed_marker = len(full)
         logger.info(f"_flush_live_buffer: new_text='{text_to_type[:80]}' (len={len(text_to_type)})")
         if text_to_type:
-            result = output_handler.type_text(text_to_type, interval=0.01)
+            target_h = getattr(self, '_target_hwnd', None)
+            result = output_handler.type_text(text_to_type, interval=0.01, target_hwnd=target_h)
             if result:
                 logger.info(f"_flush_live_buffer: type_text succeeded for '{text_to_type[:60]}'")
             else:
@@ -2263,6 +2466,14 @@ class VoxifyApp:
         self._finalize_stop()
 
     def _stop_any_active_work(self) -> None:
+        if self._recorder:
+            try:
+                self._recorder._recording = False
+                if getattr(self._recorder, '_thread', None):
+                    self._recorder._thread.join(timeout=0.3)
+                self._recorder._close_disk_writer()
+            except Exception: pass
+            self._recorder = None
         if self._rt_transcriber:
             try: self._rt_transcriber.stop()
             except Exception: pass

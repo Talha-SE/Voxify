@@ -3,10 +3,11 @@ from __future__ import annotations
 import base64
 import json
 import os
+import time
 from pathlib import Path
 from typing import Any
 
-
+DEFAULT_GRACE_PERIOD_HOURS = 48.0
 STATE_FILE = Path(__file__).with_name("license_state.json")
 
 
@@ -118,6 +119,10 @@ def load_state() -> dict[str, Any]:
     data = dict(raw)
     data["licenseKey"] = _unprotect(str(raw.get("licenseKeyEnc") or ""))
     data["token"] = _unprotect(str(raw.get("tokenEnc") or ""))
+    data["runtimeApiKey"] = _unprotect(str(raw.get("runtimeApiKeyEnc") or ""))
+    data["geminiApiKey"] = _unprotect(str(raw.get("geminiApiKeyEnc") or ""))
+    data["lastVerifiedAt"] = float(raw.get("lastVerifiedAt") or 0.0)
+    data["graceExpiresAt"] = float(raw.get("graceExpiresAt") or 0.0)
     return data
 
 
@@ -125,13 +130,56 @@ def save_state(
     token: str,
     license_key: str = "",
     entitlement: dict[str, Any] | None = None,
+    runtime_api_key: str = "",
+    gemini_api_key: str = "",
+    grace_duration_hours: float = DEFAULT_GRACE_PERIOD_HOURS,
 ) -> None:
+    now = time.time()
+    existing = load_state() if STATE_FILE.exists() else {}
+
+    rk = runtime_api_key if runtime_api_key else str(existing.get("runtimeApiKey") or "")
+    gk = gemini_api_key if gemini_api_key else str(existing.get("geminiApiKey") or "")
+    ent = entitlement if entitlement is not None else (existing.get("entitlement") or {})
+    lk = license_key if license_key else str(existing.get("licenseKey") or "")
+    tok = token if token else str(existing.get("token") or "")
+
+    is_active = str(ent.get("status") or "").lower() == "active"
+    grace_expires = (now + (grace_duration_hours * 3600.0)) if is_active else 0.0
+
     payload = {
-        "tokenEnc": _protect(token or ""),
-        "licenseKeyEnc": _protect(license_key or ""),
-        "entitlement": entitlement or {},
+        "tokenEnc": _protect(tok),
+        "licenseKeyEnc": _protect(lk),
+        "runtimeApiKeyEnc": _protect(rk),
+        "geminiApiKeyEnc": _protect(gk),
+        "entitlement": ent,
+        "lastVerifiedAt": now,
+        "graceExpiresAt": grace_expires,
     }
     STATE_FILE.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+
+def is_in_grace_period(state: dict[str, Any] | None = None) -> bool:
+    """Return True if the cached license state is within the valid 24-48h offline grace window."""
+    if state is None:
+        state = load_state()
+    if not state:
+        return False
+    ent = state.get("entitlement") or {}
+    status = str(ent.get("status") or "").lower()
+    if status != "active":
+        return False
+    if not ent.get("can_transcribe", True) and not ent.get("canTranscribe", True):
+        return False
+    grace_expires = float(state.get("graceExpiresAt") or 0.0)
+    return time.time() < grace_expires
+
+
+def get_grace_remaining_seconds(state: dict[str, Any] | None = None) -> float:
+    """Return remaining seconds of offline grace period, or 0.0 if expired/inactive."""
+    if state is None:
+        state = load_state()
+    grace_expires = float(state.get("graceExpiresAt") or 0.0)
+    return max(0.0, grace_expires - time.time())
 
 
 def clear_state() -> None:

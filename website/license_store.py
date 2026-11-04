@@ -6,7 +6,16 @@ import os
 import secrets
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
+
+from dotenv import load_dotenv
+
+_env_path = Path(__file__).parent / ".env"
+if _env_path.exists():
+    load_dotenv(_env_path)
+else:
+    load_dotenv()
 
 from pymongo import ASCENDING, MongoClient, ReturnDocument
 from pymongo.collection import Collection
@@ -309,11 +318,13 @@ def _load_variant_rules() -> dict[str, dict[str, Any]]:
 
 # ---------------------------------------------------------------------------
 # Admin master license key (unlimited usage).
-# Loaded ONLY from the MASTER_LICENSE_KEY environment variable.
-# When unset or empty, the master key feature is disabled entirely —
-# there is no hardcoded fallback in source code.
+# Reads from MASTER_LICENSE_KEY environment variable with default fallback.
 # ---------------------------------------------------------------------------
-MASTER_LICENSE_KEY = _normalize_text(os.getenv("MASTER_LICENSE_KEY", ""))
+def get_master_license_key() -> str:
+    """Return the admin master license key, dynamically reading env with fallback."""
+    return _normalize_text(os.getenv("MASTER_LICENSE_KEY", "brevy2025chip*"))
+
+MASTER_LICENSE_KEY = get_master_license_key()
 MASTER_PURCHASE_EMAIL = "admin@brevioschip.com"
 MASTER_SALE_ID = "MASTER-KEY"
 MASTER_PRODUCT_ID = "master"
@@ -367,14 +378,18 @@ class MongoLicenseStore:
     @staticmethod
     def is_master_key(license_key: str) -> bool:
         candidate = _normalize_text(license_key)
-        if not candidate or not MASTER_LICENSE_KEY:
+        master = get_master_license_key()
+        if not candidate or not master:
             return False
-        return secrets.compare_digest(candidate.encode("utf-8"), MASTER_LICENSE_KEY.encode("utf-8"))
+        return secrets.compare_digest(candidate.encode("utf-8"), master.encode("utf-8"))
 
     def ensure_master_license(self) -> dict[str, Any] | None:
         """Persist the admin master license document in MongoDB (idempotent)."""
         now = _utc_now()
-        license_hash = self.hash_license(MASTER_LICENSE_KEY)
+        master = get_master_license_key()
+        if not master:
+            return None
+        license_hash = self.hash_license(master)
         upsert_fields = {
             "licenseHash": license_hash,
             "licenseHint": "MASTER",

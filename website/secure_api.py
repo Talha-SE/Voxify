@@ -42,4 +42,4 @@ def get_gemini_api_key() -> str:
 
 def get_gemini_model() -> str:
     """Return the default Gemini model for the Live API."""
-    return (os.getenv("GEMINI_MODEL") or "gemini-3.1-flash-live-preview").strip()
+    return (os.getenv("GEMINI_MODEL") or "gemini-3.8-live").strip()

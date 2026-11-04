@@ -6,7 +6,15 @@ a = Analysis(
     pathex=[],
     binaries=[],
     datas=[('config.json', '.'), ('assets\\voxify-logo.png', 'assets')],
-    hiddenimports=['flet_settings', 'flet_desktop', 'sounddevice', 'soundcard', 'scipy', 'numpy', 'pyperclip', 'pyautogui', 'mss', 'requests', 'mistralai', 'mistralai.client', 'mistralai.client.models', 'mistralai.extra.realtime'],
+    hiddenimports=[
+        'flet_settings', 'flet_desktop', 'sounddevice', 'soundcard',
+        'scipy', 'numpy', 'pyperclip', 'pyautogui', 'mss', 'requests',
+        'mistralai', 'mistralai.client', 'mistralai.client.models',
+        'mistralai.extra.realtime', 'gemini_live_client', 'websockets',
+        'cv2', 'PIL', 'pyaudio', 'psutil', 'keyboard', 'pynput',
+        'website_client', 'license_cache', 'dictation_features',
+        'realtime_transcriber', 'transcriber', 'recorder'
+    ],
     hookspath=['pyinstaller-hooks'],
     hooksconfig={},
     runtime_hooks=[],

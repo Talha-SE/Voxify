@@ -15,6 +15,13 @@ from pathlib import Path
 from typing import Any
 
 from dotenv import load_dotenv
+
+_env_path = Path(__file__).parent / ".env"
+if _env_path.exists():
+    load_dotenv(_env_path)
+else:
+    load_dotenv()
+
 from flask import (
     Flask,
     jsonify,
@@ -31,13 +38,11 @@ import requests
 from werkzeug.security import check_password_hash
 
 try:
-    from .license_store import MongoLicenseStore, MASTER_LICENSE_KEY
+    from .license_store import MongoLicenseStore, MASTER_LICENSE_KEY, get_master_license_key
     from .secure_api import get_gemini_api_key, get_gemini_model, get_masked_api_key, get_mistral_api_key, get_mistral_model
 except ImportError:
-    from license_store import MongoLicenseStore, MASTER_LICENSE_KEY
+    from license_store import MongoLicenseStore, MASTER_LICENSE_KEY, get_master_license_key
     from secure_api import get_gemini_api_key, get_gemini_model, get_masked_api_key, get_mistral_api_key, get_mistral_model
-
-load_dotenv()
 
 app = Flask(__name__)
 app.config["SECRET_KEY"] = (os.getenv("FLASK_SECRET_KEY") or "").strip() or secrets.token_urlsafe(48)
@@ -1103,7 +1108,7 @@ def site_status():
             "status": "ok",
             "apiConfigured": api_is_set,
             "licenseDbConfigured": db_ok,
-            "masterKeyEnabled": bool(MASTER_LICENSE_KEY),
+            "masterKeyEnabled": bool(get_master_license_key()),
         }
     )
 
@@ -1144,13 +1149,13 @@ def license_activate():
 
     # If the master key feature is disabled (MASTER_LICENSE_KEY not set),
     # log a warning so admins can diagnose failed master-key activations.
-    if not MASTER_LICENSE_KEY:
+    if not get_master_license_key():
         app.logger.warning("MASTER_LICENSE_KEY is not set — admin master license key will not work. Add MASTER_LICENSE_KEY to your .env file.")
 
     gumroad_payload, gumroad_error = _gumroad_verify(license_key, product_id)
     if not gumroad_payload:
         hint = ""
-        if not MASTER_LICENSE_KEY and ("brevy" in license_key.lower() or "master" in license_key.lower()):
+        if not get_master_license_key() and ("brevy" in license_key.lower() or "master" in license_key.lower()):
             hint = " The admin master key is not configured on this server."
         return jsonify({"success": False, "active": False, "message": gumroad_error + hint}), 401
 

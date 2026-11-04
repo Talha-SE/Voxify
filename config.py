@@ -33,7 +33,7 @@ DEFAULT_CONFIG = {
     "always_on_top": True,
     "auto_type_delay": 3,    # seconds countdown before auto-typing
     "hotkey": "ctrl+shift+space",  # global push-to-record hotkey
-    "mode": "Live",         # Batch | Live
+    "mode": "Live",
     "source": "mic",         # mic | system
     "mic_device": "",        # sounddevice device index (int) or name substring; empty = default
     "check_for_updates": True,
@@ -50,14 +50,15 @@ DEFAULT_CONFIG = {
     "runtime_channel": "stable",
     "send_reliability_events": False,
     "device_id": "",
-    "gemini_model": "gemini-3.1-flash-live-preview",
+    "gemini_model": "gemini-3.8-live",
     "gemini_voice": "Puck",
-    "gemini_use_ephemeral_tokens": True,
+    "gemini_use_ephemeral_tokens": False,
     "gemini_session_resumption": False,
     "gemini_context_compression": False,
     "gemini_idle_timeout": 300,
     "gemini_thinking_level": "minimal",
     "gemini_thinking_budget": 0,
+    "gemini_search_grounding": True,
     "screen_share_resolution": "",
     "screen_share_pause_on_idle": True,
     "auto_minimize": True,

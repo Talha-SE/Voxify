@@ -46,6 +46,10 @@ GEMINI_LIVE_WS_URL = (
     "wss://generativelanguage.googleapis.com/ws/"
     "google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent"
 )
+GEMINI_LIVE_CONSTRAINED_WS_URL = (
+    "wss://generativelanguage.googleapis.com/ws/"
+    "google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContentConstrained"
+)
 
 SAMPLE_RATE_INPUT = 16000
 SAMPLE_RATE_OUTPUT = 24000
@@ -69,6 +73,7 @@ class ChatState(enum.Enum):
     CONNECTED    = "connected"
     LISTENING    = "listening"
     AI_SPEAKING  = "ai_speaking"
+    THINKING     = "thinking"
     TOOL_CALL    = "tool_call"
     RECONNECTING = "reconnecting"
     IDLE_TIMEOUT = "idle_timeout"
@@ -82,6 +87,7 @@ class ChatState(enum.Enum):
             ChatState.CONNECTED:    "Connected",
             ChatState.LISTENING:    "Listening\u2026",
             ChatState.AI_SPEAKING:  "Speaking\u2026",
+            ChatState.THINKING:     "Thinking\u2026",
             ChatState.TOOL_CALL:    "Tool executing\u2026",
             ChatState.RECONNECTING: "Reconnecting\u2026",
             ChatState.IDLE_TIMEOUT: "Idle timeout",
@@ -91,7 +97,7 @@ class ChatState(enum.Enum):
     @property
     def is_active(self) -> bool:
         return self in (ChatState.CONNECTED, ChatState.LISTENING,
-                        ChatState.AI_SPEAKING, ChatState.TOOL_CALL)
+                        ChatState.AI_SPEAKING, ChatState.THINKING, ChatState.TOOL_CALL)
 
 
 class _Degradation(enum.Flag):
@@ -126,6 +132,9 @@ class GeminiLiveClient:
         thinking_level: Optional[str] = None,
         thinking_budget: Optional[int] = None,
         media_resolution: Optional[str] = None,
+        enable_search_grounding: bool = True,
+        on_search_grounding: Optional[Callable[[list[str]], None]] = None,
+        on_turn_complete: Optional[Callable[[], None]] = None,
     ):
         if not ephemeral_token and not api_key:
             raise ValueError("Either ephemeral_token or api_key must be provided")
@@ -148,6 +157,9 @@ class GeminiLiveClient:
         self.thinking_level = thinking_level
         self.thinking_budget = thinking_budget
         self.media_resolution = media_resolution
+        self.enable_search_grounding = enable_search_grounding
+        self.on_search_grounding = on_search_grounding
+        self.on_turn_complete = on_turn_complete
 
         # Mutable state (protected by _state_lock)
         self._state_lock = threading.Lock()
@@ -264,7 +276,7 @@ class GeminiLiveClient:
         self._reconnect_pending = False
         if self._stop_ev and self._loop and not self._loop.is_closed():
             try:
-                asyncio.run_coroutine_threadsafe(self._stop_ev.set(), self._loop)
+                self._loop.call_soon_threadsafe(self._stop_ev.set)
             except RuntimeError:
                 pass
         if self._ws and self._loop and not self._loop.is_closed():
@@ -282,18 +294,15 @@ class GeminiLiveClient:
             return
         self._reset_idle_timer()
         encoded = base64.b64encode(image_bytes).decode("utf-8")
-        if "gemini-2" in self.model:
-            msg = {"realtime_input": {"media_chunks": [{"data": encoded, "mime_type": "image/jpeg"}]}}
-        else:
-            msg = {"realtime_input": {"video": {"data": encoded, "mime_type": "image/jpeg"}}}
+        msg = {"realtime_input": {"media_chunks": [{"data": encoded, "mime_type": "image/jpeg"}]}}
         if self._loop and self._loop.is_running():
             asyncio.run_coroutine_threadsafe(self._ws.send(json.dumps(msg)), self._loop)
 
-    def send_text(self, text: str) -> None:
+    def send_text(self, text: str, end_of_turn: bool = True) -> None:
         if not self._running or not self._ws:
             return
         self._reset_idle_timer()
-        msg = {"client_content": {"turns": [{"role": "user", "parts": [{"text": text}]}], "turn_complete": True}}
+        msg = {"client_content": {"turns": [{"role": "user", "parts": [{"text": text}]}], "turn_complete": end_of_turn}}
         if self._loop and self._loop.is_running():
             asyncio.run_coroutine_threadsafe(self._ws.send(json.dumps(msg)), self._loop)
 
@@ -369,7 +378,23 @@ class GeminiLiveClient:
                     ConnectionError, OSError) as exc:
                 if not self._running:
                     break
+                err_str = str(exc).lower()
                 logger.error(f"Connection dropped: {exc}")
+
+                # If setup failed due to Google Search grounding quota/model restriction, disable and retry immediately
+                if self.enable_search_grounding and any(k in err_str for k in ("quota", "1011", "1007", "invalid frame")):
+                    logger.warning("Search grounding rejected by model or quota. Retrying without search grounding...")
+                    self.enable_search_grounding = False
+                    self._retry_count = 0
+                    continue
+
+                # If connection rejected ephemeral token and API key is available, fallback to API key immediately
+                if self.ephemeral_token and self.api_key and any(k in err_str for k in ("1008", "unregistered", "token", "unauthorized")):
+                    logger.warning("Ephemeral token connection rejected. Retrying with direct API key...")
+                    self.ephemeral_token = None
+                    self._retry_count = 0
+                    continue
+
                 self._retry_count += 1
                 if self._retry_count > MAX_RECONNECT_RETRIES:
                     logger.error(f"Max retries ({MAX_RECONNECT_RETRIES}) exceeded.")
@@ -398,9 +423,11 @@ class GeminiLiveClient:
             elapsed += interval
 
     def _build_ws_url(self) -> str:
+        if self.api_key:
+            return f"{GEMINI_LIVE_WS_URL}?key={self.api_key}"
         if self.ephemeral_token:
-            return f"{GEMINI_LIVE_WS_URL}?access_token={self.ephemeral_token}"
-        return f"{GEMINI_LIVE_WS_URL}?key={self.api_key}"
+            return f"{GEMINI_LIVE_CONSTRAINED_WS_URL}?access_token={self.ephemeral_token}"
+        return f"{GEMINI_LIVE_WS_URL}?key="
 
     def _build_setup_message(self) -> dict:
         setup_payload: dict = {
@@ -426,23 +453,35 @@ class GeminiLiveClient:
                 "sliding_window": {"target_tokens": 32000},
             }
         thinking_cfg = {}
-        if "3.1" in self.model and self.thinking_level:
-            thinking_cfg["thinking_level"] = self.thinking_level
-        elif self.thinking_budget is not None:
+        if "extended-thinking" in self.model:
+            thinking_cfg["thinking_level"] = self.thinking_level or "high"
+        elif "3.1" in self.model and self.thinking_budget is not None and self.thinking_budget > 0:
             thinking_cfg["thinking_budget"] = self.thinking_budget
+
         if thinking_cfg:
             setup_payload["generation_config"]["thinking_config"] = thinking_cfg
         if self._session_handle:
             setup_payload["session_id"] = self._session_handle
+
+        # Build tools list: inject Google Search grounding if enabled
+        tools_list: list[dict] = []
+        if self.enable_search_grounding:
+            tools_list.append({"google_search": {}})
         if self.tools:
-            setup_payload["tools"] = self.tools
+            for t in self.tools:
+                if isinstance(t, dict) and ("google_search" in t or "googleSearch" in t):
+                    continue
+                tools_list.append(t)
+        if tools_list:
+            setup_payload["tools"] = tools_list
+
         if self.system_instruction:
             setup_payload["system_instruction"] = {"parts": [{"text": self.system_instruction}]}
         return {"setup": setup_payload}
 
     async def _connect_and_run(self) -> None:
         url = self._build_ws_url()
-        logger.info("Connecting to Gemini Live WebSocket...")
+        logger.info(f"Connecting to Gemini Live WebSocket ({'API Key' if self.api_key else 'Ephemeral Token'})...")
 
         async with websockets.connect(url, ping_interval=30, ping_timeout=10) as ws:
             self._ws = ws
@@ -639,10 +678,7 @@ class GeminiLiveClient:
             audio_bytes = data.astype(np.int16).tobytes() if isinstance(data, np.ndarray) else data
             encoded = base64.b64encode(audio_bytes).decode("utf-8")
             try:
-                if "gemini-2" in self.model:
-                    payload = json.dumps({"realtime_input": {"media_chunks": [{"data": encoded, "mime_type": "audio/pcm;rate=16000"}]}})
-                else:
-                    payload = json.dumps({"realtime_input": {"audio": {"data": encoded, "mime_type": "audio/pcm;rate=16000"}}})
+                payload = json.dumps({"realtime_input": {"media_chunks": [{"data": encoded, "mime_type": "audio/pcm;rate=16000"}]}})
                 await ws.send(payload)
             except Exception as exc:
                 if self._running:
@@ -713,8 +749,33 @@ class GeminiLiveClient:
                 sc = msg["serverContent"]
                 self._reset_idle_timer()
 
-                if sc.get("turnComplete"):
+                # Handle Google Search grounding metadata
+                gm = sc.get("groundingMetadata") or sc.get("grounding_metadata")
+                if gm:
+                    queries = gm.get("webSearchQueries") or gm.get("web_search_queries") or []
+                    if queries:
+                        logger.info(f"Gemini Live search grounding queries: {queries}")
+                        if self.on_search_grounding:
+                            try:
+                                self.on_search_grounding(queries)
+                            except Exception as exc:
+                                logger.error(f"Search grounding callback error: {exc}")
+
+                # Handle extended thinking status (background reasoning/tool planning)
+                interaction_status = sc.get("interaction_status") or sc.get("interactionStatus")
+                if interaction_status == "IN_PROGRESS":
+                    self._set_state(ChatState.THINKING)
+                elif interaction_status == "IDLE":
                     self._set_state(ChatState.LISTENING)
+
+                if sc.get("turnComplete"):
+                    if interaction_status != "IN_PROGRESS":
+                        self._set_state(ChatState.LISTENING)
+                    if hasattr(self, 'on_turn_complete') and self.on_turn_complete:
+                        try:
+                            self.on_turn_complete()
+                        except Exception as exc:
+                            logger.error(f"Turn complete callback error: {exc}")
 
                 if "input_transcription" in sc:
                     input_text = sc["input_transcription"].get("text", "")

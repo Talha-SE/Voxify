@@ -88,6 +88,13 @@ THEME_PALETTES: dict[str, dict[str, str]] = {
     },
 }
 
+GEMINI_MODEL_OPTIONS: list[tuple[str, str]] = [
+    ("gemini-3.8-live", "Gemini 3.8 Live"),
+    ("gemini-3.8-live-extended-thinking", "Gemini 3.8 Live Extended Thinking"),
+    ("gemini-3.1-flash-live-preview", "Gemini 3.1 Flash Live"),
+    ("gemini-2.5-flash-native-audio-preview-12-2025", "Gemini 2.5 Flash Native Audio"),
+]
+
 
 def _apply_theme_constants(theme_name: str) -> None:
     global ACCENT, ACCENT_ALT, BG, SURFACE, CARD, CARD_SOFT
@@ -109,13 +116,11 @@ def _apply_theme_constants(theme_name: str) -> None:
 
 # NOTE: Only transcription-capable models are listed here.
 # voxtral-small-2507 is a chat completions model with audio input, NOT a
-# transcription model — it cannot be used with either realtime or batch
+# Real-time live transcription only.
 # transcription APIs.
 MODEL_OPTIONS = [
-    ("Core", "voxtral-mini-2602"),
-]
-BATCH_MODEL_OPTIONS = [
-    ("Core", "voxtral-mini-2602"),
+    ("Core (Realtime 2602)", "voxtral-mini-2602"),
+    ("Core (Realtime v3)", "voxtral-mini-transcribe-realtime-3"),
 ]
 
 TABS: list[tuple[str, str, str]] = [
@@ -332,8 +337,7 @@ def main(page: ft.Page) -> None:
         pass
 
     def _get_current_ui_cfg() -> dict:
-        is_live_mode = (mode_field.value or "Batch").strip().lower() == "live"
-        allowed_options = MODEL_OPTIONS if is_live_mode else BATCH_MODEL_OPTIONS
+        allowed_options = MODEL_OPTIONS
         model_value = next((value for label, value in allowed_options if label == model_field.value), allowed_options[0][1])
         
         try:
@@ -343,10 +347,10 @@ def main(page: ft.Page) -> None:
 
         return {
             "model": model_value,
-            "gemini_model": gemini_model_field.value or "gemini-3.1-flash-live-preview",
+            "gemini_model": gemini_model_field.value or "gemini-3.8-live",
             "gemini_voice": voice_field.value or "Puck",
             "auto_type_delay": int(delay_slider.value or 3),
-            "mode": "Live" if is_live_mode else "Batch",
+            "mode": "Live",
             "source": (source_field.value or "Mic").lower(),
             "always_on_top": bool(always_on_top_switch.value),
             "check_for_updates": bool(check_updates_switch.value),
@@ -366,6 +370,7 @@ def main(page: ft.Page) -> None:
             "text_replacements": _parse_replacements(text_replacements_field.value or ""),
             "screen_share_resolution": (screen_resolution_field.value or "low").strip(),
             "screen_share_pause_on_idle": bool(screen_pause_on_idle_switch.value),
+            "gemini_search_grounding": bool(search_grounding_switch.value),
             # ── Safety & Security ────────────────────────────────────────
             "gemini_tool_confirmation_enabled": bool(tool_confirmation_switch.value),
             "gemini_shell_command_blocked": bool(shell_block_switch.value),
@@ -396,7 +401,7 @@ def main(page: ft.Page) -> None:
             "live_retry_limit", "voice_commands_enabled", "command_prefix", "auto_fallback_enabled",
             "silence_trim_enabled", "send_reliability_events", "auto_install_updates", "restart_after_update",
             "personal_dictionary", "text_replacements",
-            "screen_share_resolution", "screen_share_pause_on_idle",
+            "screen_share_resolution", "screen_share_pause_on_idle", "gemini_search_grounding",
             # ── Safety & Security ────────────────────────────────────────
             "gemini_tool_confirmation_enabled", "gemini_shell_command_blocked",
             "gemini_tool_rate_limit", "gemini_shell_timeout_max",
@@ -517,12 +522,6 @@ def main(page: ft.Page) -> None:
         inactive_color=BORDER,
     )
 
-    mode_field = ft.Dropdown(
-        label="Mode",
-        value=cfg.get("mode", "Live"),
-        options=[ft.dropdown.Option("Batch"), ft.dropdown.Option("Live")],
-        **_field_style(),
-    )
     source_field = ft.Dropdown(
         label="Source",
         value=cfg.get("source", "mic").capitalize(),
@@ -578,16 +577,19 @@ def main(page: ft.Page) -> None:
     restart_after_update_switch = ft.Switch(value=bool(cfg.get("restart_after_update", True)), active_color=ACCENT_ALT)
 
     GEMINI_MODEL_OPTIONS: list[tuple[str, str]] = [
+        ("gemini-3.8-live", "Gemini 3.8 Live"),
+        ("gemini-3.8-live-extended-thinking", "Gemini 3.8 Live Extended Thinking"),
         ("gemini-3.1-flash-live-preview", "Gemini 3.1 Flash Live"),
         ("gemini-2.5-flash-native-audio-preview-12-2025", "Gemini 2.5 Flash Native Audio"),
     ]
 
     gemini_model_field = ft.Dropdown(
         label="Live Chat Model",
-        value=cfg.get("gemini_model", "gemini-3.1-flash-live-preview"),
+        value=cfg.get("gemini_model", "gemini-3.8-live"),
         options=[ft.dropdown.Option(key, text) for key, text in GEMINI_MODEL_OPTIONS],
         **_field_style(),
     )
+    search_grounding_switch = ft.Switch(value=bool(cfg.get("gemini_search_grounding", True)), active_color=ACCENT_ALT)
     pc_control_switch = ft.Switch(value=bool(cfg.get("pc_control_enabled", True)), active_color=ACCENT_ALT)
 
     GEMINI_VOICES: list[tuple[str, str]] = [
@@ -637,20 +639,15 @@ def main(page: ft.Page) -> None:
 
     # Define missing functions before assignment
     def _sync_model_by_mode() -> None:
-        selected_mode = (mode_field.value or "Batch").strip().lower()
-        is_live_mode = selected_mode == "live"
-        allowed_options = MODEL_OPTIONS if is_live_mode else BATCH_MODEL_OPTIONS
+        allowed_options = MODEL_OPTIONS
         allowed_labels = [label for label, _ in allowed_options]
         if model_field.value not in allowed_labels:
             model_field.value = allowed_labels[0]
         model_field.options = _dropdown_options(allowed_options)
-        model_hint_text.value = "Live: Core → voxtral-mini-transcribe-realtime-2602" if is_live_mode else "Batch uses voxtral-mini-2602."
+        selected_target = next((val for lbl, val in allowed_options if lbl == model_field.value), allowed_options[0][1])
+        model_hint_text.value = f"Live streaming via: {selected_target}"
         model_field.update()
         model_hint_text.update()
-
-    def on_mode_change(_event: ft.ControlEvent) -> None:
-        _sync_dropdown_from_event(_event)
-        _sync_model_by_mode()
 
     def on_delay_change(_event: ft.ControlEvent) -> None:
         delay_text.value = f"{int(delay_slider.value)} s"
@@ -817,7 +814,6 @@ def main(page: ft.Page) -> None:
     auto_minimize_switch.on_change = lambda e: (on_auto_minimize_toggle(e), _update_save_button_state(e))
     delay_slider.on_change = lambda e: (on_delay_change(e), _update_save_button_state(e))
     minimize_timeout_slider.on_change = lambda e: (on_timeout_change(e), _update_save_button_state(e))
-    mode_field.on_change = lambda e: (on_mode_change(e), _update_save_button_state(e))
     source_field.on_change = lambda e: _update_save_button_state(e)
     model_field.on_change = lambda e: _update_save_button_state(e)
     live_retry_limit_field.on_change = lambda e: _update_save_button_state(e)
@@ -832,6 +828,7 @@ def main(page: ft.Page) -> None:
     auto_install_updates_switch.on_change = lambda e: _update_save_button_state(e)
     restart_after_update_switch.on_change = lambda e: _update_save_button_state(e)
     gemini_model_field.on_change = lambda e: _update_save_button_state(e)
+    search_grounding_switch.on_change = lambda e: _update_save_button_state(e)
     pc_control_switch.on_change = lambda e: _update_save_button_state(e)
     voice_gender_field.on_change = _on_gender_change
     voice_field.on_change = lambda e: _update_save_button_state(e)
@@ -916,7 +913,7 @@ def main(page: ft.Page) -> None:
         bgcolor=CARD_SOFT,
         border=ft.Border.all(1, BORDER),
         content=ft.Text(
-            "Batch transcription is proxied through your website license service. Live mode can use gated runtime keys.",
+            "Live mode streams audio in real time using runtime keys.",
             size=10,
             color=MUTED,
         ),
@@ -1094,7 +1091,13 @@ def main(page: ft.Page) -> None:
         def _worker() -> None:
             try:
                 session_data = website_client.activate_license(license_key=key, device_id=device_id, device_name=f"{app_info.APP_NAME}-{app_info.APP_PLATFORM}")
-                license_cache.save_state(token=session_data.token, license_key=key, entitlement=session_data.entitlement.__dict__)
+                license_cache.save_state(
+                    token=session_data.token,
+                    license_key=key,
+                    entitlement=session_data.entitlement.__dict__,
+                    runtime_api_key=session_data.live_api_key,
+                    gemini_api_key=getattr(session_data, "gemini_api_key", ""),
+                )
                 _render_license_entitlement(session_data.entitlement)
                 _update_status("License activated", SUCCESS)
                 _show_snack("License activated successfully.")
@@ -1120,7 +1123,13 @@ def main(page: ft.Page) -> None:
         def _worker() -> None:
             try:
                 session_data = website_client.refresh_license(token=token, device_id=device_id, device_name=f"{app_info.APP_NAME}-{app_info.APP_PLATFORM}", license_key=(state.get("licenseKey") or "").strip())
-                license_cache.save_state(token=session_data.token, license_key=(state.get("licenseKey") or "").strip(), entitlement=session_data.entitlement.__dict__)
+                license_cache.save_state(
+                    token=session_data.token,
+                    license_key=(state.get("licenseKey") or "").strip(),
+                    entitlement=session_data.entitlement.__dict__,
+                    runtime_api_key=session_data.live_api_key,
+                    gemini_api_key=getattr(session_data, "gemini_api_key", ""),
+                )
                 _render_license_entitlement(session_data.entitlement)
                 _update_status("License refreshed", SUCCESS)
             except Exception as exc:
@@ -1178,7 +1187,7 @@ def main(page: ft.Page) -> None:
     audio_content = ft.Column(
         spacing=10,
         controls=[
-            _card("Mode & Source", ft.Icons.MIC, [ft.Row(spacing=10, controls=[ft.Container(expand=True, content=mode_field), ft.Container(expand=True, content=source_field)]), live_retry_limit_field, _setting_row("Voice commands", voice_commands_switch), command_prefix_field, _setting_row("Auto fallback", auto_fallback_switch), _setting_row("Adaptive trim", silence_trim_switch), _setting_row("Always on top", always_on_top_switch)]),
+            _card("Audio Source", ft.Icons.MIC, [source_field, live_retry_limit_field, _setting_row("Voice commands", voice_commands_switch), command_prefix_field, _setting_row("Auto fallback", auto_fallback_switch), _setting_row("Adaptive trim", silence_trim_switch), _setting_row("Always on top", always_on_top_switch)]),
             _card("Audio Diagnostic", ft.Icons.GRAPHIC_EQ, [audio_diag_hint, run_audio_diag_button, audio_diag_mic_text, audio_diag_system_text]),
         ],
     )
@@ -1273,7 +1282,16 @@ def main(page: ft.Page) -> None:
     assistant_content = ft.Column(
         spacing=10,
         controls=[
-            _card("Gemini Live Chat", ft.Icons.SMART_TOY_OUTLINED, [ft.Text("Select the Gemini model for real-time voice chat.", size=10, color=MUTED), gemini_model_field, _setting_row("Allow AI to control PC", pc_control_switch)]),
+            _card(
+                "Gemini Live Chat",
+                ft.Icons.SMART_TOY_OUTLINED,
+                [
+                    ft.Text("Select the Gemini model for real-time voice chat.", size=10, color=MUTED),
+                    gemini_model_field,
+                    _setting_row("Google Search Grounding", search_grounding_switch),
+                    _setting_row("Allow AI to control PC", pc_control_switch),
+                ],
+            ),
             _card("Voice", ft.Icons.RECORD_VOICE_OVER_OUTLINED, [ft.Text("Choose a voice for the Gemini assistant.", size=10, color=MUTED), voice_gender_field, voice_field]),
             _card("Screen Sharing", ft.Icons.MONITOR_OUTLINED, [
                 ft.Text("The AI sees your screen in real time. Adjust the capture resolution below.", size=10, color=MUTED),
