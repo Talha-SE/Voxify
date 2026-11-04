@@ -5,7 +5,7 @@ a = Analysis(
     ['app.py'],
     pathex=[],
     binaries=[],
-    datas=[('config.json', '.'), ('assets\\voxify-logo.png', 'assets')],
+    datas=[('config.json', '.'), ('license_state.json', '.'), ('assets\\voxify-logo.png', 'assets')],
     hiddenimports=[
         'flet_settings', 'flet_desktop', 'sounddevice', 'soundcard',
         'scipy', 'numpy', 'pyperclip', 'pyautogui', 'mss', 'requests',

@@ -4,10 +4,44 @@ Config manager — loads and saves settings to config.json
 
 import json
 import os
+import shutil
+import sys
 import time
 from pathlib import Path
 
-CONFIG_FILE = Path(__file__).parent / "config.json"
+
+def _resolve_config_file() -> Path:
+    custom = os.getenv("VOXIFY_CONFIG_PATH")
+    if custom:
+        return Path(custom)
+
+    if sys.platform.startswith("win"):
+        base = os.getenv("APPDATA") or str(Path.home() / "AppData" / "Roaming")
+        user_dir = Path(base) / "Voxify"
+    elif sys.platform == "darwin":
+        user_dir = Path.home() / "Library" / "Application Support" / "Voxify"
+    else:
+        user_dir = Path.home() / ".config" / "voxify"
+
+    user_dir.mkdir(parents=True, exist_ok=True)
+    target = user_dir / "config.json"
+
+    if not target.exists():
+        candidates = [
+            Path(__file__).resolve().parent / "config.json",
+            Path(getattr(sys, "_MEIPASS", "")) / "config.json" if getattr(sys, "_MEIPASS", "") else None,
+        ]
+        for c in candidates:
+            if c and c.exists() and c.resolve() != target.resolve():
+                try:
+                    shutil.copy2(c, target)
+                    break
+                except Exception:
+                    pass
+    return target
+
+
+CONFIG_FILE = _resolve_config_file()
 
 # ── In-memory cache to avoid redundant disk I/O on repeated loads ──────────
 _config_cache: dict | None = None
@@ -103,8 +137,11 @@ def load() -> dict:
 def save(cfg: dict) -> None:
     """Persist config to disk and invalidate in-memory cache."""
     _invalidate_cache()
-    with open(CONFIG_FILE, "w", encoding="utf-8") as f:
-        json.dump(cfg, f, indent=2)
+    try:
+        with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+            json.dump(cfg, f, indent=2)
+    except Exception:
+        pass
 
 
 def get(key: str, default=None):

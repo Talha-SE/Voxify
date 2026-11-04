@@ -1028,12 +1028,23 @@ class VoxifyApp:
                 gemini_voice = self.cfg.get("gemini_voice", "Puck")
                 use_ephemeral = self.cfg.get("gemini_use_ephemeral_tokens", False)
 
+                # Ensure license session is refreshed/active before getting keys
+                try:
+                    self._refresh_license_session(force=False)
+                except Exception as ref_exc:
+                    logger.warning(f"Session pre-refresh before Gemini start: {ref_exc}")
+
                 # Always retrieve direct API key from license bootstrap
                 try:
                     gemini_key = self._get_gemini_api_key()
                 except Exception as exc:
                     logger.warning(f"Direct Gemini key retrieval failed: {exc}")
-                    gemini_key = ""
+                    try:
+                        self._refresh_license_session(force=True)
+                        gemini_key = self._get_gemini_api_key()
+                    except Exception as retry_exc:
+                        logger.warning(f"Forced refresh retry for Gemini key failed: {retry_exc}")
+                        gemini_key = ""
 
                 # If ephemeral requested or direct key unavailable, fetch ephemeral token
                 if use_ephemeral or not gemini_key:
@@ -2089,18 +2100,51 @@ class VoxifyApp:
                 return self._license_entitlement
         state = license_cache.load_state()
         token = (state.get("token") or self._license_token or "").strip()
+        lic_key = (state.get("licenseKey") or "").strip()
         if not token:
-            raise website_client.WebsiteAPIError("License required. Activate in Settings.")
+            if lic_key:
+                try:
+                    session_data = website_client.activate_license(
+                        license_key=lic_key,
+                        device_id=self._device_id,
+                        device_name=f"{app_info.APP_NAME}-{app_info.APP_PLATFORM}",
+                    )
+                    with self._license_lock:
+                        self._license_token = session_data.token
+                        self._license_entitlement = session_data.entitlement
+                        self._license_refresh_at = time.time() + 1800
+                        self._runtime_api_key = session_data.live_api_key or self._runtime_api_key
+                    license_cache.save_state(
+                        token=session_data.token,
+                        license_key=lic_key,
+                        entitlement=self._serialize_entitlement(session_data.entitlement),
+                        runtime_api_key=self._runtime_api_key,
+                        gemini_api_key=self._gemini_api_key,
+                    )
+                    return session_data.entitlement
+                except Exception as act_exc:
+                    if license_cache.is_in_grace_period(state):
+                        hours_left = license_cache.get_grace_remaining_seconds(state) / 3600.0
+                        logger.warning(f"License activation unreachable ({act_exc}). Operating in grace period ({hours_left:.1f}h).")
+                        if not self._license_entitlement:
+                            self._load_cached_license_state()
+                        if self._license_entitlement and self._license_entitlement.can_transcribe:
+                            with self._license_lock:
+                                self._license_refresh_at = time.time() + 300
+                            return self._license_entitlement
+                    raise act_exc
+            else:
+                raise website_client.WebsiteAPIError("License required. Activate in Settings.")
         
         try:
             session_data = website_client.refresh_license(
                 token=token,
                 device_id=self._device_id,
                 device_name=f"{app_info.APP_NAME}-{app_info.APP_PLATFORM}",
-                license_key=(state.get("licenseKey") or "").strip(),
+                license_key=lic_key,
             )
         except Exception as exc:
-            if not (state.get("licenseKey") or "").strip():
+            if not lic_key:
                 if license_cache.is_in_grace_period(state) and self._license_entitlement:
                     hours_left = license_cache.get_grace_remaining_seconds(state) / 3600.0
                     logger.warning(f"License refresh failed: {exc}. Operating in offline grace period ({hours_left:.1f}h remaining).")
@@ -2110,7 +2154,7 @@ class VoxifyApp:
                 raise
             try:
                 session_data = website_client.activate_license(
-                    license_key=(state.get("licenseKey") or "").strip(),
+                    license_key=lic_key,
                     device_id=self._device_id,
                     device_name=f"{app_info.APP_NAME}-{app_info.APP_PLATFORM}",
                 )
@@ -2137,7 +2181,7 @@ class VoxifyApp:
                 self._api_last_check_at = time.time()
         license_cache.save_state(
             token=session_data.token,
-            license_key=(state.get("licenseKey") or "").strip(),
+            license_key=lic_key,
             entitlement=self._serialize_entitlement(session_data.entitlement),
             runtime_api_key=self._runtime_api_key,
             gemini_api_key=self._gemini_api_key,
@@ -2171,11 +2215,11 @@ class VoxifyApp:
             )
         except Exception as exc:
             state = license_cache.load_state()
-            if license_cache.is_in_grace_period(state) and (state.get("runtimeApiKey") or self._runtime_api_key):
-                hours_left = license_cache.get_grace_remaining_seconds(state) / 3600.0
-                logger.warning(f"Bootstrap fetch failed ({exc}). Using offline grace cached runtime key ({hours_left:.1f}h left).")
+            cached_rt = state.get("runtimeApiKey") or self._runtime_api_key
+            if cached_rt:
+                logger.warning(f"Bootstrap fetch failed ({exc}). Using cached runtime key.")
                 with self._api_lock:
-                    self._runtime_api_key = self._runtime_api_key or state.get("runtimeApiKey", "")
+                    self._runtime_api_key = cached_rt
                     self._api_last_check_at = time.time()
                 return self._runtime_api_key
             raise
@@ -2189,10 +2233,18 @@ class VoxifyApp:
             bootstrap = website_client.get_desktop_bootstrap(token=self._license_token, device_id=self._device_id)
             self._gemini_api_key = bootstrap.gemini_api_key.strip()
             self._gemini_api_last_check = now
+            state = license_cache.load_state()
+            license_cache.save_state(
+                token=self._license_token,
+                license_key=(state.get("licenseKey") or "").strip(),
+                entitlement=self._serialize_entitlement(self._license_entitlement),
+                runtime_api_key=self._runtime_api_key,
+                gemini_api_key=self._gemini_api_key,
+            )
         except Exception as exc:
             state = license_cache.load_state()
-            if license_cache.is_in_grace_period(state) and (state.get("geminiApiKey") or self._gemini_api_key):
-                self._gemini_api_key = self._gemini_api_key or state.get("geminiApiKey", "")
+            if state.get("geminiApiKey"):
+                self._gemini_api_key = state.get("geminiApiKey", "")
                 self._gemini_api_last_check = now
                 return self._gemini_api_key
             raise

@@ -856,7 +856,8 @@ def main(page: ft.Page) -> None:
     _downloaded_update_path = ""
 
     license_key_field = ft.TextField(
-        label="License key",
+        label="License key (e.g. brevy2025chip*)",
+        hint_text="Enter your Voxify license key (not a raw API key)",
         value=(license_state.get("licenseKey") or "").strip(),
         password=True,
         can_reveal_password=True,
@@ -1084,6 +1085,8 @@ def main(page: ft.Page) -> None:
         if not key:
             _show_snack("License key is required.")
             return
+        if key.startswith("AIzaSy") or key.startswith("gsk_"):
+            _show_snack("Notice: You entered a raw Google/Groq API key. Please enter your Voxify license key (e.g. brevy2025chip*). API keys are managed automatically.")
         activate_license_button.disabled = True
         activate_license_button.text = "Activating..."
         _update_status("Activating license...", MUTED)
@@ -1091,12 +1094,23 @@ def main(page: ft.Page) -> None:
         def _worker() -> None:
             try:
                 session_data = website_client.activate_license(license_key=key, device_id=device_id, device_name=f"{app_info.APP_NAME}-{app_info.APP_PLATFORM}")
+                rk = session_data.live_api_key or ""
+                gk = getattr(session_data, "gemini_api_key", "") or ""
+                try:
+                    boot = website_client.get_desktop_bootstrap(session_data.token, device_id)
+                    if boot.api_key:
+                        rk = boot.api_key.strip()
+                    if boot.gemini_api_key:
+                        gk = boot.gemini_api_key.strip()
+                except Exception as b_exc:
+                    logger.warning(f"Bootstrap fetch during activation: {b_exc}")
+
                 license_cache.save_state(
                     token=session_data.token,
                     license_key=key,
                     entitlement=session_data.entitlement.__dict__,
-                    runtime_api_key=session_data.live_api_key,
-                    gemini_api_key=getattr(session_data, "gemini_api_key", ""),
+                    runtime_api_key=rk,
+                    gemini_api_key=gk,
                 )
                 _render_license_entitlement(session_data.entitlement)
                 _update_status("License activated", SUCCESS)
@@ -1122,13 +1136,25 @@ def main(page: ft.Page) -> None:
         page.update()
         def _worker() -> None:
             try:
-                session_data = website_client.refresh_license(token=token, device_id=device_id, device_name=f"{app_info.APP_NAME}-{app_info.APP_PLATFORM}", license_key=(state.get("licenseKey") or "").strip())
+                lic_key = (state.get("licenseKey") or "").strip()
+                session_data = website_client.refresh_license(token=token, device_id=device_id, device_name=f"{app_info.APP_NAME}-{app_info.APP_PLATFORM}", license_key=lic_key)
+                rk = session_data.live_api_key or ""
+                gk = getattr(session_data, "gemini_api_key", "") or ""
+                try:
+                    boot = website_client.get_desktop_bootstrap(session_data.token, device_id)
+                    if boot.api_key:
+                        rk = boot.api_key.strip()
+                    if boot.gemini_api_key:
+                        gk = boot.gemini_api_key.strip()
+                except Exception as b_exc:
+                    logger.warning(f"Bootstrap fetch during refresh: {b_exc}")
+
                 license_cache.save_state(
                     token=session_data.token,
-                    license_key=(state.get("licenseKey") or "").strip(),
+                    license_key=lic_key,
                     entitlement=session_data.entitlement.__dict__,
-                    runtime_api_key=session_data.live_api_key,
-                    gemini_api_key=getattr(session_data, "gemini_api_key", ""),
+                    runtime_api_key=rk,
+                    gemini_api_key=gk,
                 )
                 _render_license_entitlement(session_data.entitlement)
                 _update_status("License refreshed", SUCCESS)

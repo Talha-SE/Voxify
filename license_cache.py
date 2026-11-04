@@ -3,12 +3,47 @@ from __future__ import annotations
 import base64
 import json
 import os
+import shutil
+import sys
 import time
 from pathlib import Path
 from typing import Any
 
 DEFAULT_GRACE_PERIOD_HOURS = 48.0
-STATE_FILE = Path(__file__).with_name("license_state.json")
+
+
+def _resolve_state_file() -> Path:
+    custom = os.getenv("VOXIFY_LICENSE_STATE_PATH")
+    if custom:
+        return Path(custom)
+
+    if sys.platform.startswith("win"):
+        base = os.getenv("APPDATA") or str(Path.home() / "AppData" / "Roaming")
+        user_dir = Path(base) / "Voxify"
+    elif sys.platform == "darwin":
+        user_dir = Path.home() / "Library" / "Application Support" / "Voxify"
+    else:
+        user_dir = Path.home() / ".config" / "voxify"
+
+    user_dir.mkdir(parents=True, exist_ok=True)
+    target = user_dir / "license_state.json"
+
+    if not target.exists():
+        candidates = [
+            Path(__file__).resolve().parent / "license_state.json",
+            Path(getattr(sys, "_MEIPASS", "")) / "license_state.json" if getattr(sys, "_MEIPASS", "") else None,
+        ]
+        for c in candidates:
+            if c and c.exists() and c.resolve() != target.resolve():
+                try:
+                    shutil.copy2(c, target)
+                    break
+                except Exception:
+                    pass
+    return target
+
+
+STATE_FILE = _resolve_state_file()
 
 
 def _protect_windows(value: str) -> str:
@@ -108,6 +143,9 @@ def _unprotect(value: str) -> str:
 
 
 def load_state() -> dict[str, Any]:
+    global STATE_FILE
+    if not STATE_FILE.exists():
+        STATE_FILE = _resolve_state_file()
     if not STATE_FILE.exists():
         return {}
     try:
@@ -134,6 +172,7 @@ def save_state(
     gemini_api_key: str = "",
     grace_duration_hours: float = DEFAULT_GRACE_PERIOD_HOURS,
 ) -> None:
+    global STATE_FILE
     now = time.time()
     existing = load_state() if STATE_FILE.exists() else {}
 
@@ -155,6 +194,7 @@ def save_state(
         "lastVerifiedAt": now,
         "graceExpiresAt": grace_expires,
     }
+    STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
     STATE_FILE.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 

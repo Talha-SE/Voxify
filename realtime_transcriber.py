@@ -130,7 +130,10 @@ class RealtimeTranscriber:
     async def _async_main(self) -> None:
         # ── Import realtime types (requires the realtime dependency) ───
         try:
-            from mistralai import Mistral
+            try:
+                from mistralai import Mistral
+            except ImportError:
+                from mistralai.client import Mistral
             from mistralai.client.models import (
                 AudioFormat,
                 RealtimeTranscriptionSessionCreated,
@@ -170,7 +173,7 @@ class RealtimeTranscriber:
                 return
 
         if self.on_status:
-            self.on_status("🔌 Connecting…")
+            self.on_status("Connecting...")
 
         logger.info("Creating Mistral client and starting transcribe_stream")
         client      = Mistral(api_key=self.api_key)
@@ -193,7 +196,7 @@ class RealtimeTranscriber:
                 if isinstance(event, RealtimeTranscriptionSessionCreated):
                     logger.info("Session created event received")
                     if self.on_status:
-                        self.on_status("Live — speak now")
+                        self.on_status("Live - speak now")
 
                 elif isinstance(event, RealtimeTranscriptionSessionUpdated):
                     logger.info("Session updated event received")

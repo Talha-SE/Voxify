@@ -83,13 +83,13 @@ class ChatState(enum.Enum):
     def display(self) -> str:
         return {
             ChatState.DISCONNECTED: "Disconnected",
-            ChatState.CONNECTING:   "Connecting\u2026",
+            ChatState.CONNECTING:   "Connecting...",
             ChatState.CONNECTED:    "Connected",
-            ChatState.LISTENING:    "Listening\u2026",
-            ChatState.AI_SPEAKING:  "Speaking\u2026",
-            ChatState.THINKING:     "Thinking\u2026",
-            ChatState.TOOL_CALL:    "Tool executing\u2026",
-            ChatState.RECONNECTING: "Reconnecting\u2026",
+            ChatState.LISTENING:    "Listening...",
+            ChatState.AI_SPEAKING:  "Speaking...",
+            ChatState.THINKING:     "Thinking...",
+            ChatState.TOOL_CALL:    "Tool executing...",
+            ChatState.RECONNECTING: "Reconnecting...",
             ChatState.IDLE_TIMEOUT: "Idle timeout",
             ChatState.ERROR:        "Error",
         }[self]
