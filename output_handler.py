@@ -771,62 +771,113 @@ def web_search(query: str) -> str:
         import requests
         from bs4 import BeautifulSoup
         import urllib.parse
-        
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36"
-        }
-        
-        # 1. Try Google Search (usually works on most IPs and returns 200)
-        try:
-            url = f"https://www.google.com/search?q={urllib.parse.quote(query)}"
-            response = requests.get(url, headers=headers, timeout=10)
-            if response.status_code == 200:
-                soup = BeautifulSoup(response.text, "html.parser")
-                results = []
-                # Extract links and snippets from Google
-                for a in soup.find_all("a"):
-                    href = a.get("href")
-                    if href and "/url?q=" in href:
-                        parsed = urllib.parse.urlparse(href)
-                        queries = urllib.parse.parse_qs(parsed.query)
-                        real_url = queries.get("q", [None])[0]
-                        if real_url:
-                            title = a.get_text().strip()
-                            parent = a.find_parent("div")
-                            snippet = ""
-                            if parent:
-                                sibling = parent.find_next_sibling("div")
-                                if sibling:
-                                    snippet = sibling.get_text().strip()
-                            if title and real_url not in title:
-                                results.append(f"Title: {title}\nLink: {real_url}\nSnippet: {snippet[:200]}")
-                                if len(results) >= 3:
-                                    break
-                if results:
-                    return "\n\n".join(results)
-        except Exception:
-            pass
+        import html
+        import re
 
-        # 2. Fallback to DuckDuckGo
+        clean_query = (query or "").strip()
+        if not clean_query:
+            return "No search query provided."
+
+        # 1. Specialized weather handler
+        weather_match = re.search(r'(?:weather|temperature|forecast)\s+(?:in|for|at)?\s*([a-zA-Z\s]+)', clean_query, re.IGNORECASE)
+        if weather_match:
+            city = weather_match.group(1).strip()
+            if city:
+                try:
+                    wr = requests.get(f"https://wttr.in/{urllib.parse.quote(city)}?format=j1", timeout=5)
+                    if wr.status_code == 200:
+                        wdata = wr.json()
+                        curr = wdata.get("current_condition", [{}])[0]
+                        desc = curr.get("weatherDesc", [{}])[0].get("value", "Clear")
+                        tc = curr.get("temp_C", "N/A")
+                        tf = curr.get("temp_F", "N/A")
+                        hum = curr.get("humidity", "N/A")
+                        return f"Current weather in {city.title()}: {desc}, {tc}°C ({tf}°F), Humidity: {hum}%"
+                except Exception as we:
+                    logger.debug(f"Weather lookup failed: {we}")
+
+        # 2. DuckDuckGo HTML search with Session
         try:
-            url = f"https://html.duckduckgo.com/html/?q={urllib.parse.quote(query)}"
-            response = requests.get(url, headers=headers, timeout=10)
-            if response.status_code == 200:
-                soup = BeautifulSoup(response.text, "html.parser")
+            s = requests.Session()
+            s.headers.update({
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "Accept-Language": "en-US,en;q=0.9",
+            })
+            s.get("https://duckduckgo.com/", timeout=4)
+            resp = s.post("https://html.duckduckgo.com/html/", data={"q": clean_query}, timeout=6)
+            if resp.status_code == 200:
+                soup = BeautifulSoup(resp.text, "html.parser")
                 results = []
-                for result in soup.find_all("a", class_="result__a")[:3]:
-                    title = result.get_text()
-                    snippet = ""
-                    sibling = result.find_parent("div").find_next_sibling("div", class_="result__snippet")
-                    if sibling:
-                        snippet = sibling.get_text()
-                    results.append(f"Title: {title}\nSnippet: {snippet}")
+                for result in soup.find_all("div", class_="result"):
+                    a = result.find("a", class_="result__a")
+                    snippet = result.find(class_="result__snippet")
+                    if a:
+                        title = a.get_text(strip=True)
+                        snip = snippet.get_text(strip=True) if snippet else ""
+                        if title and snip:
+                            results.append(f"Title: {title}\nSnippet: {snip}")
+                            if len(results) >= 4:
+                                break
                 if results:
                     return "\n\n".join(results)
-        except Exception:
-            pass
-                
-        return "No results found."
+        except Exception as de:
+            logger.debug(f"DDG HTML search failed: {de}")
+
+        # 3. DuckDuckGo Lite search fallback
+        try:
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Accept-Language": "en-US,en;q=0.9",
+            }
+            resp = requests.post(
+                "https://lite.duckduckgo.com/lite/",
+                data={"q": clean_query},
+                headers=headers,
+                timeout=6
+            )
+            if resp.status_code == 200:
+                soup = BeautifulSoup(resp.text, "html.parser")
+                results = []
+                for a in soup.find_all("a", class_="result-link"):
+                    title = a.get_text(strip=True)
+                    tr = a.find_parent("tr")
+                    snippet = ""
+                    if tr:
+                        snippet_tr = tr.find_next_sibling("tr")
+                        if snippet_tr:
+                            snippet_td = snippet_tr.find("td", class_="result-snippet")
+                            if snippet_td:
+                                snippet = snippet_td.get_text(strip=True)
+                    if title and snippet:
+                        results.append(f"Title: {title}\nSnippet: {snippet}")
+                        if len(results) >= 4:
+                            break
+                if results:
+                    return "\n\n".join(results)
+        except Exception as le:
+            logger.debug(f"DDG Lite search failed: {le}")
+
+        # 4. Wikipedia API fallback
+        try:
+            wiki_url = f"https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch={urllib.parse.quote(clean_query)}&utf8=&format=json"
+            wiki_resp = requests.get(wiki_url, headers={"User-Agent": "VoxifyAssistant/1.0"}, timeout=5)
+            if wiki_resp.status_code == 200:
+                wiki_data = wiki_resp.json()
+                items = wiki_data.get("query", {}).get("search", [])
+                results = []
+                for item in items[:3]:
+                    title = item.get("title", "")
+                    raw_snippet = item.get("snippet", "")
+                    clean_snippet = html.unescape(re.sub(r"<[^>]+>", "", raw_snippet)).strip()
+                    if title and clean_snippet:
+                        results.append(f"Title: {title}\nSnippet: {clean_snippet}")
+                if results:
+                    return "\n\n".join(results)
+        except Exception as we:
+            logger.debug(f"Wikipedia fallback failed: {we}")
+
+        return f"No results found for '{clean_query}'."
     except Exception as e:
         return f"Error performing search: {str(e)}"
 

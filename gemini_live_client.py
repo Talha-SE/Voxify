@@ -841,7 +841,7 @@ class GeminiLiveClient:
             if not self.on_tool_call:
                 return {
                     "id": call_id, "name": name,
-                    "response": {"output": {"success": False, "error": "No handler configured"}, "scheduling": "SILENT"},
+                    "response": {"output": {"success": False, "error": "No handler configured"}},
                 }
 
             try:
@@ -860,7 +860,7 @@ class GeminiLiveClient:
 
             return {
                 "id": call_id, "name": name,
-                "response": {"output": result, "scheduling": "SILENT"},
+                "response": {"output": result},
             }
 
         # Run all tools concurrently (they share the same thread pool)
