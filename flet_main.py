@@ -2512,21 +2512,31 @@ class VoxifyApp:
         self._flush_live_buffer()
         self._finalize_stop()
 
-    def _stop_any_active_work(self) -> None:
+    def _stop_any_active_work(self, fast: bool = False) -> None:
         if self._recorder:
             try:
                 self._recorder._recording = False
-                if getattr(self._recorder, '_thread', None):
+                if not fast and getattr(self._recorder, '_thread', None):
                     self._recorder._thread.join(timeout=0.3)
                 self._recorder._close_disk_writer()
             except Exception: pass
             self._recorder = None
         if self._rt_transcriber:
-            try: self._rt_transcriber.stop()
+            try:
+                if fast:
+                    self._rt_transcriber._running = False
+                    self._rt_transcriber._stop_flag.set()
+                else:
+                    self._rt_transcriber.stop()
             except Exception: pass
             self._rt_transcriber = None
         if self._gemini_live_client:
-            try: self._gemini_live_client.stop()
+            try:
+                if fast:
+                    self._gemini_live_client._running = False
+                    self._gemini_live_client._reconnect_pending = False
+                else:
+                    self._gemini_live_client.stop()
             except Exception: pass
             self._gemini_live_client = None
 
@@ -2539,32 +2549,16 @@ class VoxifyApp:
 
     def _close_app(self, _event=None) -> None:
         logger.info("Fast shutdown requested")
-        try:
-            # 1. Visually hide window immediately so user feels instant response
-            self.page.window.visible = False
-            self.page.update()
-        except Exception:
-            pass
+        self._stop_any_active_work(fast=True)
 
-        # 2. Terminate child settings window if open
+        # 1. Kill settings window if open
         if self._settings_process and self._settings_process.poll() is None:
             try:
                 self._settings_process.kill()
             except Exception:
                 pass
 
-        # 3. Fast signal to stop background audio/streams (no blocking thread joins)
-        try:
-            if self._recorder:
-                self._recorder._recording = False
-            if self._rt_transcriber:
-                self._rt_transcriber._running = False
-            if self._gemini_live_client:
-                self._gemini_live_client._running = False
-        except Exception:
-            pass
-
-        # 4. Release single-instance lock file so relaunch is immediately allowed
+        # 2. Release single instance lock immediately so relaunch works with 0 delay
         try:
             import app
             if hasattr(app, "_MAIN_INSTANCE_LOCK"):
@@ -2572,13 +2566,81 @@ class VoxifyApp:
         except Exception:
             pass
 
-        # 5. Clean destroy flutter window
+        # 3. Allow closing through prevent_close flag
         try:
-            self.page.window.destroy()
+            self.page.window.prevent_close = False
         except Exception:
             pass
 
-        # 6. Hard exit process immediately — no zombie background threads
+        # 4. Fallback watchdog thread: hard kill all child processes (like flet.exe)
+        # and exit within 0.4s if async destroy encounters any loop delay
+        def _watchdog_force_exit():
+            import time, psutil, os
+            time.sleep(0.4)
+            try:
+                parent = psutil.Process(os.getpid())
+                for child in parent.children(recursive=True):
+                    try:
+                        child.kill()
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+            os._exit(0)
+
+        threading.Thread(target=_watchdog_force_exit, daemon=True).start()
+
+        # 5. Schedule async close task to properly destroy Flutter window and exit
+        try:
+            self.page.run_task(self._close_app_async)
+        except Exception:
+            try:
+                import psutil, os
+                parent = psutil.Process(os.getpid())
+                for child in parent.children(recursive=True):
+                    try:
+                        child.kill()
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+            import os
+            os._exit(0)
+
+    async def _close_app_async(self) -> None:
+        logger.info("Destroying window via Flet")
+        try:
+            self.page.window.prevent_close = False
+            self.page.window.visible = False
+            await self.page.update_async()
+        except Exception:
+            pass
+
+        try:
+            # Properly destroy Flutter desktop client window
+            await self.page.window.destroy()
+        except Exception:
+            pass
+
+        # Flush WebSocket frame to Flutter
+        try:
+            import asyncio
+            await asyncio.sleep(0.04)
+        except Exception:
+            pass
+
+        # Force terminate all child processes (including Flutter view) so nothing can linger
+        try:
+            import psutil, os
+            parent = psutil.Process(os.getpid())
+            for child in parent.children(recursive=True):
+                try:
+                    child.kill()
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
         import os
         os._exit(0)
 

@@ -943,7 +943,7 @@ def main(page: ft.Page) -> None:
             await page.window.close()
         except Exception:
             try:
-                page.window.destroy()
+                await page.window.destroy()
             except Exception:
                 pass
 
