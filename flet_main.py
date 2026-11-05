@@ -274,11 +274,12 @@ class VoxifyApp:
         self._device_id = self._get_or_create_device_id()
 
         self._apply_theme_globals()
+        try:
+            self._load_cached_license_state()
+        except Exception:
+            pass
 
         self._setup_page()
-        # Paint the window immediately with a lightweight placeholder so the
-        # app feels instant while the full UI is constructed below.
-        self._show_startup_frame()
         self._build_ui()
         threading.Thread(target=self._warmup_startup, daemon=True).start()
         threading.Thread(target=self._watch_config_changes, daemon=True).start()
@@ -2079,16 +2080,13 @@ class VoxifyApp:
         return self._runtime_config
 
     def _warmup_startup(self) -> None:
-        try: _get_recorder().list_input_devices()
-        except Exception: pass
-        try: self._load_cached_license_state()
-        except Exception: pass
-        self._load_runtime_config(force=True)
         try:
+            self._load_runtime_config(force=False)
             self._refresh_license_session(force=False)
             self._get_runtime_api_key()
             self._get_gemini_api_key()
-        except Exception: pass
+        except Exception:
+            pass
 
     def _refresh_license_session(self, force: bool = False) -> website_client.LicenseEntitlement:
         now = time.time()
@@ -2539,30 +2537,50 @@ class VoxifyApp:
     def _process_transcript(self, raw_text: str) -> dictation_features.ProcessedTranscript:
         return dictation_features.process_transcript(raw_text=raw_text, profile=self.cfg.get("dictation_profile", "notes"), replacements=self.cfg.get("text_replacements", {}), personal_dictionary=self.cfg.get("personal_dictionary", []), voice_commands_enabled=bool(self.cfg.get("voice_commands_enabled", True)), command_prefix=self.cfg.get("command_prefix", "command"))
 
-    def _close_app(self, _event) -> None:
-        logger.info("Close requested")
+    def _close_app(self, _event=None) -> None:
+        logger.info("Fast shutdown requested")
+        try:
+            # 1. Visually hide window immediately so user feels instant response
+            self.page.window.visible = False
+            self.page.update()
+        except Exception:
+            pass
+
+        # 2. Terminate child settings window if open
         if self._settings_process and self._settings_process.poll() is None:
             try:
-                import ctypes
-                hwnd = ctypes.windll.user32.FindWindowW(None, "Voxify Settings")
-                if hwnd:
-                    ctypes.windll.user32.ShowWindow(hwnd, 5)
-                    ctypes.windll.user32.SetForegroundWindow(hwnd)
+                self._settings_process.kill()
             except Exception:
                 pass
-            self.page.snack_bar = ft.SnackBar(
-                content=ft.Text("Close the Settings window first.", color=TEXT),
-                bgcolor=ft.Colors.with_opacity(0.9, DANGER), open=True,
-            )
-            self.page.update()
-            return
-        self._stop_any_active_work()
-        self.page.run_task(self._close_app_async)
 
-    async def _close_app_async(self) -> None:
-        logger.info("Destroying window")
-        await self.page.window.destroy()
-        logger.info("Window destroyed")
+        # 3. Fast signal to stop background audio/streams (no blocking thread joins)
+        try:
+            if self._recorder:
+                self._recorder._recording = False
+            if self._rt_transcriber:
+                self._rt_transcriber._running = False
+            if self._gemini_live_client:
+                self._gemini_live_client._running = False
+        except Exception:
+            pass
+
+        # 4. Release single-instance lock file so relaunch is immediately allowed
+        try:
+            import app
+            if hasattr(app, "_MAIN_INSTANCE_LOCK"):
+                app._MAIN_INSTANCE_LOCK.release()
+        except Exception:
+            pass
+
+        # 5. Clean destroy flutter window
+        try:
+            self.page.window.destroy()
+        except Exception:
+            pass
+
+        # 6. Hard exit process immediately — no zombie background threads
+        import os
+        os._exit(0)
 
     def _silence_trim_enabled(self) -> bool: return bool(self.cfg.get("silence_trim_enabled", True))
 

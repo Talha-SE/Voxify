@@ -135,7 +135,6 @@ def main() -> None:
         atexit.register(_MAIN_INSTANCE_LOCK.release)
 
     try:
-        _ensure_flet_runtime()
         import flet as ft
 
         if is_settings_mode:
