@@ -54,7 +54,7 @@ GEMINI_LIVE_CONSTRAINED_WS_URL = (
 SAMPLE_RATE_INPUT = 16000
 SAMPLE_RATE_OUTPUT = 24000
 CHANNELS = 1
-BLOCK_SIZE = 480
+BLOCK_SIZE = 1600
 PLAYBACK_FRAMES = 1024
 IDLE_CHECK_INTERVAL = 5.0
 MAX_RECONNECT_RETRIES = 3
@@ -294,7 +294,7 @@ class GeminiLiveClient:
             return
         self._reset_idle_timer()
         encoded = base64.b64encode(image_bytes).decode("utf-8")
-        msg = {"realtime_input": {"media_chunks": [{"data": encoded, "mime_type": "image/jpeg"}]}}
+        msg = {"realtimeInput": {"video": {"mimeType": "image/jpeg", "data": encoded}}}
         if self._loop and self._loop.is_running():
             asyncio.run_coroutine_threadsafe(self._ws.send(json.dumps(msg)), self._loop)
 
@@ -302,7 +302,7 @@ class GeminiLiveClient:
         if not self._running or not self._ws:
             return
         self._reset_idle_timer()
-        msg = {"client_content": {"turns": [{"role": "user", "parts": [{"text": text}]}], "turn_complete": end_of_turn}}
+        msg = {"clientContent": {"turns": [{"role": "user", "parts": [{"text": text}]}], "turnComplete": end_of_turn}}
         if self._loop and self._loop.is_running():
             asyncio.run_coroutine_threadsafe(self._ws.send(json.dumps(msg)), self._loop)
 
@@ -432,41 +432,40 @@ class GeminiLiveClient:
     def _build_setup_message(self) -> dict:
         setup_payload: dict = {
             "model": f"models/{self.model}",
-            "generation_config": {
-                "response_modalities": ["AUDIO"],
-                "speech_config": {
-                    "voice_config": {
-                        "prebuilt_voice_config": {"voice_name": self.voice_name}
+            "generationConfig": {
+                "responseModalities": ["AUDIO"],
+                "speechConfig": {
+                    "voiceConfig": {
+                        "prebuiltVoiceConfig": {"voiceName": self.voice_name}
                     },
-                    "language_code": "en-US",
                 },
             },
         }
         if self.media_resolution:
-            setup_payload["generation_config"]["media_resolution"] = self.media_resolution
+            setup_payload["generationConfig"]["mediaResolution"] = self.media_resolution
 
         if self.session_resumption:
-            setup_payload["session_resumption"] = {"transparent": True}
+            setup_payload["sessionResumption"] = {"transparent": True}
         if self.context_compression:
-            setup_payload["context_window_compression"] = {
-                "trigger_tokens": 64000,
-                "sliding_window": {"target_tokens": 32000},
+            setup_payload["contextWindowCompression"] = {
+                "triggerTokens": 64000,
+                "slidingWindow": {"targetTokens": 32000},
             }
         thinking_cfg = {}
         if "extended-thinking" in self.model:
-            thinking_cfg["thinking_level"] = self.thinking_level or "high"
+            thinking_cfg["thinkingLevel"] = self.thinking_level or "high"
         elif "3.1" in self.model and self.thinking_budget is not None and self.thinking_budget > 0:
-            thinking_cfg["thinking_budget"] = self.thinking_budget
+            thinking_cfg["thinkingBudget"] = self.thinking_budget
 
         if thinking_cfg:
-            setup_payload["generation_config"]["thinking_config"] = thinking_cfg
+            setup_payload["generationConfig"]["thinkingConfig"] = thinking_cfg
         if self._session_handle:
-            setup_payload["session_id"] = self._session_handle
+            setup_payload["sessionId"] = self._session_handle
 
         # Build tools list: inject Google Search grounding if enabled
         tools_list: list[dict] = []
         if self.enable_search_grounding:
-            tools_list.append({"google_search": {}})
+            tools_list.append({"googleSearch": {}})
         if self.tools:
             for t in self.tools:
                 if isinstance(t, dict) and ("google_search" in t or "googleSearch" in t):
@@ -476,7 +475,7 @@ class GeminiLiveClient:
             setup_payload["tools"] = tools_list
 
         if self.system_instruction:
-            setup_payload["system_instruction"] = {"parts": [{"text": self.system_instruction}]}
+            setup_payload["systemInstruction"] = {"parts": [{"text": self.system_instruction}]}
         return {"setup": setup_payload}
 
     async def _connect_and_run(self) -> None:
@@ -678,7 +677,7 @@ class GeminiLiveClient:
             audio_bytes = data.astype(np.int16).tobytes() if isinstance(data, np.ndarray) else data
             encoded = base64.b64encode(audio_bytes).decode("utf-8")
             try:
-                payload = json.dumps({"realtime_input": {"media_chunks": [{"data": encoded, "mime_type": "audio/pcm;rate=16000"}]}})
+                payload = json.dumps({"realtimeInput": {"audio": {"mimeType": "audio/pcm;rate=16000", "data": encoded}}})
                 await ws.send(payload)
             except Exception as exc:
                 if self._running:
@@ -777,27 +776,31 @@ class GeminiLiveClient:
                         except Exception as exc:
                             logger.error(f"Turn complete callback error: {exc}")
 
-                if "input_transcription" in sc:
-                    input_text = sc["input_transcription"].get("text", "")
+                it = sc.get("inputTranscription") or sc.get("input_transcription")
+                if it and isinstance(it, dict):
+                    input_text = it.get("text", "")
                     if input_text and self.on_user_transcript:
                         try:
                             self.on_user_transcript(input_text)
                         except Exception as exc:
                             logger.error(f"User transcript callback error: {exc}")
 
-                if "output_transcription" in sc:
-                    output_text = sc["output_transcription"].get("text", "")
+                ot = sc.get("outputTranscription") or sc.get("output_transcription")
+                if ot and isinstance(ot, dict):
+                    output_text = ot.get("text", "")
                     if output_text and self.on_transcript:
                         try:
                             self.on_transcript(output_text)
                         except Exception as exc:
                             logger.error(f"Transcript callback error: {exc}")
 
-                for part in sc.get("modelTurn", {}).get("parts", []):
-                    if "inlineData" in part:
-                        mime = part["inlineData"].get("mimeType", "")
+                model_turn = sc.get("modelTurn") or sc.get("model_turn") or {}
+                for part in model_turn.get("parts", []):
+                    inline_data = part.get("inlineData") or part.get("inline_data")
+                    if inline_data:
+                        mime = inline_data.get("mimeType") or inline_data.get("mime_type") or ""
                         if mime.startswith("audio/"):
-                            raw_audio = base64.b64decode(part["inlineData"]["data"])
+                            raw_audio = base64.b64decode(inline_data["data"])
                             arr = np.frombuffer(raw_audio, dtype=np.int16)
                             self._output_queue.put(arr)
                     if "text" in part:

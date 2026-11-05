@@ -92,7 +92,7 @@ DEFAULT_CONFIG = {
     "gemini_idle_timeout": 300,
     "gemini_thinking_level": "minimal",
     "gemini_thinking_budget": 0,
-    "gemini_search_grounding": True,
+    "gemini_search_grounding": False,
     "screen_share_resolution": "",
     "screen_share_pause_on_idle": True,
     "auto_minimize": True,
