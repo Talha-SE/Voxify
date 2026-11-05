@@ -788,7 +788,7 @@ def web_search(query: str) -> str:
                     if wr.status_code == 200:
                         wdata = wr.json()
                         curr = wdata.get("current_condition", [{}])[0]
-                        desc = curr.get("weatherDesc", [{}])[0].get("value", "Clear")
+                        desc = curr.get("weatherDesc", [{}])[0].get("value", "Clear").strip()
                         tc = curr.get("temp_C", "N/A")
                         tf = curr.get("temp_F", "N/A")
                         hum = curr.get("humidity", "N/A")
